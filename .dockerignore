@@ -1,0 +1,11 @@
+.git
+.env
+backend/.env
+backend/.venv
+node_modules
+dist
+.next
+.vinext
+.wrangler
+test-results
+playwright-report
