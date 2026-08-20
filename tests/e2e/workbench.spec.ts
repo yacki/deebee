@@ -138,6 +138,33 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await expect(page.getByRole("cell", { name: database, exact: true })).toBeVisible();
   });
 
+  test("lost backend query sessions are recreated and the SQL is safely retried", async ({ page }) => {
+    const initialSession = page.waitForResponse(response => response.url().endsWith("/api/sessions") && response.request().method() === "POST");
+    await login(page);
+    const staleSessionId = (await (await initialSession).json()).id;
+    const removed = await api.delete(`sessions/${staleSessionId}`);
+    expect(removed.ok()).toBeTruthy();
+    const editor = await setSql(page, "SELECT 77 AS reconnected;");
+    await editor.press(runShortcut);
+    await expect(page.getByText("查询会话已自动重连")).toBeVisible();
+    await expect(page.getByRole("cell", { name: "77", exact: true })).toBeVisible();
+  });
+
+  test("network outage is shown and a manual health check restores the workspace", async ({ page }) => {
+    await login(page);
+    await page.route("**/api/**", route => route.abort("connectionfailed"));
+    const editor = await setSql(page, "SELECT 88 AS after_network;");
+    await editor.press(runShortcut);
+    await expect(page.locator(".connection-state.offline")).toBeVisible();
+    await expect(page.getByText("后台连接中断，正在自动重连。本条 SQL 未自动重放。")).toBeVisible();
+    await page.unroute("**/api/**");
+    await page.locator(".connection-state").click();
+    await expect(page.locator(".connection-state.online")).toBeVisible();
+    await expect(page.getByText("连接已恢复，本条 SQL 未自动重放，请重新执行。")).toBeVisible();
+    await editor.press(runShortcut);
+    await expect(page.getByRole("cell", { name: "88", exact: true })).toBeVisible();
+  });
+
   test("query editor height supports drag, keyboard adjustment and persistence", async ({ page }) => {
     await login(page);
     const editor = page.locator(".editor-wrap");

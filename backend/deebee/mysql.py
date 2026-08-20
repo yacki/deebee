@@ -189,6 +189,9 @@ class MySQLWorkbench:
             raise DeeBeeError(str(exc)) from exc
         return session
 
+    def inspect_session(self, session_id: str) -> dict[str, Any]:
+        return self.session_public(self.require_session(session_id))
+
     def close_session(self, session_id: str) -> None:
         with self._guard:
             session = self.sessions.pop(session_id, None)

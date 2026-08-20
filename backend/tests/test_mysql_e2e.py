@@ -56,6 +56,9 @@ def test_complete_mysql_workflow():
     )
     assert session.status_code == 200, session.text
     session_id = session.json()["id"]
+    inspected = client.get(f"/api/sessions/{session_id}", headers=headers)
+    assert inspected.status_code == 200, inspected.text
+    assert inspected.json()["database"] == DATABASE
     try:
         query(headers, session_id, f"DROP TABLE IF EXISTS `{TABLE}`")
         created = query(

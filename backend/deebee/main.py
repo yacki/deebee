@@ -288,6 +288,11 @@ async def cleanup_sessions(body: WorkspaceBody, _: str = Depends(current_user)) 
     return {"closed": closed}
 
 
+@app.get("/api/sessions/{session_id}")
+async def inspect_session(session_id: str, _: str = Depends(current_user)) -> dict[str, Any]:
+    return await asyncio.to_thread(workbench.inspect_session, session_id)
+
+
 @app.delete("/api/sessions/{session_id}")
 async def close_session(session_id: str, _: str = Depends(current_user)) -> dict[str, bool]:
     await asyncio.to_thread(workbench.close_session, session_id)

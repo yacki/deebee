@@ -7,7 +7,7 @@ import EditableGrid from "./components/EditableGrid.vue";
 import ObjectList from "./components/ObjectList.vue";
 import SqlEditor from "./components/SqlEditor.vue";
 import TableDesigner from "./components/TableDesigner.vue";
-import { API_BASE, api, authToken, download, jsonBody, workspaceId } from "./api";
+import { API_BASE, ApiError, api, authToken, download, isNetworkError, isSessionExpiredError, jsonBody, workspaceId } from "./api";
 import type { Catalog, DataTab, Database, DbObject, DesignerTab, MenuState, Objects, ObjectsTab, Profile, QueryResponse, QueryTab, ResultSet, TableData, TableSchema, TableSpec, WizardState, WorkTab } from "./types";
 
 const user = ref(""); const authReady = ref(false); const loginUser = ref("admin"); const loginPassword = ref(""); const loginError = ref(""); const loginLoading = ref(false);
@@ -19,26 +19,57 @@ const resultGridRef = ref<{ setWidth: (column: string, width: number) => void; a
 const rowDialog = ref<{ mode: "insert"; tabId: string; values: Record<string, unknown> }>(); const wizard = ref<WizardState>(); const wizardStep = ref(1); const wizardFormat = ref("csv"); const wizardCount = ref(100); const wizardIncludeData = ref(true); const wizardFile = ref<File>(); const wizardRunning = ref(false); const jobProgress = ref({ value: 0, message: "" }); const activeJobId = ref("");
 const searchDialog = ref<{ term: string; rows: { kind: string; name: string; detail: string }[] }>();
 const createDatabaseDialog = ref<{ name: string; charset: string; collation: string; saving: boolean }>();
+const connectionState = ref<"online" | "checking" | "offline">("checking"); const reconnecting = ref(false); let heartbeatId = 0;
 const uid = () => crypto.randomUUID().slice(0, 8);
 const active = computed(() => tabs.value.find(tab => tab.id === activeId.value));
 const activeData = computed(() => active.value?.type === "data" ? active.value : undefined);
 const activeDesigner = computed(() => active.value?.type === "designer" ? active.value : undefined);
 const activeObjectsTab = computed(() => active.value?.type === "objects" ? active.value : undefined);
 const activeResult = computed<ResultSet | undefined>(() => { const tab = active.value; if (tab?.type !== "query") return; const index = Number(resultPane.value.replace("result-", "")); return tab.response?.results[index]; });
+const connectionLabel = computed(() => connectionState.value === "online" ? "已连接" : connectionState.value === "checking" ? "正在重连" : "已断开");
 
 onMounted(async () => {
   try { history.value = JSON.parse(localStorage.getItem("deebee_history") || "[]"); savedQueries.value = JSON.parse(localStorage.getItem("deebee_saved_queries") || "[]"); } catch { history.value = []; savedQueries.value = []; }
   const savedHeight = Number(localStorage.getItem("deebee_query_editor_height")); if (Number.isFinite(savedHeight) && savedHeight > 0) queryEditorHeight.value = savedHeight;
   if (authToken()) { user.value = "admin"; await bootstrap(); }
   authReady.value = true;
+  heartbeatId = window.setInterval(() => { if (!document.hidden) void checkConnection(false); }, 15000);
+  window.addEventListener("online", reconnectAfterNetwork); window.addEventListener("offline", markOffline); document.addEventListener("visibilitychange", reconnectWhenVisible);
 });
-onBeforeUnmount(() => stopEditorResize?.());
+onBeforeUnmount(() => { stopEditorResize?.(); window.clearInterval(heartbeatId); window.removeEventListener("online", reconnectAfterNetwork); window.removeEventListener("offline", markOffline); document.removeEventListener("visibilitychange", reconnectWhenVisible); });
 
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : "操作失败"; }
 function flash(message: string, error = false) { notice.value = message; noticeError.value = error; window.setTimeout(() => { if (notice.value === message) notice.value = ""; }, 2800); }
-function flashError(reason: unknown) { flash(`错误：${errorText(reason)}`, true); }
+function flashError(reason: unknown) { if (isNetworkError(reason)) connectionState.value = "offline"; flash(`错误：${errorText(reason)}`, true); }
 function updateTab(id: string, patch: Partial<WorkTab>) { const tab = tabs.value.find(item => item.id === id); if (tab) Object.assign(tab, patch); }
 function closeMenu() { contextMenu.value = null; }
+function markOffline() { if (user.value) connectionState.value = "offline"; }
+function reconnectAfterNetwork() { void checkConnection(false); }
+function reconnectWhenVisible() { if (!document.hidden) void checkConnection(false); }
+function shouldRecreateSession(reason: unknown) { return isSessionExpiredError(reason) || (reason instanceof ApiError && [2006, 2013, 2055].includes(reason.code || 0)); }
+async function recreateQuerySession(tab: QueryTab) {
+  if (!profile.value) throw new Error("数据库连接尚未初始化");
+  const session = await api<{ id: string }>("/sessions", { method: "POST", body: jsonBody({ profile_id: profile.value.id, database: tab.database, autocommit: tab.autocommit, workspace_id: workspaceId() }) });
+  tab.sessionId = session.id; return session.id;
+}
+async function ensureQuerySession(tab: QueryTab) {
+  try { await api(`/sessions/${tab.sessionId}`); return false; }
+  catch (reason) { if (!shouldRecreateSession(reason)) throw reason; await recreateQuerySession(tab); return true; }
+}
+async function checkConnection(showFeedback: boolean) {
+  if (!user.value || reconnecting.value) return connectionState.value === "online";
+  const previous = connectionState.value; reconnecting.value = true; if (showFeedback || previous === "offline") connectionState.value = "checking";
+  try {
+    await api("/health");
+    const rebuilt = (await Promise.all(tabs.value.filter((tab): tab is QueryTab => tab.type === "query").map(ensureQuerySession))).filter(Boolean).length;
+    connectionState.value = "online";
+    if (previous === "offline" || rebuilt) { for (const tab of tabs.value) if (tab.type === "query" && tab.error?.includes("连接中断")) tab.error = "连接已恢复，本条 SQL 未自动重放，请重新执行。"; flash(rebuilt ? `连接已恢复，已重建 ${rebuilt} 个查询会话` : "后台连接已恢复"); }
+    else if (showFeedback) flash("连接正常");
+    return true;
+  } catch (reason) {
+    connectionState.value = "offline"; if (showFeedback) flashError(reason); return false;
+  } finally { reconnecting.value = false; }
+}
 function editorHeightLimit() { return Math.max(160, (queryViewRef.value?.clientHeight || innerHeight) - 165); }
 function setEditorHeight(value: number) { queryEditorHeight.value = Math.round(Math.min(editorHeightLimit(), Math.max(120, value))); localStorage.setItem("deebee_query_editor_height", String(queryEditorHeight.value)); }
 function resizeEditorByKeyboard(event: KeyboardEvent) {
@@ -60,7 +91,7 @@ async function login() {
   try { const result = await api<{ token: string; user: { username: string } }>("/auth/login", { method: "POST", body: jsonBody({ username: loginUser.value, password: loginPassword.value }) }); sessionStorage.setItem("deebee_token", result.token); user.value = result.user.username; await bootstrap(); }
   catch (reason) { loginError.value = errorText(reason); } finally { loginLoading.value = false; }
 }
-function logout() { sessionStorage.removeItem("deebee_token"); user.value = ""; tabs.value = []; profile.value = undefined; }
+function logout() { sessionStorage.removeItem("deebee_token"); user.value = ""; tabs.value = []; profile.value = undefined; connectionState.value = "offline"; }
 async function bootstrap() {
   try {
     const profiles = await api<Profile[]>("/connections"); await api("/sessions/cleanup", { method: "POST", body: jsonBody({ workspace_id: workspaceId() }) });
@@ -68,7 +99,7 @@ async function bootstrap() {
     databases.value = await api<Database[]>(`/connections/${profile.value.id}/databases`);
     const initial = databases.value.find(item => item.name === profile.value!.default_database)?.name || databases.value[0]?.name || "";
     database.value = initial; expanded.value = new Set(initial ? [initial] : []);
-    if (initial) { await loadObjects(initial); await newQuery(initial); }
+    if (initial) { await loadObjects(initial); await newQuery(initial); } connectionState.value = "online";
   } catch (reason) { if (errorText(reason).includes("登录")) logout(); else fatal.value = errorText(reason); }
 }
 async function loadObjects(db: string) {
@@ -108,10 +139,23 @@ async function closeTab(tab: WorkTab) { if (tab.type === "query") void api(`/ses
 function tabMenu(event: MouseEvent, tab: WorkTab) { const index=tabs.value.indexOf(tab); contextMenu.value={x:event.clientX,y:event.clientY,title:"标签操作",items:[{id:"close",label:"关闭",icon:"lucide:x",action:()=>closeTab(tab)},{id:"other",label:"关闭其他标签",icon:"lucide:copy-x",action:()=>tabs.value.filter(item=>item!==tab).forEach(closeTab)},{id:"right",label:"关闭右侧标签",icon:"lucide:panel-right-close",disabled:index===tabs.value.length-1,action:()=>[...tabs.value.slice(index+1)].forEach(closeTab)},{id:"duplicate",label:"复制标签",icon:"lucide:copy",action:()=>tab.type==="query"?newQuery(tab.database,tab.sql):undefined},{id:"save",label:"保存查询…",icon:"lucide:save",disabled:tab.type!=="query",action:()=>{if(tab.type!=="query")return;const name=prompt("查询名称",tab.title);if(!name)return;savedQueries.value=[{name,database:tab.database,sql:tab.sql},...savedQueries.value.filter(item=>item.name!==name)];localStorage.setItem("deebee_saved_queries",JSON.stringify(savedQueries.value));flash(`查询 ${name} 已保存`)}}]}; }
 async function useSavedQuery(item:{name:string;database:string;sql:string}){const tab=active.value;if(tab?.type!=="query")return;await switchQueryDatabase(tab,item.database);tab.sql=item.sql;historyOpen.value=false}
 
+async function sendQuery(tab: QueryTab, sql: string) { return api<QueryResponse>(`/sessions/${tab.sessionId}/query`, { method: "POST", body: jsonBody({ sql, limit: 10000 }) }); }
+function acceptQueryResponse(tab: QueryTab, sql: string, response: QueryResponse) {
+  updateTab(tab.id, { response, loading: false, autocommit: response.autocommit }); const firstRows = response.results.findIndex(result => result.kind === "rows"); resultPane.value = firstRows >= 0 ? `result-${firstRows}` : "message"; history.value = [sql, ...history.value.filter(item => item !== sql)].slice(0, 100); localStorage.setItem("deebee_history", JSON.stringify(history.value)); connectionState.value = "online";
+}
 async function runQuery(tab: QueryTab, sql = tab.sql) {
   if (!sql.trim()) return; updateTab(tab.id, { loading: true, error: undefined }); resultPane.value = "message";
-  try { const response = await api<QueryResponse>(`/sessions/${tab.sessionId}/query`, { method: "POST", body: jsonBody({ sql, limit: 10000 }) }); updateTab(tab.id, { response, loading: false, autocommit: response.autocommit }); const firstRows = response.results.findIndex(result => result.kind === "rows"); resultPane.value = firstRows >= 0 ? `result-${firstRows}` : "message"; history.value = [sql, ...history.value.filter(item => item !== sql)].slice(0, 100); localStorage.setItem("deebee_history", JSON.stringify(history.value)); }
-  catch (reason) { updateTab(tab.id, { loading: false, error: errorText(reason) }); resultPane.value = "message"; }
+  try { acceptQueryResponse(tab, sql, await sendQuery(tab, sql)); }
+  catch (reason) {
+    let failure = reason;
+    if (shouldRecreateSession(reason)) {
+      try { await recreateQuerySession(tab); acceptQueryResponse(tab, sql, await sendQuery(tab, sql)); flash("查询会话已自动重连"); return; }
+      catch (retryReason) { failure = retryReason; }
+    }
+    if (isNetworkError(failure)) { connectionState.value = "offline"; updateTab(tab.id, { loading: false, error: "后台连接中断，正在自动重连。本条 SQL 未自动重放。" }); void checkConnection(false); }
+    else updateTab(tab.id, { loading: false, error: errorText(failure) });
+    resultPane.value = "message";
+  }
 }
 async function cancelQuery(tab: QueryTab) { try { const result = await api<{ cancelled: boolean }>(`/sessions/${tab.sessionId}/cancel`, { method: "POST" }); flash(result.cancelled ? "查询已取消" : "当前没有运行中的查询"); } catch (reason) { flashError(reason); } }
 async function transaction(tab: QueryTab, action: "commit" | "rollback") { try { await api(`/sessions/${tab.sessionId}/${action}`, { method: "POST" }); flash(action === "commit" ? "事务已提交" : "事务已回滚"); } catch (reason) { flashError(reason); } }
@@ -215,7 +259,8 @@ async function finishWizard(){if(!profile.value||!wizard.value)return;wizardRunn
   await loadObjects(target.database);const dataTab=tabs.value.find(item=>item.type==="data"&&item.database===target.database&&item.table===target.table);if(dataTab?.type==="data")await loadData(dataTab);wizard.value=undefined;flash(success)
 }catch(reason){flashError(reason)}finally{wizardRunning.value=false}}
 
-function toolbarItems(){return [{label:"连接",icon:"lucide:plug-zap",action:()=>profile.value&&api(`/connections/${profile.value.id}/test`,{method:"POST"}).then(()=>flash("连接成功")).catch(flashError)},{label:"新建查询",icon:"lucide:square-terminal",action:()=>newQuery()},{label:"新建表",icon:"lucide:table-properties",action:()=>openDesigner()},{label:"视图",icon:"lucide:panels-top-left",action:()=>newQuery(database.value,"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;")},{label:"函数",icon:"lucide:function-square",action:()=>newQuery(database.value,"CREATE FUNCTION function_name() RETURNS INT DETERMINISTIC RETURN 1;")},{label:"触发器",icon:"lucide:zap",action:()=>newQuery(database.value,"CREATE TRIGGER trigger_name BEFORE INSERT ON table_name FOR EACH ROW SET NEW.created_at = NOW();")},{label:"事件",icon:"lucide:clock-3",action:()=>newQuery(database.value,"CREATE EVENT event_name ON SCHEDULE EVERY 1 DAY DO SELECT 1;")},{label:"用户权限",icon:"lucide:user-round-cog",action:()=>showPrivileges(database.value,"")},{label:"备份",icon:"lucide:archive-restore",action:()=>openWizard({kind:"dump",database:database.value})}]}
+async function testCurrentConnection() { if (!profile.value || !await checkConnection(true)) return; try { await api(`/connections/${profile.value.id}/test`, { method:"POST" }); connectionState.value="online"; flash("MySQL 连接正常"); } catch (reason) { connectionState.value="offline"; flashError(reason); } }
+function toolbarItems(){return [{label:"连接",icon:"lucide:plug-zap",action:testCurrentConnection},{label:"新建查询",icon:"lucide:square-terminal",action:()=>newQuery()},{label:"新建表",icon:"lucide:table-properties",action:()=>openDesigner()},{label:"视图",icon:"lucide:panels-top-left",action:()=>newQuery(database.value,"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;")},{label:"函数",icon:"lucide:function-square",action:()=>newQuery(database.value,"CREATE FUNCTION function_name() RETURNS INT DETERMINISTIC RETURN 1;")},{label:"触发器",icon:"lucide:zap",action:()=>newQuery(database.value,"CREATE TRIGGER trigger_name BEFORE INSERT ON table_name FOR EACH ROW SET NEW.created_at = NOW();")},{label:"事件",icon:"lucide:clock-3",action:()=>newQuery(database.value,"CREATE EVENT event_name ON SCHEDULE EVERY 1 DAY DO SELECT 1;")},{label:"用户权限",icon:"lucide:user-round-cog",action:()=>showPrivileges(database.value,"")},{label:"备份",icon:"lucide:archive-restore",action:()=>openWizard({kind:"dump",database:database.value})}]}
 </script>
 
 <template>
@@ -223,10 +268,10 @@ function toolbarItems(){return [{label:"连接",icon:"lucide:plug-zap",action:()
   <main v-else-if="!user" class="login-screen"><form class="login-card" @submit.prevent="login"><div class="brand-logo large">D</div><h1>DeeBee</h1><p>MySQL 数据库工作台 · Vue</p><label>用户名<input v-model="loginUser" aria-label="用户名" autocomplete="username" /></label><label>密码<input v-model="loginPassword" aria-label="密码" type="password" autocomplete="current-password" /></label><div v-if="loginError" class="form-error">{{ loginError }}</div><button class="primary login-button" :disabled="loginLoading">{{ loginLoading ? "正在登录…" : "登录工作台" }}</button></form></main>
   <main v-else-if="fatal" class="fatal"><section><Icon icon="lucide:circle-alert" /><h2>无法打开工作台</h2><p>{{ fatal }}</p><button @click="fatal='';bootstrap()">重试</button><button @click="logout">退出登录</button></section></main>
   <main v-else class="app-shell">
-    <header class="titlebar"><div class="brand-logo">D</div><strong>DeeBee</strong><div class="window-title">{{ profile?.name }} · {{ profile?.host }} — {{ database }}</div><div class="connection-state"><i /> MySQL · {{ profile?.user }}</div></header>
+    <header class="titlebar"><div class="brand-logo">D</div><strong>DeeBee</strong><div class="window-title">{{ profile?.name }} · {{ profile?.host }} — {{ database }}</div><button class="connection-state" :class="connectionState" :title="connectionState==='online'?'连接正常；点击检测连接':'点击立即重新连接'" @click="checkConnection(true)"><i /><span>MySQL · {{ profile?.user }}</span><b>{{ connectionLabel }}</b></button></header>
     <section class="toolbar" aria-label="数据库工具栏"><button v-for="item in toolbarItems()" :key="item.label" @click="item.action"><Icon :icon="item.icon" /><span>{{ item.label }}</span></button><div class="toolbar-divider" /><button v-if="active?.type==='query'" @click="runQuery(active)"><Icon icon="lucide:play" class="green" /><span>运行</span></button><button v-if="active?.type==='query'" @click="cancelQuery(active)"><Icon icon="lucide:square" /><span>停止</span></button><button v-if="active?.type==='query'" @click="transaction(active,'commit')"><Icon icon="lucide:git-commit-horizontal" /><span>提交</span></button><button v-if="active?.type==='query'" @click="transaction(active,'rollback')"><Icon icon="lucide:undo-2" /><span>回滚</span></button><span class="toolbar-spacer" /><button class="avatar" title="退出登录" @click="logout">{{ user.slice(0,2).toUpperCase() }}</button></section>
     <section class="workspace">
-      <aside class="explorer"><header><strong>连接</strong><button aria-label="刷新服务器" @click="refreshServer"><Icon icon="lucide:refresh-cw" /></button></header><label class="tree-search"><Icon icon="lucide:search" /><input v-model="treeFilter" aria-label="筛选数据库对象" placeholder="筛选数据库或对象" /></label><DatabaseTree v-if="profile" :profile="profile" :server-expanded="serverExpanded" :databases="databases" :selected="database" :expanded="expanded" :objects="objects" :filter="treeFilter" @toggle-server="serverExpanded=!serverExpanded" @server-menu="serverMenu" @select-database="chooseDatabase" @toggle-database="toggleDatabase" @open-table="openData" @design-table="openDesigner" @open-list="openList" @open-object="openObject" @database-menu="databaseMenu" @table-menu="tableMenu" @object-menu="objectMenu" @inspect="inspect" /><footer><span>{{ databases.length }} 个数据库</span><span>已连接</span></footer></aside>
+      <aside class="explorer"><header><strong>连接</strong><button aria-label="刷新服务器" @click="refreshServer"><Icon icon="lucide:refresh-cw" /></button></header><label class="tree-search"><Icon icon="lucide:search" /><input v-model="treeFilter" aria-label="筛选数据库对象" placeholder="筛选数据库或对象" /></label><DatabaseTree v-if="profile" :profile="profile" :server-expanded="serverExpanded" :databases="databases" :selected="database" :expanded="expanded" :objects="objects" :filter="treeFilter" @toggle-server="serverExpanded=!serverExpanded" @server-menu="serverMenu" @select-database="chooseDatabase" @toggle-database="toggleDatabase" @open-table="openData" @design-table="openDesigner" @open-list="openList" @open-object="openObject" @database-menu="databaseMenu" @table-menu="tableMenu" @object-menu="objectMenu" @inspect="inspect" /><footer><span>{{ databases.length }} 个数据库</span><span :class="`connection-${connectionState}`">{{ connectionLabel }}</span></footer></aside>
       <section class="content">
         <nav class="tabs" role="tablist"><div v-for="tab in tabs" :key="tab.id" class="tab" :class="{ current: activeId===tab.id }" role="tab" tabindex="0" :aria-selected="activeId===tab.id" @click="selectTab(tab)" @keydown.enter.prevent="selectTab(tab)" @keydown.space.prevent="selectTab(tab)" @contextmenu.prevent="tabMenu($event,tab)"><Icon :icon="tab.type==='query'?'lucide:square-terminal':tab.type==='data'?'lucide:table-2':tab.type==='designer'?'lucide:panel-top-open':'lucide:folder-tree'" /><span>{{ tab.title }}</span><i v-if="tab.type==='query'&&tab.sql">●</i><button :aria-label="`关闭 ${tab.title}`" @click.stop="closeTab(tab)"><Icon icon="lucide:x" /></button></div><button class="add-tab" aria-label="新建查询标签" @click="newQuery()"><Icon icon="lucide:plus" /></button></nav>
         <section v-if="!active" class="empty-workspace"><Icon icon="lucide:database-zap" /><h2>开始使用 DeeBee</h2><p>运行 SQL、浏览数据或维护表结构。</p><div><button class="primary" @click="newQuery()">新建查询</button><button @click="openDesigner()">新建表</button></div></section>
