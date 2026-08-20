@@ -79,7 +79,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await expect(page.locator(".db-node")).toHaveCount(0);
     await page.getByLabel(/展开服务器/).click();
     await expect(page.locator(".db-node").filter({ hasText: database })).toBeVisible();
-    await expect(page.locator(".titlebar")).not.toContainText("文件");
+    await expect(page.locator(".titlebar")).toHaveCount(0);
     await page.getByRole("button", { name: `收起 ${database}` }).click();
     await expect(page.getByRole("button", { name: `展开 ${database}` })).toBeVisible();
     await page.getByRole("button", { name: `展开 ${database}` }).click();
@@ -92,18 +92,19 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     const positions = await icons.evaluateAll(nodes => nodes.slice(0, 13).map(node => Math.round(node.getBoundingClientRect().x)));
     expect(new Set(positions).size).toBe(1);
     await expect(page.locator(".toolbar svg").first()).toBeVisible();
+    const toolbarButton = page.locator(".toolbar>button").first();
+    const toolbarIconBox = await toolbarButton.locator("svg").boundingBox();
+    const toolbarTextBox = await toolbarButton.locator("span").boundingBox();
+    expect(toolbarIconBox!.x).toBeLessThan(toolbarTextBox!.x);
     const firstTab = page.locator(".tab").first();
     const tabBox = await firstTab.boundingBox();
     const closeBox = await firstTab.getByRole("button", { name: /关闭/ }).boundingBox();
     expect(Math.abs((tabBox!.x + tabBox!.width) - (closeBox!.x + closeBox!.width))).toBeLessThanOrEqual(10);
   });
 
-  test("server context menu creates a database through the real dialog", async ({ page }) => {
+  test("visible toolbar action creates a database through the real dialog", async ({ page }) => {
     await login(page);
-    await page.locator(".server-node").click({ button: "right" });
-    const serverMenu = page.getByRole("menu", { name: /服务器操作/ });
-    for (const label of ["收起服务器", "连接属性…", "测试连接", "新建数据库…", "新建查询", "刷新"]) await expect(serverMenu.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
-    await serverMenu.getByRole("menuitem", { name: "新建数据库…", exact: true }).click();
+    await page.locator(".toolbar").getByRole("button", { name: "新建数据库", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "新建数据库" });
     await dialog.getByLabel("数据库名称").fill(createdDatabase);
     await dialog.getByLabel("数据库字符集").selectOption("utf8mb4");
@@ -216,7 +217,9 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
   test("table data supports inline edit, persistent resizing, sorting and filtering", async ({ page }) => {
     await login(page);
     await tableNode(page).dblclick();
-    await expect(page.getByText(`${database} · 双击单元格原地编辑`)).toBeVisible();
+    await expect(page.getByText(`${database} · 双击单元格原地编辑`)).toHaveCount(0);
+    await expect(page.locator(".data-view>.view-header")).toHaveCount(0);
+    await expect(page.locator(".editable-grid-shell thead small")).toHaveCount(0);
     const nameHeader = page.getByRole("columnheader").filter({ hasText: "name" });
     const before = await nameHeader.boundingBox();
     const separator = page.getByRole("separator", { name: "调整 name 列宽" });

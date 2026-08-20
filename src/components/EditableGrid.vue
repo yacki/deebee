@@ -66,7 +66,6 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
         <tr>
           <th class="row-number">#</th><th v-for="(column, columnIndex) in columns" :key="column.name" :class="{ frozen: columnIndex <= frozenThrough }" :style="stickyStyle(columnIndex)" @click="emit('sort', column.name)">
             <span class="column-title"><Icon v-if="primaryKey.includes(column.name)" icon="lucide:key-round" class="key-icon" />{{ column.name }}</span>
-            <small>{{ 'data_type' in column ? column.data_type : column.type }}</small>
             <i class="resize-handle" role="separator" tabindex="0" :aria-label="`调整 ${column.name} 列宽`" @pointerdown="resize($event, column.name)" @keydown.left.prevent="adjustWidth(column.name,-16)" @keydown.right.prevent="adjustWidth(column.name,16)" />
           </th>
         </tr>
