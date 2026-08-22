@@ -14,21 +14,26 @@ const selectedRows = ref(new Set<number>());
 const rowHeight = ref(30);
 const frozenThrough = ref(-1);
 const columns = computed(() => props.columns || []);
+const MIN_COLUMN_WIDTH = 24;
+const MAX_COLUMN_WIDTH = 600;
+const DEFAULT_COLUMN_WIDTH = 180;
+const tableWidth = computed(() => 44 + columns.value.reduce((total, column) => total + width(column.name), 0));
 
 onMounted(loadWidths);
 watch(() => props.storageKey, loadWidths);
 function loadWidths() { try { Object.assign(widths, JSON.parse(localStorage.getItem(`deebee_widths:${props.storageKey}`) || "{}")); } catch { /* ignored */ } }
-function width(name: string) { return Math.max(80, widths[name] || 180); }
+function clampWidth(value: number) { return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, value)); }
+function width(name: string) { return clampWidth(widths[name] ?? DEFAULT_COLUMN_WIDTH); }
 function resize(event: PointerEvent, name: string) {
   event.preventDefault(); event.stopPropagation();
   const start = event.clientX; const initial = width(name);
-  const move = (next: PointerEvent) => { widths[name] = Math.max(80, Math.min(600, initial + next.clientX - start)); };
+  const move = (next: PointerEvent) => { widths[name] = clampWidth(initial + next.clientX - start); };
   const up = () => { localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); };
   document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
 }
-function adjustWidth(name: string, delta: number) { widths[name] = Math.max(80, Math.min(600, width(name) + delta)); localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); }
+function adjustWidth(name: string, delta: number) { widths[name] = clampWidth(width(name) + delta); localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); }
 function setInput(element: unknown) { input.value = element instanceof HTMLInputElement ? element : undefined; }
-function setWidth(name: string, value: number) { widths[name] = Math.max(80, Math.min(600, value)); localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); }
+function setWidth(name: string, value: number) { widths[name] = clampWidth(value); localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); }
 function autoFit(name: string) { const longest = Math.max(name.length, ...props.rows.slice(0, 250).map(row => display(row[name]).length)); setWidth(name, Math.min(600, Math.max(96, longest * 8 + 38))); }
 function autoFitAll() { for (const column of columns.value) autoFit(column.name); }
 function setRowHeight(value: number) { rowHeight.value = Math.max(24, Math.min(120, value)); }
@@ -60,13 +65,13 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
 
 <template>
   <div ref="shell" class="editable-grid-shell" role="grid" tabindex="0">
-    <table>
+    <table :style="{ width: `${tableWidth}px` }">
       <colgroup><col class="row-number-col" /><col v-for="column in columns" :key="column.name" :style="{ width: `${width(column.name)}px` }" /></colgroup>
       <thead>
         <tr>
           <th class="row-number">#</th><th v-for="(column, columnIndex) in columns" :key="column.name" :class="{ frozen: columnIndex <= frozenThrough }" :style="stickyStyle(columnIndex)" @click="emit('sort', column.name)">
             <span class="column-title"><Icon v-if="primaryKey.includes(column.name)" icon="lucide:key-round" class="key-icon" />{{ column.name }}</span>
-            <i class="resize-handle" role="separator" tabindex="0" :aria-label="`调整 ${column.name} 列宽`" @pointerdown="resize($event, column.name)" @keydown.left.prevent="adjustWidth(column.name,-16)" @keydown.right.prevent="adjustWidth(column.name,16)" />
+            <i class="resize-handle" role="separator" tabindex="0" :aria-label="`调整 ${column.name} 列宽`" aria-orientation="vertical" :aria-valuemin="MIN_COLUMN_WIDTH" :aria-valuemax="MAX_COLUMN_WIDTH" :aria-valuenow="width(column.name)" @pointerdown="resize($event, column.name)" @keydown.left.prevent="adjustWidth(column.name,-16)" @keydown.right.prevent="adjustWidth(column.name,16)" />
           </th>
         </tr>
       </thead>

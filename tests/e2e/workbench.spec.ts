@@ -261,6 +261,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
     let menu = page.getByRole("menu", { name: "结果表格操作" });
     for (const label of ["复制单元格", "复制为", "全选", "取消全选", "设置当前列宽…", "自动调整全部列宽", "设置行高…", "冻结到当前列", "取消冻结所有列", "跳转到记录…"]) await expect(menu.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "复制单元格", exact: true })).not.toHaveClass(/active/);
     await menu.getByRole("menuitem", { name: "复制为", exact: true }).hover();
     for (const label of ["INSERT Statement", "UPDATE Statement", "Tab Separated Values (Data only)", "Tab Separated Values (Field Name only)", "Tab Separated Values (Field Name and Data)", "JSON"]) await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
@@ -268,6 +269,10 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     menu = page.getByRole("menu", { name: "结果表格操作" });
     await menu.getByRole("menuitem", { name: "全选", exact: true }).click();
     await expect(page.locator(".editable-grid-shell tbody tr.selected")).toHaveCount(3);
+    await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
+    page.once("dialog", dialog => dialog.accept("24"));
+    await page.getByRole("menuitem", { name: "设置当前列宽…", exact: true }).click();
+    await expect.poll(async () => (await page.getByRole("columnheader").filter({ hasText: "name" }).boundingBox())?.width).toBeLessThan(80);
     for (const tabName of ["消息", "摘要", "Profile", "状态"]) {
       await page.locator(".result-tabs").getByRole("button", { name: tabName, exact: true }).click();
       await expect(page.locator(".result-tabs").getByRole("button", { name: tabName, exact: true })).toHaveClass(/current/);
