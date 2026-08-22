@@ -1,5 +1,5 @@
 const pageBase = new URL(".", document.baseURI).pathname.replace(/\/$/, "");
-export const API_BASE = import.meta.env.VITE_DEEBEE_API_URL || `${pageBase}/api`;
+export const API_BASE = `${pageBase}/api`;
 
 export class ApiError extends Error {
   constructor(message: string, readonly status = 0, readonly kind: "network" | "http" = "http", readonly code?: number | string) { super(message); this.name = "ApiError"; }

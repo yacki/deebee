@@ -3,8 +3,6 @@ WORKDIR /web
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-ARG VITE_DEEBEE_API_URL=/api
-ENV VITE_DEEBEE_API_URL=${VITE_DEEBEE_API_URL}
 RUN npm run build
 
 FROM python:3.12-slim
