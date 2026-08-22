@@ -1,4 +1,4 @@
-FROM node:24-slim AS web-builder
+FROM --platform=$BUILDPLATFORM node:24-slim AS web-builder
 WORKDIR /web
 COPY package.json package-lock.json ./
 RUN npm ci
