@@ -7,9 +7,24 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from deebee.config import settings
+from deebee.config import persistent_secret, settings
 from deebee.main import app, workbench
 from deebee.workbench import DatabaseWorkbenches
+
+
+def test_generated_secret_is_persisted_with_private_permissions(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.delenv("DEEBEE_TOKEN_SECRET", raising=False)
+    secret_file = tmp_path / "secret.key"
+    monkeypatch.setenv("DEEBEE_SECRET_FILE", str(secret_file))
+
+    first = persistent_secret(tmp_path / "connections.json")
+    second = persistent_secret(tmp_path / "connections.json")
+
+    assert first == second
+    assert len(first) >= 48
+    assert stat.S_IMODE(secret_file.stat().st_mode) == 0o600
 
 
 def test_connection_crud_is_encrypted_and_survives_restart(tmp_path: Path) -> None:

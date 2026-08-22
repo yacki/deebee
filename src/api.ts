@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_DEEBEE_API_URL || "http://127.0.0.1:8000/api";
+export const API_BASE = import.meta.env.VITE_DEEBEE_API_URL || "/api";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status = 0, readonly kind: "network" | "http" = "http", readonly code?: number | string) { super(message); this.name = "ApiError"; }

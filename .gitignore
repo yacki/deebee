@@ -2,7 +2,8 @@
 backend/.env
 backend/.venv/
 backend/.docker-wheelhouse/
-backend/data/connections.json
+backend/data/
+/data/
 __pycache__/
 .pytest_cache/
 *.pyc

@@ -1,5 +1,6 @@
 .env
 .venv
+.docker-wheelhouse
 __pycache__
 .pytest_cache
 tests

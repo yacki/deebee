@@ -7,7 +7,10 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 export default defineConfig({
     server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+      ? {
+          watch: { useFsEvents: false, usePolling: true },
+          proxy: { "/api": "http://127.0.0.1:8000" },
+        }
+      : { proxy: { "/api": "http://127.0.0.1:8000" } },
     plugins: [vue(), sites()],
 });
