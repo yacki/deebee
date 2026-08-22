@@ -1,8 +1,8 @@
 services:
-  api:
-    image: ghcr.io/yacki/deebee-api:${DEEBEE_IMAGE_TAG:-latest}
+  deebee:
+    image: ghcr.io/yacki/deebee:${DEEBEE_IMAGE_TAG:-latest}
     build:
-      context: ./backend
+      context: .
     env_file:
       - path: ./backend/.env
         required: false
@@ -11,32 +11,15 @@ services:
     environment:
       DEEBEE_CONNECTIONS_FILE: /app/data/connections.json
       DEEBEE_SECRET_FILE: /app/data/secret.key
-    expose:
-      - "8000"
+    ports:
+      - "${DEEBEE_BIND_ADDRESS:-127.0.0.1}:${DEEBEE_PORT:-3000}:3000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${DEEBEE_DATA_DIR:-./data}:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
-      interval: 15s
-      timeout: 5s
-      retries: 4
-      start_period: 10s
-
-  web:
-    image: ghcr.io/yacki/deebee-web:${DEEBEE_IMAGE_TAG:-latest}
-    build:
-      context: .
-    ports:
-      - "${DEEBEE_BIND_ADDRESS:-127.0.0.1}:${DEEBEE_PORT:-3000}:3000"
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/healthz"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 4

@@ -4,12 +4,15 @@ import asyncio
 import csv
 import io
 import json
+import os
 import secrets
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -675,3 +678,8 @@ async def apply_ddl(body: DdlApplyBody, _: str = Depends(current_user)) -> dict[
         raise DeeBeeError("表结构在预览后发生变化，请重新生成 DDL")
     database = str(body.spec.get("database", ""))
     return await asyncio.to_thread(workbench.apply_ddl, body.profile_id, database, generated)
+
+
+web_directory = os.getenv("DEEBEE_WEB_DIR", "").strip()
+if web_directory:
+    app.mount("/", StaticFiles(directory=Path(web_directory), html=True), name="web")

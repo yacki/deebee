@@ -17,18 +17,6 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: api
-            context: ./backend
-            dockerfile: ./backend/Dockerfile
-            image: ghcr.io/yacki/deebee-api
-          - service: web
-            context: .
-            dockerfile: ./Dockerfile
-            image: ghcr.io/yacki/deebee-web
 
     steps:
       - uses: actions/checkout@v4
@@ -48,20 +36,20 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ matrix.image }}
+          images: ghcr.io/yacki/deebee
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=tag
             type=sha,prefix=sha-
 
-      - name: Build and publish ${{ matrix.service }}
+      - name: Build and publish DeeBee
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
+          context: .
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          cache-from: type=gha,scope=deebee
+          cache-to: type=gha,mode=max,scope=deebee
