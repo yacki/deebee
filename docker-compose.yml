@@ -4,6 +4,10 @@ services:
     env_file: ./backend/.env
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - deebee-data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
@@ -11,10 +15,11 @@ services:
       timeout: 5s
       retries: 4
       start_period: 10s
+
   web:
     build: .
     ports:
-      - "3000:3000"
+      - "5173:3000"
     depends_on:
       api:
         condition: service_healthy
@@ -25,3 +30,6 @@ services:
       timeout: 5s
       retries: 4
       start_period: 10s
+
+volumes:
+  deebee-data:

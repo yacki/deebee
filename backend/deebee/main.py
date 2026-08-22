@@ -11,12 +11,13 @@ from fastapi import Depends, FastAPI, File, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from openpyxl import Workbook, load_workbook
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import settings
 from .jobs import jobs
-from .mysql import DeeBeeError, workbench
+from .mysql import DeeBeeError
 from .security import issue_token, verify_token
+from .workbench import workbench
 
 
 app = FastAPI(title="DeeBee API", version="0.1.0")
@@ -42,7 +43,42 @@ class LoginBody(BaseModel):
     password: str
 
 
-class SessionBody(BaseModel):
+class ConnectionBaseBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    driver: Literal["mysql", "postgresql"]
+    name: str = Field(min_length=1, max_length=100)
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    user: str = Field(min_length=1, max_length=255)
+    default_database: str = Field(default="", max_length=255)
+    default_schema: str = Field(default="", max_length=255)
+
+
+class ConnectionCreateBody(ConnectionBaseBody):
+    password: str = Field(default="", max_length=4096)
+
+
+class ConnectionUpdateBody(ConnectionBaseBody):
+    password: str | None = Field(default=None, max_length=4096)
+
+
+class ConnectionTestBody(ConnectionUpdateBody):
+    profile_id: str = Field(default="", max_length=100)
+
+
+class SchemaBody(BaseModel):
+    schema_: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_schema_name(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "schema" in value and "schema_" not in value:
+            value = {**value, "schema_": value["schema"]}
+        return value
+
+
+class SessionBody(SchemaBody):
     profile_id: str = "mysql-default"
     database: str = ""
     autocommit: bool = True
@@ -73,7 +109,7 @@ class SortItem(BaseModel):
     direction: Literal["asc", "desc"] = "asc"
 
 
-class DataRequest(BaseModel):
+class DataRequest(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
     table: str
@@ -83,14 +119,14 @@ class DataRequest(BaseModel):
     sort: SortItem | None = None
 
 
-class RowInsert(BaseModel):
+class RowInsert(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
     table: str
     values: dict[str, Any]
 
 
-class RowUpdate(BaseModel):
+class RowUpdate(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
     table: str
@@ -98,7 +134,7 @@ class RowUpdate(BaseModel):
     changes: dict[str, Any]
 
 
-class RowDelete(BaseModel):
+class RowDelete(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
     table: str
@@ -122,7 +158,7 @@ class DatabaseCreateBody(BaseModel):
     collation: str = "utf8mb4_unicode_ci"
 
 
-class ObjectActionBody(BaseModel):
+class ObjectActionBody(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
     table: str
@@ -131,17 +167,17 @@ class ObjectActionBody(BaseModel):
     with_data: bool = False
 
 
-class GenerateBody(BaseModel):
+class GenerateBody(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
     table: str
     count: int = Field(default=100, ge=1, le=10000)
 
 
-class GenericObjectActionBody(BaseModel):
+class GenericObjectActionBody(SchemaBody):
     profile_id: str = "mysql-default"
     database: str
-    kind: Literal["view", "function", "procedure", "trigger", "event"]
+    kind: Literal["view", "materialized view", "function", "procedure", "trigger", "event"]
     name: str
     action: Literal["drop", "enable", "disable"]
 
@@ -177,7 +213,12 @@ def _parse_import_rows(filename: str, content: bytes) -> list[dict[str, Any]]:
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "service": "deebee", "driver": "mysql"}
+    drivers = list(dict.fromkeys(item["driver"] for item in workbench.list_profiles()))
+    return {
+        "ok": True, "service": "deebee",
+        "driver": drivers[0] if len(drivers) == 1 else "multi",
+        "drivers": drivers,
+    }
 
 
 @app.post("/api/auth/login")
@@ -199,6 +240,36 @@ async def connections(_: str = Depends(current_user)) -> list[dict[str, Any]]:
     return workbench.list_profiles()
 
 
+@app.post("/api/connections/test")
+async def test_connection_settings(
+    body: ConnectionTestBody, _: str = Depends(current_user)
+) -> dict[str, Any]:
+    values = body.model_dump(exclude={"profile_id"})
+    return await asyncio.to_thread(workbench.test_connection, values, body.profile_id)
+
+
+@app.post("/api/connections", status_code=201)
+async def create_connection(
+    body: ConnectionCreateBody, _: str = Depends(current_user)
+) -> dict[str, Any]:
+    return await asyncio.to_thread(workbench.create_connection, body.model_dump())
+
+
+@app.patch("/api/connections/{profile_id}")
+async def update_connection(
+    profile_id: str, body: ConnectionUpdateBody, _: str = Depends(current_user)
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        workbench.update_connection, profile_id, body.model_dump()
+    )
+
+
+@app.delete("/api/connections/{profile_id}", status_code=204)
+async def delete_connection(profile_id: str, _: str = Depends(current_user)) -> Response:
+    await asyncio.to_thread(workbench.delete_connection, profile_id)
+    return Response(status_code=204)
+
+
 @app.post("/api/connections/{profile_id}/test")
 async def test_connection(profile_id: str, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(workbench.test_profile, profile_id)
@@ -209,14 +280,25 @@ async def databases(profile_id: str, _: str = Depends(current_user)) -> list[dic
     return await asyncio.to_thread(workbench.databases, profile_id)
 
 
+@app.get("/api/connections/{profile_id}/databases/{database}/schemas")
+async def schemas(
+    profile_id: str, database: str, _: str = Depends(current_user)
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(workbench.schemas, profile_id, database)
+
+
 @app.get("/api/connections/{profile_id}/databases/{database}/objects")
-async def objects(profile_id: str, database: str, _: str = Depends(current_user)) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.objects, profile_id, database)
+async def objects(
+    profile_id: str, database: str, schema: str = "", _: str = Depends(current_user)
+) -> dict[str, Any]:
+    return await asyncio.to_thread(workbench.objects, profile_id, database, schema)
 
 
 @app.get("/api/connections/{profile_id}/databases/{database}/catalog")
-async def catalog(profile_id: str, database: str, _: str = Depends(current_user)) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.catalog, profile_id, database)
+async def catalog(
+    profile_id: str, database: str, schema: str = "", _: str = Depends(current_user)
+) -> dict[str, Any]:
+    return await asyncio.to_thread(workbench.catalog, profile_id, database, schema)
 
 
 @app.post("/api/databases")
@@ -235,50 +317,54 @@ async def drop_database(profile_id: str, database: str, _: str = Depends(current
 async def table_action(body: ObjectActionBody, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
         workbench.table_action, body.profile_id, body.database, body.table, body.action,
-        target=body.target, with_data=body.with_data,
+        target=body.target, with_data=body.with_data, schema=body.schema_,
     )
 
 
 @app.get("/api/objects/{profile_id}/{database}/{kind}/{name}/ddl")
 async def object_ddl(
-    profile_id: str, database: str, kind: str, name: str, _: str = Depends(current_user)
+    profile_id: str, database: str, kind: str, name: str, schema: str = "",
+    _: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.object_ddl, profile_id, database, kind, name)
+    return await asyncio.to_thread(workbench.object_ddl, profile_id, database, kind, name, schema)
 
 
 @app.post("/api/objects/action")
 async def generic_object_action(body: GenericObjectActionBody, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
-        workbench.object_action, body.profile_id, body.database, body.kind, body.name, body.action
+        workbench.object_action, body.profile_id, body.database, body.kind, body.name,
+        body.action, body.schema_
     )
 
 
 @app.get("/api/search/{profile_id}/{database}")
 async def search_objects(
-    profile_id: str, database: str, q: str = Query(min_length=1, max_length=200),
+    profile_id: str, database: str, q: str = Query(min_length=1, max_length=200), schema: str = "",
     _: str = Depends(current_user),
 ) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(workbench.search_objects, profile_id, database, q)
+    return await asyncio.to_thread(workbench.search_objects, profile_id, database, q, schema)
 
 
 @app.get("/api/privileges/{profile_id}/{database}")
 async def privileges(
-    profile_id: str, database: str, table: str = "", _: str = Depends(current_user)
+    profile_id: str, database: str, table: str = "", schema: str = "", _: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.grants, profile_id, database, table)
+    return await asyncio.to_thread(workbench.grants, profile_id, database, table, schema)
 
 
 @app.post("/api/data/generate")
 async def generate_data(body: GenerateBody, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
-        workbench.generate_data, body.profile_id, body.database, body.table, body.count
+        workbench.generate_data, body.profile_id, body.database, body.table, body.count,
+        body.schema_
     )
 
 
 @app.post("/api/sessions")
 async def create_session(body: SessionBody, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
-        workbench.create_session, body.profile_id, body.database, body.autocommit, body.workspace_id
+        workbench.create_session, body.profile_id, body.database, body.autocommit,
+        body.workspace_id, body.schema_
     )
 
 
@@ -332,9 +418,9 @@ async def rollback(session_id: str, _: str = Depends(current_user)) -> dict[str,
 
 @app.get("/api/schema/{profile_id}/{database}/{table}")
 async def table_schema(
-    profile_id: str, database: str, table: str, _: str = Depends(current_user)
+    profile_id: str, database: str, table: str, schema: str = "", _: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.table_schema, profile_id, database, table)
+    return await asyncio.to_thread(workbench.table_schema, profile_id, database, table, schema)
 
 
 @app.post("/api/data/read")
@@ -348,13 +434,15 @@ async def read_data(body: DataRequest, _: str = Depends(current_user)) -> dict[s
         body.page_size,
         [item.model_dump() for item in body.filters],
         body.sort.model_dump() if body.sort else None,
+        body.schema_,
     )
 
 
 @app.post("/api/data/rows")
 async def insert_row(body: RowInsert, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
-        workbench.insert_row, body.profile_id, body.database, body.table, body.values
+        workbench.insert_row, body.profile_id, body.database, body.table, body.values,
+        body.schema_
     )
 
 
@@ -367,13 +455,15 @@ async def update_row(body: RowUpdate, _: str = Depends(current_user)) -> dict[st
         body.table,
         body.key,
         body.changes,
+        body.schema_,
     )
 
 
 @app.delete("/api/data/rows")
 async def delete_row(body: RowDelete, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
-        workbench.delete_row, body.profile_id, body.database, body.table, body.key
+        workbench.delete_row, body.profile_id, body.database, body.table, body.key,
+        body.schema_
     )
 
 
@@ -382,11 +472,12 @@ async def export_data(
     profile_id: str,
     database: str,
     table: str,
+    schema: str = "",
     format: Literal["csv", "json", "sql", "xlsx"] = Query(default="csv"),
     _: str = Depends(current_user),
 ) -> Response:
     payload = await asyncio.to_thread(
-        workbench.table_data, profile_id, database, table, 1, 100000, [], None
+        workbench.table_data, profile_id, database, table, 1, 100000, [], None, schema
     )
     rows = payload["rows"]
     columns = [item["name"] for item in payload["columns"]]
@@ -395,6 +486,9 @@ async def export_data(
         data = json.dumps(rows, ensure_ascii=False, indent=2).encode("utf-8")
         media_type = "application/json"
     elif format == "sql":
+        quote = '"' if workbench.profile_driver(profile_id) == "postgresql" else "`"
+        def quote_name(value: str) -> str:
+            return quote + value.replace(quote, quote + quote) + quote
         output = []
         for row in rows:
             values = []
@@ -407,8 +501,9 @@ async def export_data(
                 else:
                     escaped = str(value).replace("'", "''")
                     values.append("'" + escaped + "'")
-            escaped_columns = ", ".join("`" + column.replace("`", "``") + "`" for column in columns)
-            output.append(f"INSERT INTO `{table.replace('`', '``')}` ({escaped_columns}) VALUES ({', '.join(values)});")
+            escaped_columns = ", ".join(quote_name(column) for column in columns)
+            target = f"{quote_name(schema)}.{quote_name(table)}" if schema else quote_name(table)
+            output.append(f"INSERT INTO {target} ({escaped_columns}) VALUES ({', '.join(values)});")
         data = ("\n".join(output) + "\n").encode("utf-8")
         media_type = "application/sql"
     elif format == "xlsx":
@@ -441,6 +536,7 @@ async def import_data(
     profile_id: str,
     database: str,
     table: str,
+    schema: str = "",
     file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
@@ -448,13 +544,14 @@ async def import_data(
     rows = _parse_import_rows(file.filename or "", content)
     if len(rows) > 100000:
         raise DeeBeeError("单次最多导入 100000 行")
-    return await asyncio.to_thread(workbench.bulk_insert, profile_id, database, table, rows)
+    return await asyncio.to_thread(workbench.bulk_insert, profile_id, database, table, rows, schema)
 
 
 @app.post("/api/sql/execute-file")
 async def execute_sql_file(
     profile_id: str,
     database: str,
+    schema: str = "",
     file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
@@ -465,12 +562,12 @@ async def execute_sql_file(
         sql = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
-    return await asyncio.to_thread(workbench.execute_script, profile_id, database, sql)
+    return await asyncio.to_thread(workbench.execute_script, profile_id, database, sql, schema)
 
 
 @app.post("/api/jobs/sql-file")
 async def execute_sql_file_job(
-    profile_id: str, database: str, file: UploadFile = File(...),
+    profile_id: str, database: str, schema: str = "", file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
@@ -484,13 +581,13 @@ async def execute_sql_file_job(
         progress(10, "正在解析 SQL")
         if cancelled.is_set(): return None
         progress(25, "正在执行 SQL")
-        return workbench.execute_script(profile_id, database, sql)
+        return workbench.execute_script(profile_id, database, sql, schema)
     return jobs.create("sql-file", task)
 
 
 @app.post("/api/jobs/import")
 async def import_data_job(
-    profile_id: str, database: str, table: str, file: UploadFile = File(...),
+    profile_id: str, database: str, table: str, schema: str = "", file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
@@ -502,7 +599,7 @@ async def import_data_job(
             raise DeeBeeError("单次最多导入 100000 行")
         if cancelled.is_set(): return None
         progress(45, f"正在写入 {len(rows)} 行")
-        result = workbench.bulk_insert(profile_id, database, table, rows)
+        result = workbench.bulk_insert(profile_id, database, table, rows, schema)
         progress(95, "正在刷新表数据")
         return result
     return jobs.create("import", task)
@@ -515,7 +612,9 @@ async def generate_data_job(body: GenerateBody, _: str = Depends(current_user)) 
         remaining = body.count
         while remaining and not cancelled.is_set():
             batch = min(500, remaining)
-            result = workbench.generate_data(body.profile_id, body.database, body.table, batch)
+            result = workbench.generate_data(
+                body.profile_id, body.database, body.table, batch, body.schema_
+            )
             total += int(result.get("affected_rows", 0)); remaining -= batch
             progress(10 + int(85 * total / body.count), f"已生成 {total}/{body.count} 行")
         return {"affected_rows": total}
@@ -540,9 +639,12 @@ async def dump_sql(
     database: str,
     table: str = "",
     include_data: bool = True,
+    schema: str = "",
     _: str = Depends(current_user),
 ) -> Response:
-    sql = await asyncio.to_thread(workbench.dump_sql, profile_id, database, table, include_data)
+    sql = await asyncio.to_thread(
+        workbench.dump_sql, profile_id, database, table, include_data, schema
+    )
     filename = f"{table or database}.sql"
     return Response(
         sql.encode("utf-8"),

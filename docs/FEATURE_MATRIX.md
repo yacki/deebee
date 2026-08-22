@@ -1,11 +1,13 @@
-# DeeBee MySQL 功能与 E2E 矩阵
+# DeeBee MySQL / PostgreSQL 功能与 E2E 矩阵
 
-本矩阵是 P0、P1、P2 的验收基线。浏览器用例位于 `tests/e2e/workbench.spec.ts`，真实 MySQL API 用例位于 `backend/tests`。
+本矩阵是 P0、P1、P2 的验收基线。浏览器用例位于 `tests/e2e/workbench.spec.ts`，真实 MySQL 和可选 PostgreSQL API 用例位于 `backend/tests`。
 
 | 领域 | 已实现功能 | E2E 覆盖 |
 |---|---|---|
 | Vue 与图标 | Vue 3 单页工作台；Iconify Lucide 图标本地打包，不依赖运行时公网请求 | 生产构建断言；浏览器树与工具栏图标验收 |
+| 连接管理 | MySQL/PostgreSQL 多服务器连接；新增前测试、保存、编辑、复制、删除和切换；PostgreSQL 独立配置默认数据库与 Schema | `test_connection_crud_is_encrypted_and_survives_restart`；本地浏览器表单与菜单验收 |
 | 对象树 | 26px 独立展开热区；单击选择与展开互不干扰；深层对象固定网格对齐；大量表滚动 | 浏览器连续收起/展开和 13+ 表图标坐标断言 |
+| PostgreSQL 层级 | PostgreSQL 按服务器/数据库/Schema/对象分类展示；对象缓存、查询会话、补全、数据页和设计器均以 database + schema 隔离 | `test_postgres_database_schema_object_hierarchy_and_isolation`（设置 `DEEBEE_POSTGRES_ENABLED=true` 后运行） |
 | 数据库右键 | 打开/关闭、属性、新建、删除、新建查询、控制台、SQL 文件、转储、打印、搜索、刷新 | 浏览器菜单用例；`test_create_and_delete_database_with_confirmation_api` |
 | 表右键 | 打开、设计、新建、删除、清空、TRUNCATE、复制结构/数据、权限、导入、导出、数据生成、转储、维护、复制名称/DDL、重命名、刷新 | 浏览器菜单用例；`test_database_object_and_completion_workflows` |
 | 其他对象 | 视图、函数、过程、触发器、事件浏览；打开定义、编辑 SQL、删除；事件启用/禁用 | `test_database_object_and_completion_workflows`；对象树浏览器验收 |
@@ -19,7 +21,7 @@
 | 数据向导 | CSV/JSON/XLSX 导入，CSV/JSON/SQL/XLSX 导出，SQL 文件执行，结构/数据转储，测试数据生成 | 浏览器向导用例；`test_wizards_dump_script_and_generated_data_roundtrip` |
 | 后台任务 | 导入、SQL 文件、数据生成的进度轮询、失败信息和取消 | `test_background_jobs_report_progress_results_and_cancellation` |
 | 维护与权限 | CHECK、ANALYZE、OPTIMIZE、REPAIR；当前账户授权查看 | `test_database_object_and_completion_workflows` |
-| 安全 | 标识符引用、DDL 预览一致性、危险操作确认、登录令牌、会话清理、密码不返回前端 | 后端完整工作流及 DDL E2E |
+| 安全 | 标识符引用、DDL 预览一致性、危险操作确认、登录令牌、会话清理、连接密码加密落盘且不返回前端 | 后端完整工作流、连接仓库测试及 DDL E2E |
 | 布局 | 1280 和 1024 宽度、水平大表、固定对象树、菜单贴边、向导及结果区布局 | 集成浏览器视觉验收 |
 
 不属于 P0/P1/P2 的模型图、图表、自动化调度和打印模板仍作为后续独立模块，不在本矩阵中伪装为已完成。

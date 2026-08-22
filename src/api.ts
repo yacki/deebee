@@ -1,7 +1,7 @@
 export const API_BASE = import.meta.env.VITE_DEEBEE_API_URL || "http://127.0.0.1:8000/api";
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status = 0, readonly kind: "network" | "http" = "http", readonly code?: number) { super(message); this.name = "ApiError"; }
+  constructor(message: string, readonly status = 0, readonly kind: "network" | "http" = "http", readonly code?: number | string) { super(message); this.name = "ApiError"; }
 }
 
 export function isNetworkError(reason: unknown) { return reason instanceof ApiError && reason.kind === "network"; }
@@ -28,7 +28,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
   }
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { error?: { message?: string; code?: number }; detail?: string } | null;
+    const payload = await response.json().catch(() => null) as { error?: { message?: string; code?: number | string }; detail?: string } | null;
     throw new ApiError(payload?.error?.message || payload?.detail || `请求失败 (${response.status})`, response.status, "http", payload?.error?.code);
   }
   if (response.status === 204) return undefined as T;

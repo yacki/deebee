@@ -29,7 +29,7 @@ DATA_TYPE = re.compile(r"^[A-Za-z]+(?:\((?:[A-Za-z0-9_,' \".\-]+)\))?(?:\s+(?:UN
 
 
 class DeeBeeError(RuntimeError):
-    def __init__(self, message: str, code: int | None = None):
+    def __init__(self, message: str, code: int | str | None = None):
         super().__init__(message)
         self.code = code
 
@@ -79,6 +79,10 @@ def json_value(value: Any) -> Any:
     if isinstance(value, (bytes, bytearray, memoryview)):
         data = bytes(value)
         return {"$binary": data.hex(), "size": len(data)}
+    if isinstance(value, dict):
+        return {str(key): json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_value(item) for item in value]
     return str(value)
 
 
@@ -87,7 +91,7 @@ def clean_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class MySQLWorkbench:
-    def __init__(self) -> None:
+    def __init__(self, include_default: bool = True) -> None:
         default = Profile(
             id="mysql-default",
             name=settings.mysql_name,
@@ -97,7 +101,7 @@ class MySQLWorkbench:
             password=settings.mysql_password,
             default_database=settings.mysql_database,
         )
-        self.profiles: dict[str, Profile] = {default.id: default}
+        self.profiles: dict[str, Profile] = {default.id: default} if include_default else {}
         self.sessions: dict[str, DbSession] = {}
         self._guard = threading.RLock()
 
@@ -128,7 +132,9 @@ class MySQLWorkbench:
         return [profile.public() for profile in self.profiles.values()]
 
     def test_profile(self, profile_id: str) -> dict[str, Any]:
-        profile = self.require_profile(profile_id)
+        return self.test_connection(self.require_profile(profile_id))
+
+    def test_connection(self, profile: Profile) -> dict[str, Any]:
         started = time.perf_counter()
         conn = self._connect(profile)
         try:
