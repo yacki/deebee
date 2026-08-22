@@ -11,7 +11,7 @@ DeeBee 是一个支持 MySQL 和 PostgreSQL 的浏览器数据库工作台。它
 ```bash
 git clone https://github.com/yacki/deebee.git
 cd deebee
-docker compose up -d --build
+docker compose up -d
 ```
 
 打开 `http://localhost:3000`，首次登录使用 `admin / deebee`。默认只监听本机地址；正式使用前请复制 `.env.example` 为 `.env` 并修改管理员密码。
@@ -38,7 +38,7 @@ docker compose up -d
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose up -d --pull always
 ```
 
 ## 预构建镜像
@@ -48,7 +48,7 @@ GitHub Actions 会为 `linux/amd64` 和 `linux/arm64` 发布以下 GHCR 镜像�
 - `ghcr.io/yacki/deebee-api:latest`
 - `ghcr.io/yacki/deebee-web:latest`
 
-Compose 同时保留本地构建配置，因此从源码执行 `docker compose up -d --build` 不依赖镜像仓库，也不需要 Docker Hub 账号。
+Compose 会直接拉取公开镜像，不需要 Docker Hub 账号；需要从源码构建时可执行 `docker compose up -d --build`。
 
 ## 本地开发
 
