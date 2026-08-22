@@ -8,7 +8,7 @@ import time
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
-from deebee.main import app
+from deebee.main import api_app as app
 from deebee.mysql import workbench
 
 

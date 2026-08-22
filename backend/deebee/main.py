@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -683,3 +683,19 @@ async def apply_ddl(body: DdlApplyBody, _: str = Depends(current_user)) -> dict[
 web_directory = os.getenv("DEEBEE_WEB_DIR", "").strip()
 if web_directory:
     app.mount("/", StaticFiles(directory=Path(web_directory), html=True), name="web")
+
+api_app = app
+if settings.base_path:
+    public_app = FastAPI(
+        title="DeeBee",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    @public_app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    async def redirect_to_deebee() -> RedirectResponse:
+        return RedirectResponse(f"{settings.base_path}/")
+
+    public_app.mount(settings.base_path, api_app)
+    app = public_app

@@ -6,6 +6,7 @@ import vue from "@vitejs/plugin-vue";
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 export default defineConfig({
+    base: "./",
     server: isCodexSeatbeltSandbox
       ? {
           watch: { useFsEvents: false, usePolling: true },

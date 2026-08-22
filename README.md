@@ -16,11 +16,34 @@ docker run -d --name deebee --restart unless-stopped \
   ghcr.io/yacki/deebee:latest
 ```
 
-Docker 会自动从 GitHub Container Registry 拉取包含前端和后端的完整镜像。打开 `http://localhost:3000`，首次登录使用 `admin / deebee`。
+Docker 会自动从 GitHub Container Registry 拉取包含前端和后端的完整镜像。打开 `http://localhost:3000/deebee/`，首次登录使用 `admin / deebee`。访问根路径时也会自动跳转到 `/deebee/`。
 
 默认只监听当前电脑。正式使用建议在命令中增加 `-e DEEBEE_ADMIN_PASSWORD='你的强密码'`；如果需要让局域网其他设备访问，将端口参数改为 `-p 3000:3000`，并务必设置强密码。
 
 登录后点击左侧“连接”标题旁的 `+`，在界面中添加 MySQL 或 PostgreSQL。数据库运行在 Docker 宿主机上时，连接主机名使用 `host.docker.internal`。
+
+### 路径与反向代理
+
+默认访问前缀是 `/deebee`。可以通过 `-e DEEBEE_BASE_PATH=/其他路径` 修改；设为 `/` 则部署在域名根路径。前端资源和 API 会自动跟随这个路径，无需重新构建镜像。
+
+Nginx 反向代理到本机 3000 端口时，应保留 `/deebee` 前缀。注意 `proxy_pass` 后面不能带 `/`：
+
+```nginx
+location = /deebee {
+    return 301 /deebee/;
+}
+
+location ^~ /deebee/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 60m;
+    proxy_read_timeout 3600s;
+}
+```
 
 ### 数据持久化
 
@@ -58,7 +81,7 @@ GitHub Actions 会为 `linux/amd64` 和 `linux/arm64` 发布一个前后端合�
 
 1. 复制 `backend/.env.example` 为 `backend/.env`。
 2. 在 `backend` 中创建 Python 3.12 虚拟环境并安装 `requirements.txt`。
-3. 运行 `uvicorn deebee.main:app --host 127.0.0.1 --port 8000`。
+3. 前后端分开开发时，在 `backend` 中运行 `DEEBEE_BASE_PATH=/ uvicorn deebee.main:app --host 127.0.0.1 --port 8000`。
 4. 在项目根目录运行 `npm install && npm run dev`。
 5. 打开 `http://localhost:5173`。
 

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from deebee.config import persistent_secret, settings
-from deebee.main import app, workbench
+from deebee.main import api_app, app, workbench
 from deebee.workbench import DatabaseWorkbenches
 
 
@@ -93,7 +93,7 @@ def test_connection_crud_is_encrypted_and_survives_restart(tmp_path: Path) -> No
 
 
 def test_connection_management_api_contract(monkeypatch: Any) -> None:
-    client = TestClient(app)
+    client = TestClient(api_app)
     login = client.post(
         "/api/auth/login",
         json={"username": settings.admin_user, "password": settings.admin_password},
@@ -153,3 +153,15 @@ def test_connection_management_api_contract(monkeypatch: Any) -> None:
     deleted = client.delete("/api/connections/postgresql-api", headers=headers)
     assert deleted.status_code == 204
     assert calls["delete"] == "postgresql-api"
+
+
+def test_default_base_path_routes_api_and_redirects_root() -> None:
+    client = TestClient(app)
+
+    redirected = client.get("/", follow_redirects=False)
+    assert redirected.status_code == 307
+    assert redirected.headers["location"] == f"{settings.base_path}/"
+
+    health = client.get(f"{settings.base_path}/api/health")
+    assert health.status_code == 200
+    assert health.json()["ok"] is True

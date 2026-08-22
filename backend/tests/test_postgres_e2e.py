@@ -5,7 +5,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from deebee.main import app
+from deebee.main import api_app as app
 
 
 pytestmark = pytest.mark.skipif(

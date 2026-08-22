@@ -5,7 +5,7 @@ import time
 
 from fastapi.testclient import TestClient
 
-from deebee.main import app
+from deebee.main import api_app as app
 
 
 DATABASE = "deebee_e2e"

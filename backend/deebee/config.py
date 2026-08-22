@@ -27,6 +27,14 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def base_path() -> str:
+    """Return a normalized URL prefix, or an empty string for root hosting."""
+    value = os.getenv("DEEBEE_BASE_PATH", "/deebee").strip()
+    if value in {"", "/"}:
+        return ""
+    return "/" + value.strip("/")
+
+
 def persistent_secret(connections_file: Path) -> str:
     """Return an explicit secret or create a stable one beside persisted data."""
     configured = os.getenv("DEEBEE_TOKEN_SECRET", "").strip()
@@ -72,6 +80,7 @@ _connections_file = Path(
 
 @dataclass(frozen=True)
 class Settings:
+    base_path: str = base_path()
     admin_user: str = os.getenv("DEEBEE_ADMIN_USER", "admin")
     admin_password: str = os.getenv("DEEBEE_ADMIN_PASSWORD", "deebee")
     token_secret: str = persistent_secret(_connections_file)

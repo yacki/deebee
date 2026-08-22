@@ -21,5 +21,6 @@ COPY backend/deebee ./deebee
 COPY --from=web-builder /web/dist ./web
 
 ENV DEEBEE_WEB_DIR=/app/web
+ENV DEEBEE_BASE_PATH=/deebee
 EXPOSE 3000
 CMD ["uvicorn", "deebee.main:app", "--host", "0.0.0.0", "--port", "3000"]
