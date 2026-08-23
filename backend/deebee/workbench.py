@@ -348,14 +348,14 @@ class DatabaseWorkbenches:
             target=target, with_data=with_data, schema=schema,
         )
 
-    def object_ddl(self, profile_id: str, database: str, kind: str, name: str, schema: str = "") -> dict[str, Any]:
-        return self._schema_call(self._engine(profile_id), "object_ddl", profile_id, database, kind, name, schema=schema)
+    def object_ddl(self, profile_id: str, database: str, kind: str, name: str, schema: str = "", object_id: int | None = None) -> dict[str, Any]:
+        return self._schema_call(self._engine(profile_id), "object_ddl", profile_id, database, kind, name, object_id=object_id, schema=schema)
 
     def object_action(
         self, profile_id: str, database: str, kind: str, name: str, action: str,
-        schema: str = "",
+        schema: str = "", object_id: int | None = None,
     ) -> dict[str, Any]:
-        return self._schema_call(self._engine(profile_id), "object_action", profile_id, database, kind, name, action, schema=schema)
+        return self._schema_call(self._engine(profile_id), "object_action", profile_id, database, kind, name, action, object_id=object_id, schema=schema)
 
     def search_objects(self, profile_id: str, database: str, term: str, schema: str = "") -> list[dict[str, Any]]:
         return self._schema_call(self._engine(profile_id), "search_objects", profile_id, database, term, schema=schema)

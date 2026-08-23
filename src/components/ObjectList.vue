@@ -14,7 +14,7 @@ function bytes(value?: number) { if (value == null) return "—"; if (value < 10
     <div class="object-table">
       <table>
         <thead><tr><th>名称</th><th>行数</th><th>数据大小</th><th>索引大小</th><th>引擎</th><th>创建时间</th><th>更新时间</th><th>排序规则</th><th>注释</th></tr></thead><tbody>
-          <tr v-for="item in items" :key="item.name" @dblclick="tab.kind === 'tables' ? emit('openTable', item.name) : undefined" @contextmenu.prevent="emit('menu', $event, item)"><td><Icon :icon="tab.kind === 'tables' ? 'lucide:table-2' : 'lucide:box'" />{{ item.name }}</td><td>{{ item.estimated_rows ?? '—' }}</td><td>{{ bytes(item.data_length) }}</td><td>{{ bytes(item.index_length) }}</td><td>{{ item.engine || '—' }}</td><td>{{ item.created_at || '—' }}</td><td>{{ item.updated_at || '—' }}</td><td>{{ item.collation || '—' }}</td><td>{{ item.comment || '—' }}</td></tr>
+          <tr v-for="item in items" :key="item.object_id ?? item.name" @dblclick="tab.kind === 'tables' ? emit('openTable', item.name) : undefined" @contextmenu.prevent="emit('menu', $event, item)"><td><Icon :icon="tab.kind === 'tables' ? 'lucide:table-2' : 'lucide:box'" />{{ item.name }}{{ item.identity_arguments !== undefined ? `(${item.identity_arguments})` : '' }}</td><td>{{ item.estimated_rows ?? '—' }}</td><td>{{ bytes(item.data_length) }}</td><td>{{ bytes(item.index_length) }}</td><td>{{ item.engine || '—' }}</td><td>{{ item.created_at || '—' }}</td><td>{{ item.updated_at || '—' }}</td><td>{{ item.collation || '—' }}</td><td>{{ item.comment || '—' }}</td></tr>
         </tbody>
       </table>
     </div>

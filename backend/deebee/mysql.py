@@ -505,7 +505,7 @@ class MySQLWorkbench:
         finally:
             conn.close()
 
-    def object_ddl(self, profile_id: str, database: str, kind: str, name: str) -> dict[str, Any]:
+    def object_ddl(self, profile_id: str, database: str, kind: str, name: str, object_id: int | None = None) -> dict[str, Any]:
         allowed = {"table": "TABLE", "view": "VIEW", "function": "FUNCTION", "procedure": "PROCEDURE", "trigger": "TRIGGER", "event": "EVENT"}
         keyword = allowed.get(kind.lower())
         if not keyword:
@@ -521,7 +521,7 @@ class MySQLWorkbench:
         finally:
             conn.close()
 
-    def object_action(self, profile_id: str, database: str, kind: str, name: str, action: str) -> dict[str, Any]:
+    def object_action(self, profile_id: str, database: str, kind: str, name: str, action: str, object_id: int | None = None) -> dict[str, Any]:
         allowed = {"view": "VIEW", "function": "FUNCTION", "procedure": "PROCEDURE", "trigger": "TRIGGER", "event": "EVENT"}
         keyword = allowed.get(kind.lower())
         if not keyword:
@@ -792,15 +792,16 @@ class MySQLWorkbench:
         schema = self.table_schema(profile_id, database, table)
         allowed = {column["name"] for column in schema["columns"]}
         fields = [field for field in values if field in allowed]
-        if not fields:
-            raise DeeBeeError("没有可写入的字段")
         profile = self.require_profile(profile_id)
         conn = self._connect(profile, database)
         try:
             with conn.cursor() as cursor:
-                placeholders = ", ".join(["%s"] * len(fields))
-                sql = f"INSERT INTO {quote_ident(table)} ({', '.join(quote_ident(f) for f in fields)}) VALUES ({placeholders})"
-                cursor.execute(sql, [values[field] for field in fields])
+                if fields:
+                    placeholders = ", ".join(["%s"] * len(fields))
+                    sql = f"INSERT INTO {quote_ident(table)} ({', '.join(quote_ident(f) for f in fields)}) VALUES ({placeholders})"
+                    cursor.execute(sql, [values[field] for field in fields])
+                else:
+                    cursor.execute(f"INSERT INTO {quote_ident(table)} () VALUES ()")
                 return {"affected_rows": cursor.rowcount, "last_insert_id": cursor.lastrowid}
         except pymysql.MySQLError as exc:
             raise DeeBeeError(str(exc.args[1] if len(exc.args) > 1 else exc), exc.args[0] if exc.args else None) from exc
@@ -946,8 +947,15 @@ class MySQLWorkbench:
         columns = [str(item) for item in index.get("columns", []) if item]
         if not name or not columns:
             raise DeeBeeError("索引名称和字段不能为空")
+        index_type = str(index.get("type") or "BTREE").upper()
+        if index_type not in {"BTREE", "HASH", "FULLTEXT"}:
+            raise DeeBeeError(f"MySQL 不支持索引类型：{index_type}")
+        if index_type == "FULLTEXT":
+            if index.get("unique"):
+                raise DeeBeeError("FULLTEXT 索引不能设置为唯一索引")
+            return f"FULLTEXT KEY {quote_ident(name)} ({', '.join(quote_ident(item) for item in columns)})"
         prefix = "UNIQUE KEY" if index.get("unique") else "KEY"
-        return f"{prefix} {quote_ident(name)} ({', '.join(quote_ident(item) for item in columns)})"
+        return f"{prefix} {quote_ident(name)} ({', '.join(quote_ident(item) for item in columns)}) USING {index_type}"
 
     def _foreign_key_sql(self, fk: dict[str, Any]) -> str:
         name = str(fk.get("name", ""))
@@ -1015,11 +1023,11 @@ class MySQLWorkbench:
         desired_indexes = {item["name"]: item for item in desired.get("indexes", []) if item.get("name") != "PRIMARY"}
         for name, old in current_indexes.items():
             new = desired_indexes.get(name)
-            if not new or old["columns"] != new.get("columns", []) or bool(old["unique"]) != bool(new.get("unique")):
+            if not new or old["columns"] != new.get("columns", []) or bool(old["unique"]) != bool(new.get("unique")) or str(old.get("type") or "BTREE").upper() != str(new.get("type") or "BTREE").upper():
                 statements.append(f"ALTER TABLE {target} DROP INDEX {quote_ident(name)}")
         for name, index in desired_indexes.items():
             old = current_indexes.get(name)
-            if not old or old["columns"] != index.get("columns", []) or bool(old["unique"]) != bool(index.get("unique")):
+            if not old or old["columns"] != index.get("columns", []) or bool(old["unique"]) != bool(index.get("unique")) or str(old.get("type") or "BTREE").upper() != str(index.get("type") or "BTREE").upper():
                 statements.append(f"ALTER TABLE {target} ADD {self._index_sql(index)}")
         current_fks = {item["name"]: item for item in current.get("foreign_keys", [])}
         desired_fks = {item["name"]: item for item in desired.get("foreign_keys", [])}

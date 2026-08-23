@@ -345,8 +345,9 @@ class PostgresWorkbench:
                 )
                 relations = [clean_row(row) for row in cursor.fetchall()]
                 cursor.execute(
-                    "SELECT p.proname AS name, CASE p.prokind WHEN 'p' THEN 'PROCEDURE' "
-                    "ELSE 'FUNCTION' END AS object_type, pg_get_function_result(p.oid) AS data_type "
+                    "SELECT p.oid AS object_id, p.proname AS name, CASE p.prokind WHEN 'p' THEN 'PROCEDURE' "
+                    "ELSE 'FUNCTION' END AS object_type, pg_get_function_result(p.oid) AS data_type, "
+                    "pg_get_function_identity_arguments(p.oid) AS identity_arguments "
                     "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
                     "WHERE n.nspname=%s ORDER BY p.proname", (schema,),
                 )
@@ -664,22 +665,28 @@ class PostgresWorkbench:
             parts.append("NOT NULL")
         default = column.get("default")
         if default not in (None, "") and "SERIAL" not in data_type.upper():
-            raw = str(default)
-            safe_expression = (
-                re.fullmatch(r"[-+]?\d+(?:\.\d+)?|NULL|TRUE|FALSE|CURRENT_(?:DATE|TIME|TIMESTAMP)|now\(\)", raw, re.I)
-                or re.fullmatch(r"'(?:''|[^'])*'::[A-Za-z][A-Za-z0-9_ ]*(?:\(\d+(?:,\d+)?\))?", raw)
-                or re.fullmatch(r"nextval\('[A-Za-z0-9_.'\"]+'::regclass\)", raw)
-            )
-            if safe_expression:
-                parts.append(f"DEFAULT {raw}")
-            else:
-                parts.append("DEFAULT '" + raw.replace("'", "''") + "'")
+            parts.append(f"DEFAULT {self._default_sql(default)}")
         return " ".join(parts)
+
+    @staticmethod
+    def _default_sql(default: Any) -> str:
+        raw = str(default)
+        safe_expression = (
+            re.fullmatch(r"[-+]?\d+(?:\.\d+)?|NULL|TRUE|FALSE|CURRENT_(?:DATE|TIME|TIMESTAMP)|now\(\)", raw, re.I)
+            or re.fullmatch(r"'(?:''|[^'])*'::[A-Za-z][A-Za-z0-9_ ]*(?:\(\d+(?:,\d+)?\))?", raw)
+            or re.fullmatch(r"nextval\('[A-Za-z0-9_.'\"]+'::regclass\)", raw)
+        )
+        return raw if safe_expression else "'" + raw.replace("'", "''") + "'"
 
     def _index_sql(self, schema: str, table: str, index: dict[str, Any]) -> str:
         unique = "UNIQUE " if index.get("unique") else ""
+        index_type = str(index.get("type") or "BTREE").upper()
+        if index_type not in {"BTREE", "HASH", "GIN", "GIST", "BRIN"}:
+            raise DeeBeeError(f"PostgreSQL 不支持索引类型：{index_type}")
+        if index.get("unique") and index_type != "BTREE":
+            raise DeeBeeError("PostgreSQL 只有 BTREE 索引支持唯一约束")
         columns = ", ".join(quote_ident(str(item)) for item in index.get("columns", []))
-        return f"CREATE {unique}INDEX {quote_ident(str(index.get('name', '')))} ON {qualified(schema, table)} ({columns})"
+        return f"CREATE {unique}INDEX {quote_ident(str(index.get('name', '')))} ON {qualified(schema, table)} USING {index_type} ({columns})"
 
     def _foreign_sql(self, fk: dict[str, Any]) -> str:
         columns = ", ".join(quote_ident(str(item)) for item in fk.get("columns", []))
@@ -739,10 +746,28 @@ class PostgresWorkbench:
                 statements.append(f"ALTER TABLE {target} ADD COLUMN {self._column_sql(column)}")
                 continue
             old = old_columns[name]
+            old_extra = str(old.get("extra") or "").upper()
+            new_extra = str(column.get("extra") or "").upper()
+            old_generation = str(old.get("generation") or "").strip()
+            new_generation = str(column.get("generation") or "").strip()
+            if old_generation != new_generation or ("GENERATED" in old_extra) != ("GENERATED" in new_extra):
+                raise DeeBeeError(f"PostgreSQL 不能安全地原地修改生成字段 {name}；请新建字段并迁移引用")
+            if ("AUTO_INCREMENT" in old_extra) != ("AUTO_INCREMENT" in new_extra):
+                raise DeeBeeError(f"PostgreSQL 不能在现有字段 {name} 上切换 SERIAL；请改用 IDENTITY")
             if str(old["data_type"]).lower() != str(column.get("data_type", "")).lower():
                 statements.append(f"ALTER TABLE {target} ALTER COLUMN {quote_ident(name)} TYPE {column['data_type']} USING {quote_ident(name)}::{column['data_type']}")
             if bool(old["nullable"]) != bool(column.get("nullable", True)):
                 statements.append(f"ALTER TABLE {target} ALTER COLUMN {quote_ident(name)} " + ("DROP" if column.get("nullable", True) else "SET") + " NOT NULL")
+            old_default = old.get("default")
+            new_default = column.get("default")
+            if ("IDENTITY" in old_extra) != ("IDENTITY" in new_extra):
+                if "IDENTITY" in new_extra and old_default not in (None, ""):
+                    statements.append(f"ALTER TABLE {target} ALTER COLUMN {quote_ident(name)} DROP DEFAULT")
+                identity_action = "ADD GENERATED ALWAYS AS IDENTITY" if "IDENTITY" in new_extra else "DROP IDENTITY IF EXISTS"
+                statements.append(f"ALTER TABLE {target} ALTER COLUMN {quote_ident(name)} {identity_action}")
+            if old_default != new_default and "IDENTITY" not in new_extra and "GENERATED" not in new_extra:
+                default_action = "DROP DEFAULT" if new_default in (None, "") else f"SET DEFAULT {self._default_sql(new_default)}"
+                statements.append(f"ALTER TABLE {target} ALTER COLUMN {quote_ident(name)} {default_action}")
             if str(old.get("comment") or "") != str(column.get("comment") or ""):
                 comment = column.get("comment")
                 value = "NULL" if not comment else "'" + str(comment).replace("'", "''") + "'"
@@ -762,7 +787,7 @@ class PostgresWorkbench:
         for name in old_indexes.keys() - new_indexes.keys():
             statements.append(f"DROP INDEX {qualified(schema, name)}")
         for name, index in new_indexes.items():
-            if name not in old_indexes or old_indexes[name]["columns"] != index.get("columns") or old_indexes[name]["unique"] != bool(index.get("unique")):
+            if name not in old_indexes or old_indexes[name]["columns"] != index.get("columns") or old_indexes[name]["unique"] != bool(index.get("unique")) or str(old_indexes[name].get("type") or "BTREE").upper() != str(index.get("type") or "BTREE").upper():
                 if name in old_indexes:
                     statements.append(f"DROP INDEX {qualified(schema, name)}")
                 statements.append(self._index_sql(schema, table, index))
@@ -829,7 +854,7 @@ class PostgresWorkbench:
         result = self.execute_script(profile_id, database, sql, schema)
         return {"ok": True, "results": result.get("results", [])}
 
-    def object_ddl(self, profile_id: str, database: str, kind: str, name: str, schema: str = "") -> dict[str, Any]:
+    def object_ddl(self, profile_id: str, database: str, kind: str, name: str, object_id: int | None = None, schema: str = "") -> dict[str, Any]:
         profile = self.require_profile(profile_id)
         schema = schema or profile.default_schema
         conn = self._connect(profile, database)
@@ -838,12 +863,20 @@ class PostgresWorkbench:
                 if kind in {"view", "materialized view"}:
                     cursor.execute("SELECT pg_get_viewdef(%s::regclass,true) AS body", (f"{quote_ident(schema)}.{quote_ident(name)}",))
                     row = cursor.fetchone()
-                    sql = f"CREATE OR REPLACE VIEW {qualified(schema, name)} AS\n{str(row['body']).rstrip(';')};" if row else ""
+                    keyword = "CREATE MATERIALIZED VIEW" if kind == "materialized view" else "CREATE OR REPLACE VIEW"
+                    sql = f"{keyword} {qualified(schema, name)} AS\n{str(row['body']).rstrip(';')};" if row else ""
                 elif kind in {"function", "procedure"}:
-                    cursor.execute(
-                        "SELECT pg_get_functiondef(p.oid) AS sql FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=%s AND p.proname=%s ORDER BY p.oid LIMIT 1",
-                        (schema, name),
-                    )
+                    expected_kind = "p" if kind == "procedure" else "f"
+                    if object_id is not None:
+                        cursor.execute(
+                            "SELECT pg_get_functiondef(p.oid) AS sql FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid=%s AND n.nspname=%s AND p.proname=%s AND p.prokind=%s",
+                            (object_id, schema, name, expected_kind),
+                        )
+                    else:
+                        cursor.execute(
+                            "SELECT pg_get_functiondef(p.oid) AS sql FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=%s AND p.proname=%s AND p.prokind=%s ORDER BY p.oid LIMIT 1",
+                            (schema, name, expected_kind),
+                        )
                     row = cursor.fetchone(); sql = row["sql"] if row else ""
                 elif kind == "trigger":
                     cursor.execute(
@@ -861,7 +894,7 @@ class PostgresWorkbench:
         finally:
             conn.close()
 
-    def object_action(self, profile_id: str, database: str, kind: str, name: str, action: str, schema: str = "") -> dict[str, Any]:
+    def object_action(self, profile_id: str, database: str, kind: str, name: str, action: str, object_id: int | None = None, schema: str = "") -> dict[str, Any]:
         profile = self.require_profile(profile_id)
         schema = schema or profile.default_schema
         if action in {"enable", "disable"} and kind == "trigger":
@@ -882,7 +915,22 @@ class PostgresWorkbench:
                 raise DeeBeeError("触发器不存在")
             sql = f"DROP TRIGGER {quote_ident(name)} ON {qualified(schema, item['table_name'])}"
         elif normalized in {"FUNCTION", "PROCEDURE"}:
-            raise DeeBeeError("删除重载函数/过程需要在 SQL 编辑器中指定参数类型")
+            if object_id is None:
+                raise DeeBeeError("缺少函数/过程签名，请刷新对象列表后重试")
+            conn = self._connect(profile, database)
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_get_function_identity_arguments(p.oid) AS args, p.prokind FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid=%s AND n.nspname=%s AND p.proname=%s",
+                        (object_id, schema, name),
+                    )
+                    routine = cursor.fetchone()
+            finally:
+                conn.close()
+            expected_kind = "p" if normalized == "PROCEDURE" else "f"
+            if not routine or routine["prokind"] != expected_kind:
+                raise DeeBeeError("函数/过程不存在或签名已变化")
+            sql = f"DROP {normalized} {qualified(schema, name)}({routine['args']})"
         else:
             sql = f"DROP {normalized} {qualified(schema, name)}"
         return self.execute_script(profile_id, database, sql, schema)

@@ -182,6 +182,7 @@ class GenericObjectActionBody(SchemaBody):
     database: str
     kind: Literal["view", "materialized view", "function", "procedure", "trigger", "event"]
     name: str
+    object_id: int | None = None
     action: Literal["drop", "enable", "disable"]
 
 
@@ -212,6 +213,26 @@ def _parse_import_rows(filename: str, content: bytes) -> list[dict[str, Any]]:
         headers = [str(item) if item is not None else "" for item in values[0]]
         return [dict(zip(headers, row)) for row in values[1:]]
     raise DeeBeeError("仅支持 CSV、JSON 和 XLSX 文件")
+
+
+def _sql_export_literal(value: Any, driver: str, data_type: str = "") -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, dict) and isinstance(value.get("$binary"), str):
+        hex_value = value["$binary"]
+        return f"decode('{hex_value}','hex')" if driver == "postgresql" else f"X'{hex_value}'"
+    if isinstance(value, list) and driver == "postgresql" and data_type.strip().endswith("[]"):
+        item_type = data_type.strip()[:-2]
+        return "ARRAY[" + ", ".join(_sql_export_literal(item, driver, item_type) for item in value) + "]"
+    raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, (dict, list)) else str(value)
+    escaped = raw.replace("'", "''")
+    if driver == "mysql":
+        escaped = escaped.replace("\\", "\\\\")
+    return "'" + escaped + "'"
 
 
 @app.get("/api/health")
@@ -326,17 +347,17 @@ async def table_action(body: ObjectActionBody, _: str = Depends(current_user)) -
 
 @app.get("/api/objects/{profile_id}/{database}/{kind}/{name}/ddl")
 async def object_ddl(
-    profile_id: str, database: str, kind: str, name: str, schema: str = "",
+    profile_id: str, database: str, kind: str, name: str, schema: str = "", object_id: int | None = None,
     _: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.object_ddl, profile_id, database, kind, name, schema)
+    return await asyncio.to_thread(workbench.object_ddl, profile_id, database, kind, name, schema, object_id)
 
 
 @app.post("/api/objects/action")
 async def generic_object_action(body: GenericObjectActionBody, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
         workbench.object_action, body.profile_id, body.database, body.kind, body.name,
-        body.action, body.schema_
+        body.action, body.schema_, body.object_id
     )
 
 
@@ -484,26 +505,19 @@ async def export_data(
     )
     rows = payload["rows"]
     columns = [item["name"] for item in payload["columns"]]
+    column_types = {item["name"]: str(item.get("data_type") or "") for item in payload["columns"]}
     filename = f"{table}.{format}"
     if format == "json":
         data = json.dumps(rows, ensure_ascii=False, indent=2).encode("utf-8")
         media_type = "application/json"
     elif format == "sql":
-        quote = '"' if workbench.profile_driver(profile_id) == "postgresql" else "`"
+        driver = workbench.profile_driver(profile_id)
+        quote = '"' if driver == "postgresql" else "`"
         def quote_name(value: str) -> str:
             return quote + value.replace(quote, quote + quote) + quote
         output = []
         for row in rows:
-            values = []
-            for column in columns:
-                value = row.get(column)
-                if value is None:
-                    values.append("NULL")
-                elif isinstance(value, (int, float)):
-                    values.append(str(value))
-                else:
-                    escaped = str(value).replace("'", "''")
-                    values.append("'" + escaped + "'")
+            values = [_sql_export_literal(row.get(column), driver, column_types[column]) for column in columns]
             escaped_columns = ", ".join(quote_name(column) for column in columns)
             target = f"{quote_name(schema)}.{quote_name(table)}" if schema else quote_name(table)
             output.append(f"INSERT INTO {target} ({escaped_columns}) VALUES ({', '.join(values)});")
@@ -515,7 +529,7 @@ async def export_data(
         sheet.title = table[:31]
         sheet.append(columns)
         for row in rows:
-            sheet.append([json.dumps(row.get(column), ensure_ascii=False) if isinstance(row.get(column), dict) else row.get(column) for column in columns])
+            sheet.append([json.dumps(row.get(column), ensure_ascii=False) if isinstance(row.get(column), (dict, list)) else row.get(column) for column in columns])
         buffer = io.BytesIO()
         workbook.save(buffer)
         data = buffer.getvalue()

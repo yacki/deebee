@@ -21,10 +21,32 @@ function currentStatement(editor: Monaco.editor.IStandaloneCodeEditor) {
   const model = editor.getModel(); if (!model) return editor.getValue();
   const selection = editor.getSelection(); if (selection && !selection.isEmpty()) return model.getValueInRange(selection);
   const position = editor.getPosition(); const sql = editor.getValue(); const offset = position ? model.getOffsetAt(position) : 0;
-  let start = offset; let end = offset;
-  while (start > 0 && sql[start - 1] !== ";") start--;
-  while (end < sql.length && sql[end] !== ";") end++;
-  return sql.slice(start, end + (sql[end] === ";" ? 1 : 0)).trim() || sql;
+  let start = 0; let state: "normal"|"single"|"double"|"backtick"|"line"|"block"|"dollar" = "normal"; let dollar = "";
+  for (let index = 0; index < sql.length; index++) {
+    const char = sql[index]; const next = sql[index + 1];
+    if (state === "line") { if (char === "\n") state = "normal"; continue; }
+    if (state === "block") { if (char === "*" && next === "/") { state = "normal"; index++; } continue; }
+    if (state === "dollar") { if (sql.startsWith(dollar, index)) { state = "normal"; index += dollar.length - 1; } continue; }
+    if (state !== "normal") {
+      const quote = state === "single" ? "'" : state === "double" ? '"' : "`";
+      if (char === "\\") { index++; continue; }
+      if (char === quote && next === quote) { index++; continue; }
+      if (char === quote) state = "normal";
+      continue;
+    }
+    if ((char === "-" && next === "-") || char === "#") { state = "line"; if (next === "-") index++; continue; }
+    if (char === "/" && next === "*") { state = "block"; index++; continue; }
+    if (char === "'") { state = "single"; continue; }
+    if (char === '"') { state = "double"; continue; }
+    if (char === "`") { state = "backtick"; continue; }
+    if (char === "$") { const match = sql.slice(index).match(/^\$(?:[A-Za-z_][\w$]*)?\$/); if (match) { dollar = match[0]; state = "dollar"; index += dollar.length - 1; continue; } }
+    if (char === ";") {
+      const end = index + 1;
+      if (offset >= start && offset <= end) return sql.slice(start, end).trim() || sql;
+      start = end;
+    }
+  }
+  return sql.slice(start).trim() || sql;
 }
 
 function registerCompletion() {
