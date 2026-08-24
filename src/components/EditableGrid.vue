@@ -13,6 +13,7 @@ const shell = ref<HTMLElement>();
 const selectedRows = ref(new Set<number>());
 const rowHeight = ref(30);
 const frozenThrough = ref(-1);
+let suppressSortClick = false;
 const columns = computed(() => props.columns || []);
 const MIN_COLUMN_WIDTH = 24;
 const MAX_COLUMN_WIDTH = 600;
@@ -26,10 +27,23 @@ function clampWidth(value: number) { return Math.max(MIN_COLUMN_WIDTH, Math.min(
 function width(name: string) { return clampWidth(widths[name] ?? DEFAULT_COLUMN_WIDTH); }
 function resize(event: PointerEvent, name: string) {
   event.preventDefault(); event.stopPropagation();
+  suppressSortClick = true;
   const start = event.clientX; const initial = width(name);
   const move = (next: PointerEvent) => { widths[name] = clampWidth(initial + next.clientX - start); };
-  const up = () => { localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); };
-  document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+  const finish = () => {
+    localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths));
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", finish);
+    window.setTimeout(() => { suppressSortClick = false; }, 0);
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", finish);
+  document.addEventListener("pointercancel", finish);
+}
+function sort(event: MouseEvent, name: string) {
+  if (suppressSortClick || (event.target as Element).closest(".resize-handle")) return;
+  emit("sort", name);
 }
 function adjustWidth(name: string, delta: number) { widths[name] = clampWidth(width(name) + delta); localStorage.setItem(`deebee_widths:${props.storageKey}`, JSON.stringify(widths)); }
 function setInput(element: unknown) { input.value = element instanceof HTMLInputElement ? element : undefined; }
@@ -69,9 +83,9 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
       <colgroup><col class="row-number-col" /><col v-for="column in columns" :key="column.name" :style="{ width: `${width(column.name)}px` }" /></colgroup>
       <thead>
         <tr>
-          <th class="row-number">#</th><th v-for="(column, columnIndex) in columns" :key="column.name" :class="{ frozen: columnIndex <= frozenThrough }" :style="stickyStyle(columnIndex)" @click="emit('sort', column.name)">
+          <th class="row-number">#</th><th v-for="(column, columnIndex) in columns" :key="column.name" :class="{ frozen: columnIndex <= frozenThrough }" :style="stickyStyle(columnIndex)" @click="sort($event, column.name)">
             <span class="column-title"><Icon v-if="primaryKey.includes(column.name)" icon="lucide:key-round" class="key-icon" />{{ column.name }}</span>
-            <i class="resize-handle" role="separator" tabindex="0" :aria-label="`调整 ${column.name} 列宽`" aria-orientation="vertical" :aria-valuemin="MIN_COLUMN_WIDTH" :aria-valuemax="MAX_COLUMN_WIDTH" :aria-valuenow="width(column.name)" @pointerdown="resize($event, column.name)" @keydown.left.prevent="adjustWidth(column.name,-16)" @keydown.right.prevent="adjustWidth(column.name,16)" />
+            <i class="resize-handle" role="separator" tabindex="0" :aria-label="`调整 ${column.name} 列宽`" aria-orientation="vertical" :aria-valuemin="MIN_COLUMN_WIDTH" :aria-valuemax="MAX_COLUMN_WIDTH" :aria-valuenow="width(column.name)" @click.stop @pointerdown="resize($event, column.name)" @keydown.left.stop.prevent="adjustWidth(column.name,-16)" @keydown.right.stop.prevent="adjustWidth(column.name,16)" />
           </th>
         </tr>
       </thead>

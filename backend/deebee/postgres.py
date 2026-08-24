@@ -540,7 +540,7 @@ class PostgresWorkbench:
 
     def table_data(
         self, profile_id: str, database: str, table: str, page: int, page_size: int,
-        filters: list[dict[str, Any]], sort: dict[str, Any] | None, schema: str = "",
+        filters: list[dict[str, Any]], sort: dict[str, Any] | None, schema: str = "", limit: int = 1000,
     ) -> dict[str, Any]:
         profile = self.require_profile(profile_id)
         schema = schema or profile.default_schema
@@ -576,14 +576,23 @@ class PostgresWorkbench:
         conn = self._connect(profile, database)
         try:
             with conn.cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) AS total FROM {target}{where}", params)
-                total = int(cursor.fetchone()["total"])
                 cursor.execute(
-                    f"SELECT * FROM {target}{where}{order} LIMIT %s OFFSET %s",
-                    [*params, page_size, (page - 1) * page_size],
+                    f"SELECT COUNT(*) AS total FROM (SELECT 1 FROM {target}{where} LIMIT %s) AS limited_rows",
+                    [*params, limit + 1],
                 )
-                rows = [clean_row(row) for row in cursor.fetchall()]
-            return {"columns": meta["columns"], "primary_key": meta["primary_key"], "rows": rows, "page": page, "page_size": page_size, "total": total}
+                detected_total = int(cursor.fetchone()["total"])
+                total = min(detected_total, limit)
+                limited = detected_total > limit
+                offset = (page - 1) * page_size
+                fetch_size = max(0, min(page_size, limit - offset))
+                rows: list[dict[str, Any]] = []
+                if fetch_size:
+                    cursor.execute(
+                        f"SELECT * FROM {target}{where}{order} LIMIT %s OFFSET %s",
+                        [*params, fetch_size, offset],
+                    )
+                    rows = [clean_row(row) for row in cursor.fetchall()]
+            return {"columns": meta["columns"], "primary_key": meta["primary_key"], "rows": rows, "page": page, "page_size": page_size, "total": total, "limited": limited}
         except Exception as exc:
             raise self._error(exc) from exc
         finally:

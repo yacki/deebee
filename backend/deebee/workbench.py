@@ -312,10 +312,11 @@ class DatabaseWorkbenches:
     def table_data(
         self, profile_id: str, database: str, table: str, page: int, page_size: int,
         filters: list[dict[str, Any]], sort: dict[str, Any] | None, schema: str = "",
+        limit: int = 1000,
     ) -> dict[str, Any]:
         return self._schema_call(
             self._engine(profile_id), "table_data", profile_id, database, table,
-            page, page_size, filters, sort, schema=schema,
+            page, page_size, filters, sort, schema=schema, limit=limit,
         )
 
     def insert_row(self, profile_id: str, database: str, table: str, values: dict[str, Any], schema: str = "") -> dict[str, Any]:

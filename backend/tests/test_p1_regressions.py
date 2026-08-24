@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from deebee.main import _sql_export_literal
+from deebee.main import DataRequest, _sql_export_literal
 from deebee.mysql import DeeBeeError, MySQLWorkbench, Profile
 from deebee.postgres import PostgresProfile, PostgresWorkbench
 
@@ -23,6 +23,67 @@ def test_sql_export_literals_preserve_complex_values() -> None:
     assert _sql_export_literal({"$binary": "00ff", "size": 2}, "postgresql", "bytea") == "decode('00ff','hex')"
     assert _sql_export_literal({"$binary": "00ff", "size": 2}, "mysql", "blob") == "X'00ff'"
     assert _sql_export_literal({"path": r"a\b"}, "mysql", "json") == "'" + r'{"path":"a\\\\b"}' + "'"
+
+
+def test_table_data_request_has_a_hard_1000_row_limit() -> None:
+    request = DataRequest(database="app", table="items")
+    assert request.limit == 1000
+    with pytest.raises(ValueError):
+        DataRequest(database="app", table="items", limit=1001)
+
+
+def test_mysql_table_browser_caps_count_and_page_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    executed: list[tuple[str, Any]] = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql: str, params: Any = None): executed.append((sql, params))
+        def fetchone(self): return {"total": 1001}
+        def fetchall(self): return [{"id": 901}]
+
+    class Connection:
+        def cursor(self): return Cursor()
+        def close(self): pass
+
+    workbench = MySQLWorkbench(include_default=False)
+    monkeypatch.setattr(workbench, "table_schema", lambda *_: {"columns": [{"name": "id"}], "primary_key": ["id"]})
+    monkeypatch.setattr(workbench, "require_profile", lambda *_: mysql_profile())
+    monkeypatch.setattr(workbench, "_connect", lambda *_: Connection())
+    result = workbench.table_data("mysql-test", "app", "items", 10, 100, [], None, limit=1000)
+
+    assert "SELECT COUNT(*)" in executed[0][0] and "LIMIT %s" in executed[0][0]
+    assert executed[0][1] == [1001]
+    assert executed[1][1] == [100, 900]
+    assert result["total"] == 1000
+    assert result["limited"] is True
+
+
+def test_postgres_table_browser_caps_count_and_page_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    executed: list[tuple[str, Any]] = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql: str, params: Any = None): executed.append((sql, params))
+        def fetchone(self): return {"total": 1001}
+        def fetchall(self): return [{"id": 901}]
+
+    class Connection:
+        def cursor(self): return Cursor()
+        def close(self): pass
+
+    workbench = PostgresWorkbench(include_default=False)
+    monkeypatch.setattr(workbench, "table_schema", lambda *_: {"columns": [{"name": "id"}], "primary_key": ["id"]})
+    monkeypatch.setattr(workbench, "require_profile", lambda *_: postgres_profile())
+    monkeypatch.setattr(workbench, "_connect", lambda *_: Connection())
+    result = workbench.table_data("pg-test", "app", "items", 10, 100, [], None, schema="public", limit=1000)
+
+    assert "SELECT COUNT(*)" in executed[0][0] and "LIMIT %s" in executed[0][0]
+    assert executed[0][1] == [1001]
+    assert executed[1][1] == [100, 900]
+    assert result["total"] == 1000
+    assert result["limited"] is True
 
 
 def test_mysql_index_type_is_not_ignored() -> None:

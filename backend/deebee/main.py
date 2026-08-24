@@ -118,6 +118,7 @@ class DataRequest(SchemaBody):
     table: str
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=100, ge=1, le=1000)
+    limit: int = Field(default=1000, ge=1, le=1000)
     filters: list[FilterItem] = Field(default_factory=list)
     sort: SortItem | None = None
 
@@ -459,6 +460,7 @@ async def read_data(body: DataRequest, _: str = Depends(current_user)) -> dict[s
         [item.model_dump() for item in body.filters],
         body.sort.model_dump() if body.sort else None,
         body.schema_,
+        body.limit,
     )
 
 

@@ -738,6 +738,7 @@ class MySQLWorkbench:
         page_size: int,
         filters: list[dict[str, Any]],
         sort: dict[str, str] | None,
+        limit: int = 1000,
     ) -> dict[str, Any]:
         schema = self.table_schema(profile_id, database, table)
         allowed = {column["name"] for column in schema["columns"]}
@@ -773,17 +774,25 @@ class MySQLWorkbench:
         try:
             with conn.cursor() as cursor:
                 target = f"{quote_ident(database)}.{quote_ident(table)}"
-                cursor.execute(f"SELECT COUNT(*) AS total FROM {target}{where}", values)
-                total = int((cursor.fetchone() or {}).get("total", 0))
-                offset = max(page - 1, 0) * page_size
                 cursor.execute(
-                    f"SELECT * FROM {target}{where}{order} LIMIT %s OFFSET %s",
-                    [*values, page_size, offset],
+                    f"SELECT COUNT(*) AS total FROM (SELECT 1 FROM {target}{where} LIMIT %s) AS limited_rows",
+                    [*values, limit + 1],
                 )
-                rows = [clean_row(row) for row in cursor.fetchall()]
+                detected_total = int((cursor.fetchone() or {}).get("total", 0))
+                total = min(detected_total, limit)
+                limited = detected_total > limit
+                offset = max(page - 1, 0) * page_size
+                fetch_size = max(0, min(page_size, limit - offset))
+                rows: list[dict[str, Any]] = []
+                if fetch_size:
+                    cursor.execute(
+                        f"SELECT * FROM {target}{where}{order} LIMIT %s OFFSET %s",
+                        [*values, fetch_size, offset],
+                    )
+                    rows = [clean_row(row) for row in cursor.fetchall()]
             return {
                 "columns": schema["columns"], "primary_key": schema["primary_key"], "rows": rows,
-                "page": page, "page_size": page_size, "total": total,
+                "page": page, "page_size": page_size, "total": total, "limited": limited,
             }
         finally:
             conn.close()

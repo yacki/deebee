@@ -1,4 +1,4 @@
-import { expect, request, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { expect, request, test, type APIRequestContext, type Locator, type Page, type Request } from "@playwright/test";
 
 const apiBase = `${(process.env.DEEBEE_API_URL || "http://127.0.0.1:8000/api").replace(/\/$/, "")}/`;
 const database = "deebee_e2e";
@@ -229,7 +229,9 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
   test("table data supports inline edit, persistent resizing, sorting and filtering", async ({ page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await login(page);
+    const initialDataRequest = page.waitForRequest(request => request.url().endsWith("/api/data/read") && request.method() === "POST");
     await tableNode(page).dblclick();
+    expect((await initialDataRequest).postDataJSON()).toMatchObject({ limit: 1000, page_size: 100 });
     await expect(page.getByText(`${database} · 双击单元格原地编辑`)).toHaveCount(0);
     await expect(page.locator(".data-view>.view-header")).toHaveCount(0);
     await expect(page.locator(".editable-grid-shell thead small")).toHaveCount(0);
@@ -249,6 +251,19 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     const nameHeader = page.getByRole("columnheader").filter({ hasText: "name" });
     const before = await nameHeader.boundingBox();
     const separator = page.getByRole("separator", { name: "调整 name 列宽" });
+    const resizeRequests: string[] = [];
+    const collectResizeRequest = (request: Request) => {
+      if (request.url().endsWith("/api/data/read") && request.method() === "POST") resizeRequests.push(request.url());
+    };
+    page.on("request", collectResizeRequest);
+    const separatorBox = await separator.boundingBox();
+    await page.mouse.move(separatorBox!.x + separatorBox!.width / 2, separatorBox!.y + separatorBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(separatorBox!.x + separatorBox!.width / 2 + 32, separatorBox!.y + separatorBox!.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+    page.off("request", collectResizeRequest);
+    expect(resizeRequests).toHaveLength(0);
     await separator.focus();
     for (let index = 0; index < 4; index++) await separator.press("ArrowRight");
     const after = await nameHeader.boundingBox();
