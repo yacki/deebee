@@ -3,7 +3,31 @@ import { Icon } from "@iconify/vue";
 import type { Column, DesignerTab, Index, ForeignKey, CheckConstraint, TableSpec } from "../types";
 const props = defineProps<{ tab: DesignerTab }>();
 const emit = defineEmits<{ update: [patch: Partial<TableSpec>]; pane: [pane: DesignerTab["pane"]]; preview: []; apply: [] }>();
-function setColumn(index: number, patch: Partial<Column>) { emit("update", { columns: props.tab.spec!.columns.map((column, row) => row === index ? { ...column, ...patch } : column) }); }
+function replaceColumn(values: string[], previous: string, next: string) { return values.map(value => value === previous ? next : value); }
+function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function setColumn(index: number, patch: Partial<Column>) {
+  const spec = props.tab.spec!;
+  const current = spec.columns[index];
+  const nextName = typeof patch.name === "string" ? patch.name.trim() : current.name;
+  if (nextName && nextName !== current.name) {
+    const pattern = new RegExp(`\\b${escapeRegex(current.name)}\\b`, "g");
+    emit("update", {
+      columns: spec.columns.map((column, row) => row === index ? { ...column, ...patch, name: nextName } : column),
+      primary_key: replaceColumn(spec.primary_key, current.name, nextName),
+      indexes: spec.indexes.map(item => ({ ...item, columns: replaceColumn(item.columns, current.name, nextName) })),
+      foreign_keys: spec.foreign_keys.map(item => ({
+        ...item,
+        columns: replaceColumn(item.columns, current.name, nextName),
+        referenced_columns: item.referenced_table === spec.table && (!item.referenced_schema || item.referenced_schema === spec.schema)
+          ? replaceColumn(item.referenced_columns, current.name, nextName)
+          : item.referenced_columns,
+      })),
+      checks: spec.checks.map(item => ({ ...item, clause: item.clause.replace(pattern, nextName) })),
+    });
+    return;
+  }
+  emit("update", { columns: spec.columns.map((column, row) => row === index ? { ...column, ...patch } : column) });
+}
 function addColumn() { const columns = props.tab.spec!.columns; emit("update", { columns: [...columns, { name: `field_${columns.length + 1}`, data_type: "VARCHAR(255)", nullable: true, default: null, extra: "", comment: "", generation: "" }] }); }
 function removeColumn(index: number) { emit("update", { columns: props.tab.spec!.columns.filter((_, row) => row !== index) }); }
 function setPrimary(name: string, checked: boolean) { const keys = props.tab.spec!.primary_key; emit("update", { primary_key: checked ? [...new Set([...keys, name])] : keys.filter(key => key !== name) }); }
@@ -23,7 +47,7 @@ const panes = [{ id: "columns", label: "字段", icon: "lucide:columns-3" }, { i
       <div class="designer-actions"><button @click="addColumn"><Icon icon="lucide:plus" />添加字段</button><span>双击或直接修改单元格内容</span></div><div class="structure-table">
         <table>
           <thead><tr><th>#</th><th>字段名</th><th>类型</th><th>NULL</th><th>主键</th><th>默认值</th><th>额外</th><th>生成表达式</th><th>注释</th><th /></tr></thead><tbody>
-            <tr v-for="(column, index) in tab.spec.columns" :key="index"><td>{{ index + 1 }}</td><td><input :value="column.name" @input="setColumn(index,{name:($event.target as HTMLInputElement).value})" /></td><td><input :value="column.data_type" @input="setColumn(index,{data_type:($event.target as HTMLInputElement).value})" /></td><td><input type="checkbox" :checked="column.nullable" @change="setColumn(index,{nullable:($event.target as HTMLInputElement).checked})" /></td><td><input type="checkbox" :checked="tab.spec.primary_key.includes(column.name)" @change="setPrimary(column.name,($event.target as HTMLInputElement).checked)" /></td><td><input :value="String(column.default ?? '')" @input="setColumn(index,{default:($event.target as HTMLInputElement).value || null})" /></td><td><input :value="column.extra" @input="setColumn(index,{extra:($event.target as HTMLInputElement).value})" /></td><td><input :value="column.generation || ''" @input="setColumn(index,{generation:($event.target as HTMLInputElement).value})" /></td><td><input :value="column.comment" @input="setColumn(index,{comment:($event.target as HTMLInputElement).value})" /></td><td><button class="icon-danger" @click="removeColumn(index)"><Icon icon="lucide:trash-2" /></button></td></tr>
+            <tr v-for="(column, index) in tab.spec.columns" :key="index"><td>{{ index + 1 }}</td><td><input :value="column.name" @change="setColumn(index,{name:($event.target as HTMLInputElement).value})" /></td><td><input :value="column.data_type" @input="setColumn(index,{data_type:($event.target as HTMLInputElement).value})" /></td><td><input type="checkbox" :checked="column.nullable" @change="setColumn(index,{nullable:($event.target as HTMLInputElement).checked})" /></td><td><input type="checkbox" :checked="tab.spec.primary_key.includes(column.name)" @change="setPrimary(column.name,($event.target as HTMLInputElement).checked)" /></td><td><input :value="String(column.default ?? '')" @input="setColumn(index,{default:($event.target as HTMLInputElement).value || null})" /></td><td><input :value="column.extra" @input="setColumn(index,{extra:($event.target as HTMLInputElement).value})" /></td><td><input :value="column.generation || ''" @input="setColumn(index,{generation:($event.target as HTMLInputElement).value})" /></td><td><input :value="column.comment" @input="setColumn(index,{comment:($event.target as HTMLInputElement).value})" /></td><td><button class="icon-danger" @click="removeColumn(index)"><Icon icon="lucide:trash-2" /></button></td></tr>
           </tbody>
         </table>
       </div>

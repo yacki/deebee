@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .connection_store import ConnectionStore
 from .config import settings
@@ -331,8 +331,23 @@ class DatabaseWorkbenches:
     def delete_row(self, profile_id: str, database: str, table: str, key: dict[str, Any], schema: str = "") -> dict[str, Any]:
         return self._schema_call(self._engine(profile_id), "delete_row", profile_id, database, table, key, schema=schema)
 
-    def bulk_insert(self, profile_id: str, database: str, table: str, rows: list[dict[str, Any]], schema: str = "") -> dict[str, Any]:
-        return self._schema_call(self._engine(profile_id), "bulk_insert", profile_id, database, table, rows, schema=schema)
+    def export_table(
+        self, profile_id: str, database: str, table: str, schema: str = ""
+    ) -> dict[str, Any]:
+        return self._schema_call(
+            self._engine(profile_id), "export_table", profile_id, database, table,
+            schema=schema,
+        )
+
+    def bulk_insert(
+        self, profile_id: str, database: str, table: str, rows: list[dict[str, Any]],
+        schema: str = "", *, cancelled: threading.Event | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
+        return self._schema_call(
+            self._engine(profile_id), "bulk_insert", profile_id, database, table, rows,
+            schema=schema, cancelled=cancelled, progress=progress,
+        )
 
     def preview_ddl(self, profile_id: str, spec: dict[str, Any], current_table: str | None = None) -> list[str]:
         return self._engine(profile_id).preview_ddl(profile_id, spec, current_table)
@@ -364,8 +379,15 @@ class DatabaseWorkbenches:
     def grants(self, profile_id: str, database: str = "", table: str = "", schema: str = "") -> Any:
         return self._schema_call(self._engine(profile_id), "grants", profile_id, database, table, schema=schema)
 
-    def generate_data(self, profile_id: str, database: str, table: str, count: int, schema: str = "") -> dict[str, Any]:
-        return self._schema_call(self._engine(profile_id), "generate_data", profile_id, database, table, count, schema=schema)
+    def generate_data(
+        self, profile_id: str, database: str, table: str, count: int,
+        schema: str = "", *, cancelled: threading.Event | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
+        return self._schema_call(
+            self._engine(profile_id), "generate_data", profile_id, database, table, count,
+            schema=schema, cancelled=cancelled, progress=progress,
+        )
 
     def execute_script(self, profile_id: str, database: str, sql: str, schema: str = "") -> dict[str, Any]:
         return self._schema_call(self._engine(profile_id), "execute_script", profile_id, database, sql, schema=schema)

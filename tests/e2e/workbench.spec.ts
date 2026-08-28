@@ -4,6 +4,7 @@ const apiBase = `${(process.env.DEEBEE_API_URL || "http://127.0.0.1:8000/api").r
 const database = "deebee_e2e";
 const switchDatabase = process.env.DEEBEE_SWITCH_DATABASE || "mysql";
 const table = "deebee_ui_replica_e2e";
+const trigger = "deebee_ui_replica_trigger";
 const createdDatabase = "deebee_ui_created_e2e";
 const runShortcut = process.platform === "darwin" ? "Meta+Enter" : "Control+Enter";
 const documentStartShortcut = process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home";
@@ -55,6 +56,8 @@ test.beforeAll(async () => {
   await query(`DROP TABLE IF EXISTS \`${table}\``);
   await query(`CREATE TABLE \`${table}\` (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL, status VARCHAR(20) NOT NULL, amount DECIMAL(10,2), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
   await query(`INSERT INTO \`${table}\` (name,status,amount) VALUES ('Alpha','active',12.50),('Beta','pending',23.75),('Gamma','active',9.90)`);
+  await query(`DROP TRIGGER IF EXISTS \`${trigger}\``);
+  await query(`CREATE TRIGGER \`${trigger}\` BEFORE INSERT ON \`${table}\` FOR EACH ROW SET NEW.name = TRIM(NEW.name)`);
   for (const name of alignmentTables) {
     await query(`DROP TABLE IF EXISTS \`${name}\``);
     await query(`CREATE TABLE \`${name}\` (id INT PRIMARY KEY, value VARCHAR(20))`);
@@ -153,6 +156,38 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await expect(page.getByRole("cell", { name: "77", exact: true })).toBeVisible();
   });
 
+  test("lost sessions never auto-replay writes or a lost manual transaction", async ({ page }) => {
+    await login(page);
+    let attempts = 0;
+    await page.route("**/api/sessions/*/query", async route => {
+      attempts += 1;
+      if (attempts === 1) {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "Lost connection", code: 2013 } }),
+        });
+      } else await route.continue();
+    });
+    const editor = await setSql(page, `UPDATE \`${table}\` SET name=name WHERE id=-1;`);
+    const rebuiltSession = page.waitForResponse(response => response.url().endsWith("/api/sessions") && response.request().method() === "POST");
+    await editor.press(runShortcut);
+    await expect(page.getByText(/写入结果可能不确定/)).toBeVisible();
+    expect(attempts).toBe(1);
+    await page.unroute("**/api/sessions/*/query");
+
+    const rebuiltSessionId = (await (await rebuiltSession).json()).id;
+    const autocommit = page.locator(".query-bar").getByRole("button", { name: "自动提交" });
+    await autocommit.click();
+    await expect(autocommit).not.toHaveClass(/on/);
+    const removed = await api.delete(`sessions/${rebuiltSessionId}`);
+    expect(removed.ok()).toBeTruthy();
+    await setSql(page, "SELECT 99 AS should_not_replay;");
+    await editor.press(runShortcut);
+    await expect(page.locator(".query-message pre")).toContainText("原手动事务已丢失");
+    await expect(page.getByRole("cell", { name: "99", exact: true })).toHaveCount(0);
+  });
+
   test("network outage is shown and a manual health check restores the workspace", async ({ page }) => {
     await login(page);
     await page.route("**/api/**", route => route.abort("connectionfailed"));
@@ -190,6 +225,23 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     expect(persisted!.height - keyboardAdjusted!.height).toBeGreaterThanOrEqual(16);
     await splitter.dblclick();
     await expect(editor).toHaveCSS("height", "260px");
+  });
+
+  test("all dirty query tabs survive reload and closing one asks for confirmation", async ({ page }) => {
+    await login(page);
+    await setSql(page, "SELECT 'first-draft-marker' AS draft;");
+    await page.getByRole("button", { name: "新建查询标签" }).click();
+    await expect(page.getByRole("tab")).toHaveCount(2);
+    await setSql(page, "SELECT 'second-draft-marker' AS draft;");
+    page.once("dialog", dialog => dialog.accept());
+    await page.reload();
+    await expect(page.locator(".monaco-editor textarea")).toBeVisible();
+    await expect(page.getByRole("tab")).toHaveCount(2);
+    await expect(page.locator(".view-lines")).toContainText("second-draft-marker");
+    const activeTab = page.getByRole("tab", { selected: true });
+    page.once("dialog", dialog => dialog.dismiss());
+    await activeTab.getByRole("button", { name: /关闭/ }).click();
+    await expect(page.getByRole("tab")).toHaveCount(2);
   });
 
   test("SQL intelligence completes real tables and alias-qualified columns", async ({ page }) => {
@@ -367,6 +419,48 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.getByRole("button", { name: "下一步" }).click();
     await page.getByRole("button", { name: "开始执行" }).click();
     await expect(page.getByText(/成功导入 1 行/)).toBeVisible();
+  });
+
+  test("designer emits a real column rename without marking it destructive", async ({ page }) => {
+    await login(page);
+    await tableNode(page).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "设计表", exact: true }).click();
+    const firstName = page.locator(".structure-table tbody tr").first().locator("input").first();
+    await firstName.fill("item_id");
+    await firstName.press("Tab");
+    await page.getByRole("button", { name: "生成 DDL" }).click();
+    await expect(page.locator(".ddl-pane")).toContainText("RENAME COLUMN `id` TO `item_id`");
+    await expect(page.locator(".ddl-pane")).not.toContainText("DROP COLUMN");
+    await expect(page.locator(".danger-banner")).toHaveCount(0);
+  });
+
+  test("MySQL privileges render and trigger menus hide unsupported state actions", async ({ page }) => {
+    await login(page);
+    await tableNode(page).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "查看权限…", exact: true }).click();
+    await expect(page.locator(".inspector")).toContainText("账户：");
+    await expect(page.getByText(/r\.map is not a function/)).toHaveCount(0);
+    const triggerNode = page.locator(".object-node").filter({ hasText: trigger }).first();
+    await expect(triggerNode).toBeVisible();
+    await triggerNode.click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "启用", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "禁用", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "打开定义", exact: true })).toBeVisible();
+  });
+
+  test("SQL-file cancellation stays pending until the server stops the query", async ({ page }) => {
+    await login(page);
+    await page.locator(".db-node").filter({ hasText: database }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "执行 SQL 文件…", exact: true }).click();
+    await page.locator(".file-drop input").setInputFiles({ name: "slow.sql", mimeType: "application/sql", buffer: Buffer.from("SELECT SLEEP(10);") });
+    await page.getByRole("button", { name: "下一步" }).click();
+    await page.getByRole("button", { name: "开始执行" }).click();
+    const cancel = page.getByRole("button", { name: "取消任务", exact: true });
+    await expect(cancel).toBeVisible();
+    await cancel.click();
+    await expect(page.getByRole("button", { name: "正在取消…", exact: true })).toBeDisabled();
+    await expect(page.getByText("任务已取消", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByRole("dialog", { name: "执行 SQL 文件" })).toBeVisible();
   });
 
   test("database SQL-file wizard executes a script and refreshes metadata", async ({ page }) => {

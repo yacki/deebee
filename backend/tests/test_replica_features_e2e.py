@@ -241,7 +241,14 @@ def test_background_jobs_report_progress_results_and_cancellation():
         }).json()
         cancelled = client.post(f"/api/jobs/{cancel_source['id']}/cancel", headers=auth)
         assert cancelled.status_code == 200, cancelled.text
-        assert cancelled.json()["status"] in {"cancelled", "completed"}
+        assert cancelled.json()["status"] in {"cancelling", "cancelled", "completed"}
+        if cancelled.json()["status"] != "completed":
+            for _ in range(80):
+                cancel_status = client.get(f"/api/jobs/{cancel_source['id']}", headers=auth).json()
+                if cancel_status["status"] in {"cancelled", "completed", "failed"}:
+                    break
+                time.sleep(0.05)
+            assert cancel_status["status"] == "cancelled", cancel_status
     finally:
         query(auth, session_id, f"DROP TABLE IF EXISTS `{TABLE}`")
         client.delete(f"/api/sessions/{session_id}", headers=auth)

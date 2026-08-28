@@ -236,6 +236,16 @@ def _sql_export_literal(value: Any, driver: str, data_type: str = "") -> str:
     return "'" + escaped + "'"
 
 
+def _dangerous_ddl(statement: str) -> bool:
+    normalized = " ".join(statement.upper().split())
+    return bool(
+        normalized.startswith(("DROP ", "TRUNCATE "))
+        or " DROP " in f" {normalized} "
+        or " MODIFY COLUMN " in f" {normalized} "
+        or (" ALTER COLUMN " in f" {normalized} " and " TYPE " in f" {normalized} ")
+    )
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     drivers = list(dict.fromkeys(item["driver"] for item in workbench.list_profiles()))
@@ -503,7 +513,7 @@ async def export_data(
     _: str = Depends(current_user),
 ) -> Response:
     payload = await asyncio.to_thread(
-        workbench.table_data, profile_id, database, table, 1, 100000, [], None, schema
+        workbench.export_table, profile_id, database, table, schema,
     )
     rows = payload["rows"]
     columns = [item["name"] for item in payload["columns"]]
@@ -596,12 +606,40 @@ async def execute_sql_file_job(
         sql = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
+    state: dict[str, str] = {}
+
+    def cancel_running_query() -> None:
+        session_id = state.get("session_id")
+        if session_id:
+            workbench.cancel(session_id)
+
     def task(progress, cancelled):
         progress(10, "正在解析 SQL")
         if cancelled.is_set(): return None
         progress(25, "正在执行 SQL")
-        return workbench.execute_script(profile_id, database, sql, schema)
-    return jobs.create("sql-file", task)
+        session = workbench.create_session(
+            profile_id, database, True, schema=schema
+        )
+        state["session_id"] = session["id"]
+        try:
+            if cancelled.is_set():
+                raise DeeBeeError("任务已取消")
+            response = workbench.execute(session["id"], sql, 1000)
+            if cancelled.is_set():
+                raise DeeBeeError("任务已取消")
+            return {
+                "ok": True,
+                "statements": len(response["results"]),
+                "elapsed_ms": response.get("elapsed_ms", 0),
+                "results": response["results"],
+            }
+        finally:
+            state.pop("session_id", None)
+            try:
+                workbench.close_session(session["id"])
+            except DeeBeeError:
+                pass
+    return jobs.create("sql-file", task, on_cancel=cancel_running_query)
 
 
 @app.post("/api/jobs/import")
@@ -618,7 +656,13 @@ async def import_data_job(
             raise DeeBeeError("单次最多导入 100000 行")
         if cancelled.is_set(): return None
         progress(45, f"正在写入 {len(rows)} 行")
-        result = workbench.bulk_insert(profile_id, database, table, rows, schema)
+        result = workbench.bulk_insert(
+            profile_id, database, table, rows, schema,
+            cancelled=cancelled,
+            progress=lambda done, total: progress(
+                45 + int(50 * done / max(total, 1)), f"正在写入 {done}/{total} 行"
+            ),
+        )
         progress(95, "正在刷新表数据")
         return result
     return jobs.create("import", task)
@@ -627,16 +671,13 @@ async def import_data_job(
 @app.post("/api/jobs/generate")
 async def generate_data_job(body: GenerateBody, _: str = Depends(current_user)) -> dict[str, Any]:
     def task(progress, cancelled):
-        total = 0
-        remaining = body.count
-        while remaining and not cancelled.is_set():
-            batch = min(500, remaining)
-            result = workbench.generate_data(
-                body.profile_id, body.database, body.table, batch, body.schema_
-            )
-            total += int(result.get("affected_rows", 0)); remaining -= batch
-            progress(10 + int(85 * total / body.count), f"已生成 {total}/{body.count} 行")
-        return {"affected_rows": total}
+        return workbench.generate_data(
+            body.profile_id, body.database, body.table, body.count, body.schema_,
+            cancelled=cancelled,
+            progress=lambda done, total: progress(
+                10 + int(85 * done / max(total, 1)), f"已生成 {done}/{total} 行"
+            ),
+        )
     return jobs.create("generate", task)
 
 
@@ -677,11 +718,7 @@ async def preview_ddl(body: DdlPreviewBody, _: str = Depends(current_user)) -> d
     statements = await asyncio.to_thread(
         workbench.preview_ddl, body.profile_id, body.spec, body.current_table
     )
-    dangerous = [
-        statement
-        for statement in statements
-        if " DROP " in statement.upper() or " MODIFY COLUMN " in statement.upper()
-    ]
+    dangerous = [statement for statement in statements if _dangerous_ddl(statement)]
     return {"statements": statements, "dangerous": dangerous}
 
 

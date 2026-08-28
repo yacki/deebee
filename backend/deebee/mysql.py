@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 import pymysql
 from pymysql.constants import CLIENT, FIELD_TYPE
@@ -190,9 +190,19 @@ class MySQLWorkbench:
         if not session:
             raise DeeBeeError("查询会话已失效，请重新打开标签")
         try:
-            session.connection.ping(reconnect=True)
+            # Never reconnect a session transparently: doing so would silently
+            # discard an open transaction while the UI still reports manual
+            # transaction mode.
+            session.connection.ping(reconnect=False)
         except pymysql.MySQLError as exc:
-            raise DeeBeeError(str(exc)) from exc
+            with self._guard:
+                self.sessions.pop(session_id, None)
+            try:
+                session.connection.close()
+            except Exception:
+                pass
+            code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else None
+            raise DeeBeeError("查询会话已失效，请重新打开标签", code) from exc
         return session
 
     def inspect_session(self, session_id: str) -> dict[str, Any]:
@@ -611,11 +621,17 @@ class MySQLWorkbench:
         escaped = str(value).replace("\\", "\\\\").replace("'", "''")
         return f"'{escaped}'"
 
-    def generate_data(self, profile_id: str, database: str, table: str, count: int) -> dict[str, Any]:
+    def generate_data(
+        self, profile_id: str, database: str, table: str, count: int,
+        *, cancelled: threading.Event | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
         schema = self.table_schema(profile_id, database, table)
         writable = [column for column in schema["columns"] if "AUTO_INCREMENT" not in column.get("extra", "") and not column.get("generation")]
         rows: list[dict[str, Any]] = []
         for index in range(count):
+            if cancelled and cancelled.is_set():
+                raise DeeBeeError("任务已取消")
             row: dict[str, Any] = {}
             for column in writable:
                 name, data_type = column["name"], column["data_type"].upper()
@@ -634,7 +650,10 @@ class MySQLWorkbench:
                 else:
                     row[name] = f"sample_{index + 1}_{''.join(random.choices(string.ascii_lowercase, k=5))}"
             rows.append(row)
-        return self.bulk_insert(profile_id, database, table, rows)
+        return self.bulk_insert(
+            profile_id, database, table, rows,
+            cancelled=cancelled, progress=progress,
+        )
 
     def table_schema(self, profile_id: str, database: str, table: str) -> dict[str, Any]:
         profile = self.require_profile(profile_id)
@@ -797,6 +816,22 @@ class MySQLWorkbench:
         finally:
             conn.close()
 
+    def export_table(self, profile_id: str, database: str, table: str) -> dict[str, Any]:
+        profile = self.require_profile(profile_id)
+        schema = self.table_schema(profile_id, database, table)
+        conn = self._connect(profile, database)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(f"SELECT * FROM {quote_ident(table)}")
+                rows = [clean_row(row) for row in cursor.fetchall()]
+            return {"columns": schema["columns"], "rows": rows}
+        except pymysql.MySQLError as exc:
+            code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else None
+            message = str(exc.args[1] if len(exc.args) > 1 else exc)
+            raise DeeBeeError(message, code) from exc
+        finally:
+            conn.close()
+
     def insert_row(self, profile_id: str, database: str, table: str, values: dict[str, Any]) -> dict[str, Any]:
         schema = self.table_schema(profile_id, database, table)
         allowed = {column["name"] for column in schema["columns"]}
@@ -857,7 +892,9 @@ class MySQLWorkbench:
             conn.close()
 
     def bulk_insert(
-        self, profile_id: str, database: str, table: str, rows: list[dict[str, Any]]
+        self, profile_id: str, database: str, table: str, rows: list[dict[str, Any]],
+        *, cancelled: threading.Event | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
         if not rows:
             raise DeeBeeError("导入文件没有数据")
@@ -872,8 +909,17 @@ class MySQLWorkbench:
             with conn.cursor() as cursor:
                 placeholders = ", ".join(["%s"] * len(fields))
                 sql = f"INSERT INTO {quote_ident(table)} ({', '.join(quote_ident(f) for f in fields)}) VALUES ({placeholders})"
-                cursor.executemany(sql, [[row.get(field) for field in fields] for row in rows])
-                affected = cursor.rowcount
+                affected = 0
+                for start in range(0, len(rows), 500):
+                    if cancelled and cancelled.is_set():
+                        raise DeeBeeError("任务已取消")
+                    batch = rows[start : start + 500]
+                    cursor.executemany(sql, [[row.get(field) for field in fields] for row in batch])
+                    affected += max(cursor.rowcount, 0)
+                    if progress:
+                        progress(min(start + len(batch), len(rows)), len(rows))
+                if cancelled and cancelled.is_set():
+                    raise DeeBeeError("任务已取消")
             conn.commit()
             return {"affected_rows": affected, "columns": fields}
         except Exception:
@@ -999,6 +1045,20 @@ class MySQLWorkbench:
         target = f"{quote_ident(database)}.{quote_ident(table)}"
         statements: list[str] = []
         current_columns = {item["name"]: item for item in current["columns"]}
+        rename_map: dict[str, str] = {}
+        for column in desired.get("columns", []):
+            old_name = str(column.get("original_name") or "")
+            new_name = str(column.get("name") or "")
+            if not old_name or old_name == new_name or old_name not in current_columns:
+                continue
+            if new_name in current_columns:
+                raise DeeBeeError(f"字段改名目标已存在：{new_name}")
+            statements.append(
+                f"ALTER TABLE {target} RENAME COLUMN {quote_ident(old_name)} TO {quote_ident(new_name)}"
+            )
+            old = current_columns.pop(old_name)
+            current_columns[new_name] = {**old, "name": new_name}
+            rename_map[old_name] = new_name
         desired_columns = {str(item.get("name")): item for item in desired.get("columns", [])}
         for name, column in desired_columns.items():
             definition = self._column_sql(column)
@@ -1021,14 +1081,20 @@ class MySQLWorkbench:
         for name in current_columns:
             if name not in desired_columns:
                 statements.append(f"ALTER TABLE {target} DROP COLUMN {quote_ident(name)}")
-        current_pk = current.get("primary_key", [])
+        current_pk = [rename_map.get(item, item) for item in current.get("primary_key", [])]
         desired_pk = desired.get("primary_key", [])
         if current_pk != desired_pk:
             if current_pk:
                 statements.append(f"ALTER TABLE {target} DROP PRIMARY KEY")
             if desired_pk:
                 statements.append(f"ALTER TABLE {target} ADD PRIMARY KEY ({', '.join(quote_ident(item) for item in desired_pk)})")
-        current_indexes = {item["name"]: item for item in current.get("indexes", []) if item["name"] != "PRIMARY"}
+        current_indexes = {
+            item["name"]: {
+                **item,
+                "columns": [rename_map.get(column, column) for column in item.get("columns", [])],
+            }
+            for item in current.get("indexes", []) if item["name"] != "PRIMARY"
+        }
         desired_indexes = {item["name"]: item for item in desired.get("indexes", []) if item.get("name") != "PRIMARY"}
         for name, old in current_indexes.items():
             new = desired_indexes.get(name)
@@ -1038,7 +1104,16 @@ class MySQLWorkbench:
             old = current_indexes.get(name)
             if not old or old["columns"] != index.get("columns", []) or bool(old["unique"]) != bool(index.get("unique")) or str(old.get("type") or "BTREE").upper() != str(index.get("type") or "BTREE").upper():
                 statements.append(f"ALTER TABLE {target} ADD {self._index_sql(index)}")
-        current_fks = {item["name"]: item for item in current.get("foreign_keys", [])}
+        current_fks = {
+            item["name"]: {
+                **item,
+                "columns": [rename_map.get(column, column) for column in item.get("columns", [])],
+                "referenced_columns": [
+                    rename_map.get(column, column) for column in item.get("referenced_columns", [])
+                ] if item.get("referenced_table") in {table, desired.get("table", table)} else item.get("referenced_columns", []),
+            }
+            for item in current.get("foreign_keys", [])
+        }
         desired_fks = {item["name"]: item for item in desired.get("foreign_keys", [])}
         for name, old in current_fks.items():
             new = desired_fks.get(name)
@@ -1048,7 +1123,12 @@ class MySQLWorkbench:
             old = current_fks.get(name)
             if not old or any(old.get(key) != fk.get(key) for key in ("columns", "referenced_table", "referenced_columns", "on_delete", "on_update")):
                 statements.append(f"ALTER TABLE {target} ADD {self._foreign_key_sql(fk)}")
-        current_checks = {item["name"]: item for item in current.get("checks", [])}
+        current_checks: dict[str, dict[str, Any]] = {}
+        for item in current.get("checks", []):
+            clause = str(item.get("clause", ""))
+            for old_name, new_name in rename_map.items():
+                clause = re.sub(rf"\b{re.escape(old_name)}\b", new_name, clause)
+            current_checks[item["name"]] = {**item, "clause": clause}
         desired_checks = {item["name"]: item for item in desired.get("checks", [])}
         for name, old in current_checks.items():
             new = desired_checks.get(name)

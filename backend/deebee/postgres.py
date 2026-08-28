@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 try:
     import psycopg
@@ -598,6 +598,23 @@ class PostgresWorkbench:
         finally:
             conn.close()
 
+    def export_table(
+        self, profile_id: str, database: str, table: str, schema: str = ""
+    ) -> dict[str, Any]:
+        profile = self.require_profile(profile_id)
+        schema = schema or profile.default_schema
+        meta = self.table_schema(profile_id, database, table, schema)
+        conn = self._connect(profile, database)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(f"SELECT * FROM {qualified(schema, table)}")
+                rows = [clean_row(row) for row in cursor.fetchall()]
+            return {"columns": meta["columns"], "rows": rows}
+        except Exception as exc:
+            raise self._error(exc) from exc
+        finally:
+            conn.close()
+
     def _mutation(self, profile_id: str, database: str, sql: str, params: list[Any]) -> dict[str, Any]:
         profile = self.require_profile(profile_id)
         conn = self._connect(profile, database)
@@ -638,7 +655,11 @@ class PostgresWorkbench:
         sql = f"DELETE FROM {qualified(schema, table)} WHERE " + " AND ".join(f"{quote_ident(name)} IS NOT DISTINCT FROM %s" for name in key)
         return self._mutation(profile_id, database, sql, list(key.values()))
 
-    def bulk_insert(self, profile_id: str, database: str, table: str, rows: list[dict[str, Any]], schema: str = "") -> dict[str, Any]:
+    def bulk_insert(
+        self, profile_id: str, database: str, table: str, rows: list[dict[str, Any]],
+        schema: str = "", *, cancelled: threading.Event | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
         if not rows:
             return {"ok": True, "affected_rows": 0}
         profile = self.require_profile(profile_id)
@@ -647,12 +668,22 @@ class PostgresWorkbench:
         if not fields or any(list(row) != fields for row in rows):
             raise DeeBeeError("导入数据的字段必须一致")
         sql = f"INSERT INTO {qualified(schema, table)} ({', '.join(quote_ident(field) for field in fields)}) VALUES ({', '.join(['%s'] * len(fields))})"
-        conn = self._connect(profile, database)
+        conn = self._connect(profile, database, autocommit=False)
         try:
             with conn.cursor() as cursor:
-                cursor.executemany(sql, [[row.get(field) for field in fields] for row in rows])
+                for start in range(0, len(rows), 500):
+                    if cancelled and cancelled.is_set():
+                        raise DeeBeeError("任务已取消")
+                    batch = rows[start : start + 500]
+                    cursor.executemany(sql, [[row.get(field) for field in fields] for row in batch])
+                    if progress:
+                        progress(min(start + len(batch), len(rows)), len(rows))
+                if cancelled and cancelled.is_set():
+                    raise DeeBeeError("任务已取消")
+            conn.commit()
             return {"ok": True, "affected_rows": len(rows)}
         except Exception as exc:
+            conn.rollback()
             raise self._error(exc) from exc
         finally:
             conn.close()
@@ -747,6 +778,20 @@ class PostgresWorkbench:
             statements.append(f"ALTER TABLE {target} RENAME TO {quote_ident(table)}")
             target = qualified(schema, table)
         old_columns = {item["name"]: item for item in source["columns"]}
+        rename_map: dict[str, str] = {}
+        for column in columns:
+            old_name = str(column.get("original_name") or "")
+            new_name = str(column.get("name") or "")
+            if not old_name or old_name == new_name or old_name not in old_columns:
+                continue
+            if new_name in old_columns:
+                raise DeeBeeError(f"字段改名目标已存在：{new_name}")
+            statements.append(
+                f"ALTER TABLE {target} RENAME COLUMN {quote_ident(old_name)} TO {quote_ident(new_name)}"
+            )
+            old = old_columns.pop(old_name)
+            old_columns[new_name] = {**old, "name": new_name}
+            rename_map[old_name] = new_name
         new_columns = {str(item.get("name")): item for item in columns}
         for name in old_columns.keys() - new_columns.keys():
             statements.append(f"ALTER TABLE {target} DROP COLUMN {quote_ident(name)}")
@@ -781,8 +826,9 @@ class PostgresWorkbench:
                 comment = column.get("comment")
                 value = "NULL" if not comment else "'" + str(comment).replace("'", "''") + "'"
                 statements.append(f"COMMENT ON COLUMN {target}.{quote_ident(name)} IS {value}")
-        if source["primary_key"] != primary_key:
-            if source["primary_key"]:
+        source_primary_key = [rename_map.get(item, item) for item in source["primary_key"]]
+        if source_primary_key != primary_key:
+            if source_primary_key:
                 statements.append(
                     f"ALTER TABLE {target} DROP CONSTRAINT {quote_ident(str(source['primary_key_name']))}"
                 )
@@ -791,7 +837,13 @@ class PostgresWorkbench:
                     f"ALTER TABLE {target} ADD PRIMARY KEY ("
                     + ", ".join(quote_ident(item) for item in primary_key) + ")"
                 )
-        old_indexes = {item["name"]: item for item in source["indexes"]}
+        old_indexes = {
+            item["name"]: {
+                **item,
+                "columns": [rename_map.get(column, column) for column in item.get("columns", [])],
+            }
+            for item in source["indexes"]
+        }
         new_indexes = {str(item.get("name")): item for item in indexes}
         for name in old_indexes.keys() - new_indexes.keys():
             statements.append(f"DROP INDEX {qualified(schema, name)}")
@@ -800,7 +852,16 @@ class PostgresWorkbench:
                 if name in old_indexes:
                     statements.append(f"DROP INDEX {qualified(schema, name)}")
                 statements.append(self._index_sql(schema, table, index))
-        old_fk = {item["name"]: item for item in source["foreign_keys"]}
+        old_fk = {
+            item["name"]: {
+                **item,
+                "columns": [rename_map.get(column, column) for column in item.get("columns", [])],
+                "referenced_columns": [
+                    rename_map.get(column, column) for column in item.get("referenced_columns", [])
+                ] if item.get("referenced_table") in {current_table, table} and item.get("referenced_schema") in {"", schema} else item.get("referenced_columns", []),
+            }
+            for item in source["foreign_keys"]
+        }
         new_fk = {str(item.get("name")): item for item in foreign_keys}
         for name in old_fk.keys() - new_fk.keys():
             statements.append(f"ALTER TABLE {target} DROP CONSTRAINT {quote_ident(name)}")
@@ -809,7 +870,12 @@ class PostgresWorkbench:
                 if name in old_fk:
                     statements.append(f"ALTER TABLE {target} DROP CONSTRAINT {quote_ident(name)}")
                 statements.append(f"ALTER TABLE {target} ADD {self._foreign_sql(fk)}")
-        old_checks = {item["name"]: item for item in source["checks"]}
+        old_checks: dict[str, dict[str, Any]] = {}
+        for item in source["checks"]:
+            clause = str(item.get("clause", ""))
+            for old_name, new_name in rename_map.items():
+                clause = re.sub(rf"\b{re.escape(old_name)}\b", new_name, clause)
+            old_checks[item["name"]] = {**item, "clause": clause}
         new_checks = {str(item.get("name")): item for item in checks}
         for name in old_checks.keys() - new_checks.keys():
             statements.append(f"ALTER TABLE {target} DROP CONSTRAINT {quote_ident(name)}")
@@ -848,12 +914,63 @@ class PostgresWorkbench:
         source = qualified(schema, table)
         if action == "drop":
             sql = f"DROP TABLE {source}"
-        elif action in {"empty", "truncate"}:
+        elif action == "empty":
+            sql = f"DELETE FROM {source}"
+        elif action == "truncate":
             sql = f"TRUNCATE TABLE {source}"
         elif action == "rename":
             sql = f"ALTER TABLE {source} RENAME TO {quote_ident(target)}"
         elif action == "duplicate":
-            sql = f"CREATE TABLE {qualified(schema, target)} AS TABLE {source}" if with_data else f"CREATE TABLE {qualified(schema, target)} (LIKE {source} INCLUDING ALL)"
+            if not target:
+                raise DeeBeeError("复制表需要目标表名")
+            destination = qualified(schema, target)
+            statements = [f"CREATE TABLE {destination} (LIKE {source} INCLUDING ALL)"]
+            meta = self.table_schema(profile_id, database, table, schema)
+            serial_columns = [
+                column["name"] for column in meta["columns"]
+                if "AUTO_INCREMENT" in str(column.get("extra") or "").upper()
+            ]
+            generated_columns = [
+                column["name"] for column in meta["columns"]
+                if "GENERATED" in str(column.get("extra") or "").upper()
+                or column.get("generation")
+            ]
+            for column in serial_columns:
+                sequence = f"{target}_{column}_seq"
+                statements.extend([
+                    f"CREATE SEQUENCE {qualified(schema, sequence)} OWNED BY {destination}.{quote_ident(column)}",
+                    f"ALTER TABLE {destination} ALTER COLUMN {quote_ident(column)} SET DEFAULT nextval('{qualified(schema, sequence)}'::regclass)",
+                ])
+            if with_data:
+                writable = [
+                    column["name"] for column in meta["columns"]
+                    if column["name"] not in generated_columns
+                ]
+                fields = ", ".join(quote_ident(name) for name in writable)
+                statements.append(
+                    f"INSERT INTO {destination} ({fields}) OVERRIDING SYSTEM VALUE SELECT {fields} FROM {source}"
+                )
+                for column in meta["columns"]:
+                    if str(column.get("extra") or "").upper() in {"IDENTITY", "AUTO_INCREMENT"}:
+                        relation = qualified(schema, target).replace("'", "''")
+                        literal_column = str(column["name"]).replace("'", "''")
+                        statements.append(
+                            "SELECT setval(pg_get_serial_sequence("
+                            f"'{relation}', '{literal_column}'), COALESCE(MAX({quote_ident(column['name'])}), 1), "
+                            f"MAX({quote_ident(column['name'])}) IS NOT NULL) FROM {destination}"
+                        )
+            conn = self._connect(profile, database, autocommit=False)
+            try:
+                with conn.cursor() as cursor:
+                    for statement in statements:
+                        cursor.execute(statement)
+                conn.commit()
+                return {"ok": True, "results": [], "statements": statements}
+            except Exception as exc:
+                conn.rollback()
+                raise self._error(exc) from exc
+            finally:
+                conn.close()
         elif action in {"analyze", "optimize"}:
             sql = f"ANALYZE {source}"
         elif action in {"check", "repair"}:
@@ -1030,11 +1147,17 @@ class PostgresWorkbench:
         finally:
             conn.close()
 
-    def generate_data(self, profile_id: str, database: str, table: str, count: int, schema: str = "") -> dict[str, Any]:
+    def generate_data(
+        self, profile_id: str, database: str, table: str, count: int,
+        schema: str = "", *, cancelled: threading.Event | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
         meta = self.table_schema(profile_id, database, table, schema)
         columns = [item for item in meta["columns"] if item.get("extra") not in {"IDENTITY", "GENERATED"} and item.get("default") is None]
         rows: list[dict[str, Any]] = []
         for index in range(count):
+            if cancelled and cancelled.is_set():
+                raise DeeBeeError("任务已取消")
             row: dict[str, Any] = {}
             for column in columns:
                 kind = str(column["data_type"]).lower()
@@ -1053,7 +1176,10 @@ class PostgresWorkbench:
                 else:
                     row[column["name"]] = "test_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
             rows.append(row)
-        return self.bulk_insert(profile_id, database, table, rows, schema)
+        return self.bulk_insert(
+            profile_id, database, table, rows, schema,
+            cancelled=cancelled, progress=progress,
+        )
 
 
 workbench = PostgresWorkbench()
