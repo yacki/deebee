@@ -145,6 +145,35 @@ def test_postgres_table_browser_caps_count_and_page_reads(monkeypatch: pytest.Mo
     assert result["limited"] is True
 
 
+def test_postgres_catalog_marks_primary_key_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    executed: list[str] = []
+    result_sets = iter([
+        [{
+            "table_name": "items", "object_type": "TABLE", "column_name": "id",
+            "data_type": "bigint", "nullable": False, "position": 1, "primary_key": True,
+        }],
+        [],
+    ])
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, sql: str, _params: Any = None): executed.append(sql)
+        def fetchall(self): return next(result_sets)
+
+    class Connection:
+        def cursor(self): return Cursor()
+        def close(self): pass
+
+    workbench = PostgresWorkbench(include_default=False)
+    monkeypatch.setattr(workbench, "require_profile", lambda *_: postgres_profile())
+    monkeypatch.setattr(workbench, "_connect", lambda *_: Connection())
+    catalog = workbench.catalog("pg-test", "app", "public")
+
+    assert "pg_constraint" in executed[0]
+    assert catalog["tables"][0]["columns"][0]["key"] == "PRI"
+
+
 def test_mysql_index_type_is_not_ignored() -> None:
     workbench = MySQLWorkbench(include_default=False)
     assert "USING HASH" in workbench._index_sql({"name": "idx_value", "columns": ["value"], "type": "HASH"})

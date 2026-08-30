@@ -378,7 +378,9 @@ class PostgresWorkbench:
                 cursor.execute(
                     "SELECT c.relname AS table_name, CASE WHEN c.relkind IN ('v','m') THEN 'VIEW' ELSE 'TABLE' END AS object_type, "
                     "a.attname AS column_name, format_type(a.atttypid,a.atttypmod) AS data_type, "
-                    "NOT a.attnotnull AS nullable, a.attnum AS position "
+                    "NOT a.attnotnull AS nullable, a.attnum AS position, EXISTS ("
+                    "SELECT 1 FROM pg_constraint pk WHERE pk.conrelid=c.oid AND pk.contype='p' "
+                    "AND a.attnum=ANY(pk.conkey)) AS primary_key "
                     "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                     "JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped "
                     "WHERE n.nspname=%s AND c.relkind IN ('r','p','v','m') ORDER BY c.relname,a.attnum",
@@ -391,7 +393,7 @@ class PostgresWorkbench:
                     })
                     table["columns"].append({
                         "name": row["column_name"], "data_type": row["data_type"],
-                        "nullable": row["nullable"], "key": "",
+                        "nullable": row["nullable"], "key": "PRI" if row["primary_key"] else "",
                     })
                 cursor.execute(
                     "SELECT p.proname AS name, CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS object_type, "

@@ -111,6 +111,8 @@ def test_postgres_database_schema_object_hierarchy_and_isolation():
             )
             assert catalog.status_code == 200, catalog.text
             assert catalog.json()["schema"] == schema
+            table_catalog = next(item for item in catalog.json()["tables"] if item["name"] == TABLE)
+            assert next(column for column in table_catalog["columns"] if column["name"] == "id")["key"] == "PRI"
 
             table_schema = client.get(
                 f"/api/schema/{profile['id']}/{database}/{TABLE}",

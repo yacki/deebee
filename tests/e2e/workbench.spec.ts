@@ -4,6 +4,7 @@ const apiBase = `${(process.env.DEEBEE_API_URL || "http://127.0.0.1:8000/api").r
 const database = "deebee_e2e";
 const switchDatabase = process.env.DEEBEE_SWITCH_DATABASE || "mysql";
 const table = "deebee_ui_replica_e2e";
+const completionNoiseTable = "deebee_ui_completion_noise";
 const trigger = "deebee_ui_replica_trigger";
 const createdDatabase = "deebee_ui_created_e2e";
 const runShortcut = process.platform === "darwin" ? "Meta+Enter" : "Control+Enter";
@@ -54,8 +55,10 @@ test.beforeAll(async () => {
   sessionId = sessionPayload.id;
   await query(`DROP DATABASE IF EXISTS \`${createdDatabase}\``);
   await query(`DROP TABLE IF EXISTS \`${table}\``);
-  await query(`CREATE TABLE \`${table}\` (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL, status VARCHAR(20) NOT NULL, amount DECIMAL(10,2), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  await query(`DROP TABLE IF EXISTS \`${completionNoiseTable}\``);
+  await query(`CREATE TABLE \`${table}\` (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL, status VARCHAR(20) NOT NULL, account_code VARCHAR(30), amount DECIMAL(10,2), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
   await query(`INSERT INTO \`${table}\` (name,status,amount) VALUES ('Alpha','active',12.50),('Beta','pending',23.75),('Gamma','active',9.90)`);
+  await query(`CREATE TABLE \`${completionNoiseTable}\` (id BIGINT PRIMARY KEY, account_status VARCHAR(30), unrelated_value VARCHAR(30))`);
   await query(`DROP TRIGGER IF EXISTS \`${trigger}\``);
   await query(`CREATE TRIGGER \`${trigger}\` BEFORE INSERT ON \`${table}\` FOR EACH ROW SET NEW.name = TRIM(NEW.name)`);
   for (const name of alignmentTables) {
@@ -68,6 +71,7 @@ test.afterAll(async () => {
   if (sessionId) {
     await query(`DROP DATABASE IF EXISTS \`${createdDatabase}\``);
     await query(`DROP TABLE IF EXISTS \`${table}\``);
+    await query(`DROP TABLE IF EXISTS \`${completionNoiseTable}\``);
     for (const name of alignmentTables) await query(`DROP TABLE IF EXISTS \`${name}\``);
     await api.delete(`sessions/${sessionId}`);
   }
@@ -245,6 +249,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
   });
 
   test("SQL intelligence completes real tables and alias-qualified columns", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await login(page);
     const editor = await setSql(page, "SELECT * FROM deebee_ui_rep");
     await editor.press("Control+Space");
@@ -257,7 +262,14 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await setSql(page, `SELECT * FROM ${table} t WHERE t.`);
     await editor.press("Control+Space");
     suggestions = page.getByRole("listbox", { name: "Suggest" });
-    for (const field of ["id", "name", "status", "amount", "created_at"]) await expect(suggestions.getByRole("option", { name: new RegExp(`^${field}`) })).toBeVisible();
+    for (const field of ["id", "name", "status", "account_code", "amount", "created_at"]) await expect(suggestions.getByRole("option", { name: new RegExp(`^${field}`) })).toBeVisible();
+    await editor.press("Escape");
+    await setSql(page, `SELECT * FROM ${table} WHERE acc`);
+    await editor.press("Control+Space");
+    suggestions = page.getByRole("listbox", { name: "Suggest" });
+    await expect(suggestions.getByRole("option", { name: /^account_code\b/ })).toHaveCount(1);
+    await expect(suggestions.getByRole("option", { name: /^account_status\b/ })).toHaveCount(0);
+    await expect(suggestions.getByRole("option", { name: new RegExp(`^${completionNoiseTable}\\b`) })).toHaveCount(0);
     await editor.press("Escape");
     await setSql(page, `select id,name,status,amount from ${table} order by id limit 10;`);
     await page.locator(".query-bar").getByRole("button", { name: "格式化" }).click();
@@ -266,6 +278,12 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await editor.press(runShortcut);
     await expect(page.getByRole("button", { name: /结果 1 3/ })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Alpha", exact: true })).toBeVisible();
+    await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "复制为", exact: true }).hover();
+    await page.getByRole("menuitem", { name: "INSERT Statement", exact: true }).click();
+    const insertSql = await page.evaluate(() => navigator.clipboard.readText());
+    expect(insertSql).toContain(`INSERT INTO \`${database}\`.\`${table}\``);
+    expect(insertSql).not.toContain("table_name");
   });
 
   test("current-statement execution ignores semicolons inside SQL literals", async ({ page }) => {
@@ -276,6 +294,37 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await editor.press(runShortcut);
     await expect(page.getByRole("cell", { name: "alpha;beta", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "99", exact: true })).toHaveCount(0);
+  });
+
+  test("direct single-table SELECT results support safe inline updates", async ({ page }) => {
+    await login(page);
+    const editor = await setSql(page, `SELECT * FROM ${table};`);
+    await editor.press(runShortcut);
+    await page.getByRole("cell", { name: "Beta", exact: true }).dblclick();
+    await page.getByLabel("编辑 name").fill("Beta edited from query");
+    await page.getByLabel("编辑 name").press("Enter");
+    await expect(page.getByText("查询结果修改已保存")).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Beta edited from query", exact: true })).toBeVisible();
+    const verification = await query(`SELECT name FROM \`${table}\` WHERE name='Beta edited from query'`);
+    expect(verification.results[0].rows).toEqual([{ name: "Beta edited from query" }]);
+    await query(`UPDATE \`${table}\` SET name='Beta' WHERE name='Beta edited from query'`);
+
+    await setSql(page, `SELECT name,status FROM ${table};`);
+    await editor.press(runShortcut);
+    await page.getByRole("cell", { name: "Alpha", exact: true }).dblclick();
+    await expect(page.getByLabel("编辑 name")).toHaveCount(0);
+
+    await setSql(page, `SELECT id,UPPER(name) AS name FROM ${table};`);
+    await editor.press(runShortcut);
+    await page.getByRole("cell", { name: "ALPHA", exact: true }).dblclick();
+    await expect(page.getByLabel("编辑 name")).toHaveCount(0);
+
+    await setSql(page, `SELECT * FROM ${table};`);
+    await editor.press(runShortcut);
+    await page.locator(".query-bar").getByRole("button", { name: "自动提交" }).click();
+    await expect(page.getByText("已进入手动事务模式")).toBeVisible();
+    await page.getByRole("cell", { name: "Gamma", exact: true }).dblclick();
+    await expect(page.getByLabel("编辑 name")).toHaveCount(0);
   });
 
   test("table data supports inline edit, persistent resizing, sorting and filtering", async ({ page }) => {
@@ -360,7 +409,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await expect(menu.getByRole("menuitem", { name: "复制单元格", exact: true })).not.toHaveClass(/active/);
     await menu.getByRole("menuitem", { name: "复制为", exact: true }).hover();
     for (const label of ["INSERT Statement", "Tab Separated Values (Data only)", "Tab Separated Values (Field Name only)", "Tab Separated Values (Field Name and Data)", "JSON"]) await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "UPDATE Statement", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "UPDATE Statement", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
     menu = page.getByRole("menu", { name: "结果表格操作" });

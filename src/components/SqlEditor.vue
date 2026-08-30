@@ -3,6 +3,7 @@ import type * as Monaco from "monaco-editor/editor/editor.api.js";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import { format } from "sql-formatter";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { completionContext, currentSqlBeforeCursor, type SqlTableReference } from "../sqlAnalysis";
 import type { Catalog } from "../types";
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
@@ -56,33 +57,68 @@ function registerCompletion() {
     provideCompletionItems(model, position) {
       const word = model.getWordUntilPosition(position);
       const range: Monaco.IRange = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
-      const before = model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column });
-      const result: Monaco.languages.CompletionItem[] = [];
-      const aliasMatch = before.match(/([A-Za-z_][\w$]*)\.([\w$]*)$/);
-      const aliases = new Map<string,string>();
-      for (const match of before.matchAll(/(?:FROM|JOIN|UPDATE|INTO)\s+`?([\w$]+)`?(?:\s+(?:AS\s+)?`?([\w$]+)`?)?/gi)) {
-        aliases.set(match[1].toLowerCase(), match[1]);
-        if (match[2] && !keywords.includes(match[2].toUpperCase())) aliases.set(match[2].toLowerCase(), match[1]);
+      const offset = model.getOffsetAt(position);
+      const context = completionContext(currentSqlBeforeCursor(model.getValue(), offset));
+      const result = new Map<string, Monaco.languages.CompletionItem>();
+      const labels = new Set<string>();
+      const add = (key: string, item: Monaco.languages.CompletionItem) => {
+        const label = typeof item.label === "string" ? item.label.toLowerCase() : item.label.label.toLowerCase();
+        if (!result.has(key) && !labels.has(label)) { result.set(key, item); labels.add(label); }
+      };
+      const catalog = props.catalog;
+      const findTable = (name: string) => catalog?.tables.find(item => item.name.toLowerCase() === name.toLowerCase());
+      const tableSuggestion = (table: NonNullable<typeof catalog>["tables"][number], order = "0") => ({
+        label: table.name,
+        kind: table.object_type === "VIEW" ? monaco.languages.CompletionItemKind.Interface : monaco.languages.CompletionItemKind.Struct,
+        detail: `${catalog!.database}${catalog!.schema ? "." + catalog!.schema : ""} · ${table.object_type} · ${table.columns.length} 个字段`,
+        insertText: table.name, range, sortText: `${order}_${table.name}`,
+      });
+      const columnSuggestion = (label: string, insertText: string, tableNames: string[], dataType: string, nullable: boolean, order = "0") => ({
+        label, kind: monaco.languages.CompletionItemKind.Field,
+        detail: `${tableNames.join(" / ")} · ${dataType}`,
+        documentation: nullable ? "允许 NULL" : "NOT NULL", insertText, range, sortText: `${order}_${label}`,
+      });
+
+      if (catalog && context.qualifier) {
+        const reference = context.references.find(item => [item.alias, item.table].some(name => name?.toLowerCase() === context.qualifier!.toLowerCase()));
+        const table = findTable(reference?.table || context.qualifier);
+        if (table) return { suggestions: table.columns.map(column => columnSuggestion(column.name, column.name, [table.name], column.data_type, column.nullable)) };
+        const namespace = [catalog.database, catalog.schema].some(name => name?.toLowerCase() === context.qualifier!.toLowerCase());
+        if (namespace) return { suggestions: catalog.tables.map(item => tableSuggestion(item)) };
       }
-      if (aliasMatch && props.catalog) {
-        const tableName = aliases.get(aliasMatch[1].toLowerCase()) || aliasMatch[1];
-        const table = props.catalog.tables.find(item => item.name.toLowerCase() === tableName.toLowerCase());
-        if (table) return { suggestions: table.columns.map(column => ({
-          label: column.name, kind: monaco.languages.CompletionItemKind.Field, detail: `${table.name} · ${column.data_type}`,
-          documentation: column.nullable ? "允许 NULL" : "NOT NULL", insertText: column.name,
-          range: { ...range, startColumn: range.endColumn - aliasMatch[2].length }, sortText: `0_${column.name}`,
-        })) };
+      if (catalog && context.tableContext) {
+        for (const table of catalog.tables) add(`table:${table.name.toLowerCase()}`, tableSuggestion(table));
+        return { suggestions: [...result.values()] };
       }
-      const tableContext = /(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+`?[\w$]*$/i.test(before);
-      if (props.catalog) {
-        for (const table of props.catalog.tables) result.push({ label: table.name, kind: table.object_type === "VIEW" ? monaco.languages.CompletionItemKind.Interface : monaco.languages.CompletionItemKind.Struct, detail: `${props.catalog.database}${props.catalog.schema?`.`+props.catalog.schema:""} · ${table.object_type} · ${table.columns.length} 个字段`, insertText: table.name, range, sortText: tableContext ? `0_${table.name}` : `2_${table.name}` });
-        if (!tableContext) {
-          for (const table of props.catalog.tables) for (const column of table.columns) result.push({ label: column.name, kind: monaco.languages.CompletionItemKind.Field, detail: `${table.name} · ${column.data_type}`, insertText: column.name, range, sortText: `1_${column.name}` });
-          for (const routine of props.catalog.routines) result.push({ label: routine.name, kind: monaco.languages.CompletionItemKind.Function, detail: `${routine.object_type} · ${routine.data_type}`, insertText: `${routine.name}($0)`, insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, sortText: `1_${routine.name}` });
+      if (catalog) {
+        const scoped = context.references.flatMap(reference => {
+          const table = findTable(reference.table);
+          return table ? [{ reference, table }] : [];
+        });
+        const sources: { reference: SqlTableReference; table: Catalog["tables"][number] }[] = scoped.length ? scoped : catalog.tables.map(table => ({ reference: { table: table.name }, table }));
+        const columns = new Map<string, { name: string; dataType: string; nullable: boolean; sources: typeof sources }>();
+        for (const source of sources) for (const column of source.table.columns) {
+          const key = column.name.toLowerCase(); const existing = columns.get(key);
+          if (existing) existing.sources.push(source);
+          else columns.set(key, { name: column.name, dataType: column.data_type, nullable: column.nullable, sources: [source] });
         }
+        for (const column of columns.values()) {
+          if (column.sources.length === 1) {
+            const source = column.sources[0];
+            add(`column:${column.name.toLowerCase()}`, columnSuggestion(column.name, column.name, [source.table.name], column.dataType, column.nullable));
+          } else if (scoped.length) {
+            for (const source of column.sources) {
+              const prefix = source.reference.alias || source.table.name; const label = `${prefix}.${column.name}`;
+              add(`column:${label.toLowerCase()}`, columnSuggestion(label, label, [source.table.name], column.dataType, column.nullable));
+            }
+          } else {
+            add(`column:${column.name.toLowerCase()}`, columnSuggestion(column.name, column.name, column.sources.map(source => source.table.name), column.dataType, column.nullable, "1"));
+          }
+        }
+        for (const routine of catalog.routines) add(`routine:${routine.name.toLowerCase()}`, { label: routine.name, kind: monaco.languages.CompletionItemKind.Function, detail: `${routine.object_type} · ${routine.data_type}`, insertText: `${routine.name}($0)`, insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, sortText: `2_${routine.name}` });
       }
-      if (!tableContext) for (const keyword of props.dialect === "postgresql" ? [...keywords, ...postgresKeywords] : keywords) result.push({ label: keyword, kind: monaco.languages.CompletionItemKind.Keyword, detail: `${props.dialect === "postgresql" ? "PostgreSQL" : "MySQL"} 关键字`, insertText: keyword, range, sortText: `3_${keyword}` });
-      return { suggestions: result };
+      for (const keyword of props.dialect === "postgresql" ? [...keywords, ...postgresKeywords] : keywords) add(`keyword:${keyword}`, { label: keyword, kind: monaco.languages.CompletionItemKind.Keyword, detail: `${props.dialect === "postgresql" ? "PostgreSQL" : "MySQL"} 关键字`, insertText: keyword, range, sortText: `3_${keyword}` });
+      return { suggestions: [...result.values()] };
     },
   });
 }

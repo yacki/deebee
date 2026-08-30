@@ -8,6 +8,7 @@ import ObjectList from "./components/ObjectList.vue";
 import SqlEditor from "./components/SqlEditor.vue";
 import TableDesigner from "./components/TableDesigner.vue";
 import { API_BASE, ApiError, api, authToken, download, isNetworkError, isSessionExpiredError, jsonBody, workspaceId } from "./api";
+import { inferEditableSingleSelectSource, inferSingleSelectSource, splitSqlStatements } from "./sqlAnalysis";
 import type { Catalog, ConnectionDraft, ConnectionDriver, DataTab, Database, DatabaseSchema, DbObject, DesignerTab, MenuItem, MenuState, Objects, ObjectsTab, Profile, QueryResponse, QueryTab, ResultSet, TableData, TableSchema, TableSpec, WizardState, WorkTab } from "./types";
 
 const TABLE_DATA_LIMIT = 1000;
@@ -255,7 +256,32 @@ function tabMenu(event: MouseEvent, tab: WorkTab) { const index=tabs.value.index
 async function useSavedQuery(item:{name:string;database:string;schema?:string;sql:string}){const tab=active.value;if(tab?.type!=="query")return;if(item.schema!==undefined)await switchQueryContext(tab,item.database,item.schema);else await switchQueryDatabase(tab,item.database);tab.sql=item.sql;historyOpen.value=false}
 
 async function sendQuery(tab: QueryTab, sql: string) { return api<QueryResponse>(`/sessions/${tab.sessionId}/query`, { method: "POST", body: jsonBody({ sql, limit: 10000 }) }); }
+function attachQueryResultSources(tab: QueryTab, sql: string, response: QueryResponse) {
+  const statements = splitSqlStatements(sql);
+  if (statements.length !== response.results.length) return;
+  const catalog = catalogs.value[contextKey(tab.database,tab.schema)];
+  if (!catalog) return;
+  response.results.forEach((result, index) => {
+    if (result.kind !== "rows" || !result.columns?.length) return;
+    const source = inferSingleSelectSource(statements[index]);
+    const table = source && catalog.tables.find(item => item.name.toLowerCase() === source.table.toLowerCase());
+    if (!source || !table) return;
+    const actualColumns = new Set(table.columns.map(column => column.name.toLowerCase()));
+    if (result.columns.some(column => !actualColumns.has(column.name.toLowerCase()))) return;
+    const resultColumns = new Set(result.columns.map(column => column.name.toLowerCase()));
+    const directSource = inferEditableSingleSelectSource(statements[index]);
+    const primaryKey = directSource && !table.object_type.includes("VIEW") ? table.columns.filter(column => column.key === "PRI").map(column => column.name) : [];
+    result.source = {
+      database: isPostgres.value ? tab.database : source.qualifier || tab.database,
+      schema: isPostgres.value ? source.qualifier || tab.schema : "",
+      table: table.name,
+      primaryKey: resultColumns.size === result.columns.length && primaryKey.length && primaryKey.every(column => resultColumns.has(column.toLowerCase())) ? primaryKey : undefined,
+      statement: statements[index],
+    };
+  });
+}
 function acceptQueryResponse(tab: QueryTab, sql: string, response: QueryResponse) {
+  attachQueryResultSources(tab, sql, response);
   updateTab(tab.id, { response, loading: false, autocommit: response.autocommit }); const firstRows = response.results.findIndex(result => result.kind === "rows"); resultPane.value = firstRows >= 0 ? `result-${firstRows}` : "message"; history.value = [sql, ...history.value.filter(item => item !== sql)].slice(0, 100); localStorage.setItem("deebee_history", JSON.stringify(history.value)); connectionState.value = "online";
 }
 async function runQuery(tab: QueryTab, sql = tab.sql) {
@@ -285,6 +311,20 @@ async function runQuery(tab: QueryTab, sql = tab.sql) {
   }
 }
 async function cancelQuery(tab: QueryTab) { try { const result = await api<{ cancelled: boolean }>(`/sessions/${tab.sessionId}/cancel`, { method: "POST" }); flash(result.cancelled ? "查询已取消" : "当前没有运行中的查询"); } catch (reason) { flashError(reason); } }
+async function saveQueryInline(tab: QueryTab, result: ResultSet, rowIndex: number, changes: Record<string, unknown>) {
+  const source = result.source; const row = result.rows?.[rowIndex]; const primaryKey = source?.primaryKey || [];
+  if (!tab.autocommit) return flash("手动事务模式下不能从结果网格独立提交修改", true);
+  if (!profile.value || !source || !row || !primaryKey.length) return flash("该查询结果不能安全地原地修改", true);
+  const key = Object.fromEntries(primaryKey.map(field => [field, row[field]]));
+  try {
+    await api("/data/rows", { method: "PATCH", body: jsonBody({ profile_id: profile.value.id, database: source.database, schema: source.schema, table: source.table, key, changes }) });
+    Object.assign(row, changes); flash("查询结果修改已保存");
+  } catch (reason) {
+    flashError(reason);
+    if (source.statement) await runQuery(tab, source.statement);
+  }
+}
+function saveActiveQueryInline(rowIndex: number, changes: Record<string, unknown>) { const tab=active.value;const result=activeResult.value;if(tab?.type==="query"&&result)void saveQueryInline(tab,result,rowIndex,changes); }
 async function transaction(tab: QueryTab, action: "commit" | "rollback") { try { await api(`/sessions/${tab.sessionId}/${action}`, { method: "POST" }); flash(action === "commit" ? "事务已提交" : "事务已回滚"); } catch (reason) { flashError(reason); } }
 async function toggleAutocommit(tab: QueryTab) { const enabling= !tab.autocommit;if(enabling&&!confirm("开启自动提交会提交当前事务，确定继续吗？"))return;try { await api(`/sessions/${tab.sessionId}/autocommit`, { method: "PATCH", body: jsonBody({ enabled: enabling }) }); tab.autocommit = enabling; flash(tab.autocommit ? "当前事务已提交，并开启自动提交" : "已进入手动事务模式"); } catch (reason) { flashError(reason); } }
 
@@ -402,7 +442,7 @@ function sqlLiteral(value: unknown, dataType = ""): string {
 }
 function resultMenu(event: MouseEvent, rowIndex: number, column: string, result: ResultSet, target?: SqlTableTarget) {
   const row=result.rows?.[rowIndex]||{}; const columnItems=result.columns||[]; const cols=columnItems.map(item=>item.name); const tableName=sqlTargetName(target); const fields=cols.map(sqlIdentifier); const literal=(name:string)=>sqlLiteral(row[name],columnItems.find(item=>item.name===name)?.type); const copy=(value:string)=>navigator.clipboard.writeText(value).then(()=>flash("已复制到剪贴板")); const keys=target?.primaryKey?.filter(key=>cols.includes(key))||[];
-  const copyAs: MenuItem[] = [{id:"insert",label:"INSERT Statement",icon:"lucide:file-plus",action:()=>copy(`INSERT INTO ${tableName} (${fields.join(", ")}) VALUES (${cols.map(literal).join(", ")});`)}];
+  const copyAs: MenuItem[] = target ? [{id:"insert",label:"INSERT Statement",icon:"lucide:file-plus",action:()=>copy(`INSERT INTO ${tableName} (${fields.join(", ")}) VALUES (${cols.map(literal).join(", ")});`)}] : [{id:"insert-unavailable",label:"INSERT Statement（仅支持可识别的单表结果）",icon:"lucide:file-question",disabled:true}];
   if (keys.length && cols.some(name => !keys.includes(name))) copyAs.push({id:"update",label:"UPDATE Statement",icon:"lucide:file-pen",action:()=>copy(`UPDATE ${tableName} SET ${cols.filter(name=>!keys.includes(name)).map(name=>`${sqlIdentifier(name)} = ${literal(name)}`).join(", ")} WHERE ${keys.map(name=>`${sqlIdentifier(name)} = ${literal(name)}`).join(" AND ")};`)});
   copyAs.push({id:"tsv-data",label:"Tab Separated Values (Data only)",icon:"lucide:rows-3",action:()=>copy(cols.map(c=>String(row[c]??"")).join("\t"))},{id:"tsv-fields",label:"Tab Separated Values (Field Name only)",icon:"lucide:columns-3",action:()=>copy(cols.join("\t"))},{id:"tsv-all",label:"Tab Separated Values (Field Name and Data)",icon:"lucide:table-2",action:()=>copy(`${cols.join("\t")}\n${cols.map(c=>String(row[c]??"")).join("\t")}`)},{id:"json",label:"JSON",icon:"lucide:braces",action:()=>copy(JSON.stringify(row,null,2))});
   contextMenu.value={x:event.clientX,y:event.clientY,title:"结果表格操作",items:[{id:"copy-cell",label:"复制单元格",icon:"lucide:copy",action:()=>copy(typeof row[column]==="object"?JSON.stringify(row[column]):String(row[column]??""))},{id:"copy-as",label:"复制为",icon:"lucide:clipboard-copy",children:copyAs},{id:"s1",separator:true},{id:"select-all",label:"全选",icon:"lucide:list-checks",action:()=>resultGridRef.value?.selectAll()},{id:"deselect",label:"取消全选",icon:"lucide:list-x",action:()=>resultGridRef.value?.deselectAll()},{id:"s2",separator:true},{id:"width",label:"设置当前列宽…",icon:"lucide:move-horizontal",action:()=>{const value=Number(prompt("列宽（24-600 像素）","180"));if(value)resultGridRef.value?.setWidth(column,value)}},{id:"fit",label:"自动调整全部列宽",icon:"lucide:scan",action:()=>resultGridRef.value?.autoFitAll()},{id:"height",label:"设置行高…",icon:"lucide:move-vertical",action:()=>{const value=Number(prompt("行高（24-120 像素）","30"));if(value)resultGridRef.value?.setRowHeight(value)}},{id:"s3",separator:true},{id:"freeze",label:"冻结到当前列",icon:"lucide:pin",action:()=>resultGridRef.value?.freeze(column)},{id:"unfreeze",label:"取消冻结所有列",icon:"lucide:pin-off",action:()=>resultGridRef.value?.unfreeze()},{id:"s4",separator:true},{id:"jump",label:"跳转到记录…",icon:"lucide:locate-fixed",action:()=>{const target=Number(prompt("记录号",String(rowIndex+1)));if(target)resultGridRef.value?.goToRow(target-1)}}]};
@@ -453,7 +493,7 @@ function toolbarItems(){const pg=isPostgres.value;return [{label:"新建连接",
           <nav class="result-tabs"><button :class="{current:resultPane==='message'}" @click="resultPane='message'">消息</button><button :class="{current:resultPane==='summary'}" @click="resultPane='summary'">摘要</button><template v-for="(result,index) in active.response?.results" :key="index"><button v-if="result.kind==='rows'" :class="{current:resultPane===`result-${index}`}" @click="resultPane=`result-${index}`">结果 {{ index+1 }} <span>{{ result.row_count }}</span></button></template><button :class="{current:resultPane==='profile'}" @click="resultPane='profile'">Profile</button><button :class="{current:resultPane==='status'}" @click="resultPane='status'">状态</button></nav>
           <div v-if="resultPane==='message'" class="query-message" :class="{error:active.error}"><Icon :icon="active.loading?'lucide:loader-circle':active.error?'lucide:circle-x':'lucide:circle-check'" :class="{spin:active.loading}" /><strong>{{ active.loading?'正在执行…':active.error?'执行失败':active.response?'执行完成':'准备就绪' }}</strong><pre v-if="active.error">{{ active.error }}</pre><p v-else-if="active.response">{{ active.response.results.length }} 个结果，耗时 {{ active.response.elapsed_ms }} ms</p><p v-else>SQL 编辑器支持当前上下文的表、视图、字段、别名和函数补全。</p></div>
           <div v-else-if="resultPane==='summary'" class="summary-pane"><div><b>{{ active.response?.elapsed_ms || 0 }} ms</b><span>执行时间</span></div><div><b>{{ active.response?.results.length || 0 }}</b><span>结果集</span></div><div><b>{{ active.response?.results.reduce((n,r)=>n+(r.row_count||r.affected_rows||0),0) || 0 }}</b><span>行数/影响行</span></div><div><b>{{ active.response?.warnings?.length || 0 }}</b><span>警告</span></div></div>
-          <EditableGrid v-else-if="activeResult?.kind==='rows'" ref="resultGridRef" :columns="activeResult.columns || []" :rows="activeResult.rows || []" :storage-key="`query:${active.database}`" @menu="(event,row,column)=>resultMenu(event,row,column,activeResult!)" />
+          <EditableGrid v-else-if="activeResult?.kind==='rows'" ref="resultGridRef" :columns="activeResult.columns || []" :rows="activeResult.rows || []" :primary-key="activeResult.source?.primaryKey || []" :editable="active.autocommit && Boolean(activeResult.source?.primaryKey?.length)" :storage-key="`query:${active.database}:${active.schema}:${activeResult.source?.table || 'result'}`" @save="saveActiveQueryInline" @menu="(event,row,column)=>resultMenu(event,row,column,activeResult!,activeResult!.source)" />
           <div v-else-if="resultPane==='profile'" class="query-message"><strong>执行概要</strong><pre>{{ JSON.stringify(active.response?.results,null,2) }}</pre></div><div v-else-if="resultPane==='status'" class="query-message"><strong>服务器状态</strong><pre>{{ JSON.stringify(active.response?.status || {},null,2) }}</pre></div>
           <footer class="statusbar"><span>{{ active.loading?'正在执行':active.error?'查询失败':'就绪' }}</span><span>UTF-8 · {{ isPostgres?'PostgreSQL':'MySQL' }} · {{ active.database }}{{ active.schema?`.${active.schema}`:'' }}</span><span>{{ active.autocommit?'自动提交':'手动事务' }}</span></footer>
         </section>
