@@ -13,7 +13,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 class ConnectionStore:
-    """Small encrypted JSON store for user-managed database connections."""
+    """Small encrypted JSON store for user-managed connection secrets."""
 
     def __init__(
         self, path: Path, secret: str, defaults: list[dict[str, Any]] | None = None
@@ -33,7 +33,7 @@ class ConnectionStore:
             return self._cipher.decrypt(password.encode("ascii")).decode("utf-8")
         except (InvalidToken, UnicodeError, ValueError) as exc:
             raise RuntimeError(
-                "无法解密已保存的数据库密码，请确认 DEEBEE_TOKEN_SECRET 未发生变化"
+                "无法解密已保存的连接密钥，请确认 DEEBEE_TOKEN_SECRET 未发生变化"
             ) from exc
 
     def _serialized(self, records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -41,8 +41,9 @@ class ConnectionStore:
         for record in records:
             item = dict(record)
             item["password"] = self._encrypt(str(item.get("password", "")))
+            item["private_key"] = self._encrypt(str(item.get("private_key", "")))
             encrypted.append(item)
-        return {"version": 1, "connections": encrypted}
+        return {"version": 2, "connections": encrypted}
 
     def _write(self, records: list[dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +79,8 @@ class ConnectionStore:
                     raise RuntimeError("数据库连接配置文件格式无效")
                 item = dict(value)
                 item["password"] = self._decrypt(str(item.get("password", "")))
+                private_key = item.get("private_key")
+                item["private_key"] = self._decrypt(str(private_key)) if private_key else ""
                 records.append(item)
             return records
 

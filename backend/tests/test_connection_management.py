@@ -76,7 +76,7 @@ def test_connection_crud_is_encrypted_and_survives_restart(tmp_path: Path) -> No
     assert "mysql-secret" not in stored_text
     assert "postgres-secret" not in stored_text
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert json.loads(stored_text)["version"] == 1
+    assert json.loads(stored_text)["version"] == 2
 
     restarted = DatabaseWorkbenches(store_path=path, defaults=[])
     profiles = restarted.list_profiles()

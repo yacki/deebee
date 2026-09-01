@@ -107,6 +107,8 @@ class Settings:
     postgres_password: str = os.getenv("DEEBEE_POSTGRES_PASSWORD", "")
     postgres_database: str = os.getenv("DEEBEE_POSTGRES_DATABASE", "postgres")
     postgres_schema: str = os.getenv("DEEBEE_POSTGRES_SCHEMA", "public")
+    guacd_host: str = os.getenv("DEEBEE_GUACD_HOST", "127.0.0.1")
+    guacd_port: int = int(os.getenv("DEEBEE_GUACD_PORT", "4822"))
 
 
 settings = Settings()

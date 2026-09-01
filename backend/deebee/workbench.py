@@ -5,6 +5,17 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from .connection_drivers import (
+    ClickHouseProfile,
+    ClickHouseWorkbench,
+    MongoDBProfile,
+    MongoDBWorkbench,
+    RedisProfile,
+    RedisWorkbench,
+    clickhouse_workbench,
+    mongodb_workbench,
+    redis_workbench,
+)
 from .connection_store import ConnectionStore
 from .config import settings
 from .mysql import DeeBeeError, MySQLWorkbench, Profile, workbench as mysql_workbench
@@ -13,6 +24,7 @@ from .postgres import (
     PostgresWorkbench,
     workbench as postgres_workbench,
 )
+from .remote_connections import RemoteConnectionWorkbench, RemoteProfile, remote_workbench
 
 
 def _environment_connections() -> list[dict[str, Any]]:
@@ -61,11 +73,28 @@ class DatabaseWorkbenches:
         self.engines: list[Any] = engines or [
             MySQLWorkbench(include_default=False),
             PostgresWorkbench(include_default=False),
+            RedisWorkbench(),
+            ClickHouseWorkbench(),
+            MongoDBWorkbench(),
+            RemoteConnectionWorkbench(),
         ]
         self._driver_engines = {
             "mysql": next(engine for engine in self.engines if isinstance(engine, MySQLWorkbench)),
             "postgresql": next(
                 engine for engine in self.engines if isinstance(engine, PostgresWorkbench)
+            ),
+            "redis": next(engine for engine in self.engines if isinstance(engine, RedisWorkbench)),
+            "clickhouse": next(
+                engine for engine in self.engines if isinstance(engine, ClickHouseWorkbench)
+            ),
+            "mongodb": next(
+                engine for engine in self.engines if isinstance(engine, MongoDBWorkbench)
+            ),
+            "ssh": next(
+                engine for engine in self.engines if isinstance(engine, RemoteConnectionWorkbench)
+            ),
+            "rdp": next(
+                engine for engine in self.engines if isinstance(engine, RemoteConnectionWorkbench)
             ),
         }
         for engine in self.engines:
@@ -86,8 +115,9 @@ class DatabaseWorkbenches:
     @staticmethod
     def _normalize_record(value: dict[str, Any], profile_id: str = "") -> dict[str, Any]:
         driver = str(value.get("driver", "")).strip().lower()
-        if driver not in {"mysql", "postgresql"}:
-            raise DeeBeeError("数据库类型仅支持 MySQL 或 PostgreSQL")
+        supported = {"mysql", "postgresql", "redis", "clickhouse", "mongodb", "ssh", "rdp"}
+        if driver not in supported:
+            raise DeeBeeError("不支持的连接类型")
         name = str(value.get("name", "")).strip()
         host = str(value.get("host", "")).strip()
         user = str(value.get("user", "")).strip()
@@ -95,14 +125,95 @@ class DatabaseWorkbenches:
             raise DeeBeeError("连接名称不能为空")
         if not host:
             raise DeeBeeError("主机地址不能为空")
-        if not user:
+        if driver in {"mysql", "postgresql", "clickhouse", "ssh"} and not user:
             raise DeeBeeError("用户名不能为空")
+        password = str(value.get("password", ""))
+        if driver == "mongodb" and password and not user:
+            raise DeeBeeError("MongoDB 使用密码认证时必须填写用户名")
         try:
-            port = int(value.get("port", 5432 if driver == "postgresql" else 3306))
+            default_ports = {
+                "mysql": 3306,
+                "postgresql": 5432,
+                "redis": 6379,
+                "clickhouse": 8123,
+                "mongodb": 27017,
+                "ssh": 22,
+                "rdp": 3389,
+            }
+            port = int(value.get("port", default_ports[driver]))
         except (TypeError, ValueError) as exc:
             raise DeeBeeError("端口必须是数字") from exc
         if not 1 <= port <= 65535:
             raise DeeBeeError("端口必须在 1 到 65535 之间")
+        raw_options = value.get("options") or {}
+        if not isinstance(raw_options, dict):
+            raise DeeBeeError("连接选项格式无效")
+        allowed_options = {
+            "mysql": set(),
+            "postgresql": set(),
+            "redis": {"tls", "verify_tls"},
+            "clickhouse": {"tls", "verify_tls"},
+            "mongodb": {"tls", "verify_tls", "auth_database", "direct_connection"},
+            "ssh": {"auth_method", "strict_host_key", "host_key_fingerprint"},
+            "rdp": {"domain", "security", "ignore_certificate", "color_depth", "timezone"},
+        }[driver]
+        unknown_options = set(raw_options) - allowed_options
+        if unknown_options:
+            raise DeeBeeError(f"{driver} 不支持连接选项：{', '.join(sorted(unknown_options))}")
+        options: dict[str, Any] = {}
+        for key in {"tls", "verify_tls", "direct_connection", "strict_host_key", "ignore_certificate"} & allowed_options:
+            option = raw_options.get(key, key == "verify_tls")
+            if not isinstance(option, bool):
+                raise DeeBeeError(f"连接选项 {key} 必须是布尔值")
+            options[key] = option
+        if driver == "mongodb":
+            options["auth_database"] = str(raw_options.get("auth_database", "admin")).strip() or "admin"
+        if driver == "ssh":
+            auth_method = str(raw_options.get("auth_method", "password")).strip()
+            if auth_method not in {"password", "private_key"}:
+                raise DeeBeeError("SSH 认证方式无效")
+            options.update(
+                auth_method=auth_method,
+                strict_host_key=bool(raw_options.get("strict_host_key", True)),
+                host_key_fingerprint=str(raw_options.get("host_key_fingerprint", "")).strip(),
+            )
+        if driver == "rdp":
+            security = str(raw_options.get("security", "any")).strip().lower()
+            if security not in {"any", "nla", "tls", "rdp"}:
+                raise DeeBeeError("RDP 安全模式无效")
+            try:
+                color_depth = int(raw_options.get("color_depth", 24))
+            except (TypeError, ValueError) as exc:
+                raise DeeBeeError("RDP 色深必须是数字") from exc
+            if color_depth not in {16, 24, 32}:
+                raise DeeBeeError("RDP 色深仅支持 16、24 或 32 位")
+            options.update(
+                domain=str(raw_options.get("domain", "")).strip(),
+                security=security,
+                ignore_certificate=bool(raw_options.get("ignore_certificate", False)),
+                color_depth=color_depth,
+                timezone=str(raw_options.get("timezone", "Etc/UTC")).strip() or "Etc/UTC",
+            )
+
+        default_databases = {
+            "mysql": "",
+            "postgresql": "postgres",
+            "redis": "0",
+            "clickhouse": "default",
+            "mongodb": "",
+            "ssh": "",
+            "rdp": "",
+        }
+        default_database = str(value.get("default_database", "")).strip() or default_databases[driver]
+        if driver == "redis":
+            try:
+                redis_database = int(default_database)
+            except ValueError as exc:
+                raise DeeBeeError("Redis 逻辑数据库编号必须是非负整数") from exc
+            if redis_database < 0:
+                raise DeeBeeError("Redis 逻辑数据库编号必须是非负整数")
+            default_database = str(redis_database)
+
         return {
             "id": profile_id or f"{driver}-{uuid.uuid4()}",
             "driver": driver,
@@ -110,21 +221,44 @@ class DatabaseWorkbenches:
             "host": host,
             "port": port,
             "user": user,
-            "password": str(value.get("password", "")),
-            "default_database": str(value.get("default_database", "")).strip()
-            or ("postgres" if driver == "postgresql" else ""),
+            "password": password,
+            "private_key": str(value.get("private_key", "")),
+            "default_database": default_database,
             "default_schema": str(value.get("default_schema", "")).strip()
             or ("public" if driver == "postgresql" else ""),
+            "options": options,
         }
 
     @staticmethod
-    def _profile(record: dict[str, Any]) -> Profile | PostgresProfile:
+    def _profile(
+        record: dict[str, Any],
+    ) -> Profile | PostgresProfile | RedisProfile | ClickHouseProfile | MongoDBProfile | RemoteProfile:
         if record["driver"] == "postgresql":
             return PostgresProfile(
                 id=record["id"], name=record["name"], host=record["host"],
                 port=record["port"], user=record["user"], password=record["password"],
                 default_database=record["default_database"],
                 default_schema=record["default_schema"],
+            )
+        connection_profile_types = {
+            "redis": RedisProfile,
+            "clickhouse": ClickHouseProfile,
+            "mongodb": MongoDBProfile,
+        }
+        if record["driver"] in connection_profile_types:
+            profile_type = connection_profile_types[record["driver"]]
+            return profile_type(
+                id=record["id"], name=record["name"], host=record["host"],
+                port=record["port"], user=record["user"], password=record["password"],
+                default_database=record["default_database"],
+                default_schema=record["default_schema"], options=dict(record["options"]),
+            )
+        if record["driver"] in {"ssh", "rdp"}:
+            return RemoteProfile(
+                id=record["id"], driver=record["driver"], name=record["name"],
+                host=record["host"], port=record["port"], user=record["user"],
+                password=record["password"], private_key=record["private_key"],
+                options=dict(record["options"]),
             )
         return Profile(
             id=record["id"], name=record["name"], host=record["host"],
@@ -238,6 +372,12 @@ class DatabaseWorkbenches:
 
     def profile_driver(self, profile_id: str) -> str:
         return self._engine(profile_id).require_profile(profile_id).public()["driver"]
+
+    def remote_profile(self, profile_id: str, driver: str) -> RemoteProfile:
+        profile = self._engine(profile_id).require_profile(profile_id)
+        if not isinstance(profile, RemoteProfile) or profile.driver != driver:
+            raise DeeBeeError("远程连接类型不匹配")
+        return profile
 
     def test_profile(self, profile_id: str) -> dict[str, Any]:
         return self._engine(profile_id).test_profile(profile_id)
@@ -402,4 +542,13 @@ class DatabaseWorkbenches:
         )
 
 
-workbench = DatabaseWorkbenches(engines=[mysql_workbench, postgres_workbench])
+workbench = DatabaseWorkbenches(
+    engines=[
+        mysql_workbench,
+        postgres_workbench,
+        redis_workbench,
+        clickhouse_workbench,
+        mongodb_workbench,
+        remote_workbench,
+    ]
+)

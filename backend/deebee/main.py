@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import json
@@ -9,7 +10,7 @@ import secrets
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, File, Header, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +21,7 @@ from .config import settings
 from .jobs import jobs
 from .mysql import DeeBeeError
 from .security import issue_token, verify_token
+from .remote_connections import GuacdTunnel, encode_instruction, open_ssh, read_instruction
 from .workbench import workbench
 
 
@@ -49,21 +51,24 @@ class LoginBody(BaseModel):
 class ConnectionBaseBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    driver: Literal["mysql", "postgresql"]
+    driver: Literal["mysql", "postgresql", "redis", "clickhouse", "mongodb", "ssh", "rdp"]
     name: str = Field(min_length=1, max_length=100)
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
-    user: str = Field(min_length=1, max_length=255)
+    user: str = Field(default="", max_length=255)
     default_database: str = Field(default="", max_length=255)
     default_schema: str = Field(default="", max_length=255)
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConnectionCreateBody(ConnectionBaseBody):
     password: str = Field(default="", max_length=4096)
+    private_key: str = Field(default="", max_length=65536)
 
 
 class ConnectionUpdateBody(ConnectionBaseBody):
     password: str | None = Field(default=None, max_length=4096)
+    private_key: str | None = Field(default=None, max_length=65536)
 
 
 class ConnectionTestBody(ConnectionUpdateBody):
@@ -308,6 +313,152 @@ async def delete_connection(profile_id: str, _: str = Depends(current_user)) -> 
 @app.post("/api/connections/{profile_id}/test")
 async def test_connection(profile_id: str, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(workbench.test_profile, profile_id)
+
+
+def _websocket_user(websocket: WebSocket) -> str:
+    token = websocket.query_params.get("token", "")
+    user = verify_token(token)
+    if not user:
+        raise DeeBeeError("登录已失效")
+    return user
+
+
+@app.websocket("/api/connections/{profile_id}/ssh")
+async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
+    try:
+        _websocket_user(websocket)
+        profile = workbench.remote_profile(profile_id, "ssh")
+    except DeeBeeError:
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+    connection = None
+    process = None
+    output_task: asyncio.Task[Any] | None = None
+    try:
+        await websocket.send_json({"type": "state", "state": "connecting"})
+        connection = await open_ssh(profile)
+        cols = max(20, min(500, int(websocket.query_params.get("cols", "120"))))
+        rows = max(5, min(200, int(websocket.query_params.get("rows", "32"))))
+        process = await connection.create_process(
+            term_type="xterm-256color",
+            term_size=(cols, rows),
+            encoding="utf-8",
+            errors="replace",
+        )
+        await websocket.send_json(
+            {
+                "type": "state",
+                "state": "connected",
+                "message": str(connection.get_extra_info("server_version", "")),
+            }
+        )
+
+        async def pump_output() -> None:
+            while True:
+                data = await process.stdout.read(32768)
+                if not data:
+                    break
+                await websocket.send_json({"type": "data", "data": data})
+            await websocket.send_json(
+                {"type": "state", "state": "closed", "message": "远程会话已结束"}
+            )
+
+        output_task = asyncio.create_task(pump_output())
+        while not output_task.done():
+            message = await websocket.receive_json()
+            message_type = message.get("type")
+            if message_type == "data":
+                process.stdin.write(str(message.get("data", "")))
+            elif message_type == "resize":
+                width = max(20, min(500, int(message.get("cols", cols))))
+                height = max(5, min(200, int(message.get("rows", rows))))
+                process.change_terminal_size(width, height)
+            elif message_type == "close":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            await websocket.send_json(
+                {"type": "state", "state": "error", "message": str(exc)}
+            )
+    finally:
+        if output_task:
+            output_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await output_task
+        if process:
+            process.close()
+        if connection:
+            connection.close()
+            with contextlib.suppress(Exception):
+                await connection.wait_closed()
+        with contextlib.suppress(Exception):
+            await websocket.close()
+
+
+@app.websocket("/api/connections/{profile_id}/rdp")
+async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
+    try:
+        _websocket_user(websocket)
+        profile = workbench.remote_profile(profile_id, "rdp")
+    except DeeBeeError:
+        await websocket.close(code=4401)
+        return
+
+    offered = websocket.headers.get("sec-websocket-protocol", "")
+    await websocket.accept(subprotocol="guacamole" if "guacamole" in offered else None)
+    tunnel: GuacdTunnel | None = None
+    server_task: asyncio.Task[Any] | None = None
+    client_task: asyncio.Task[Any] | None = None
+    try:
+        width = max(320, min(7680, int(websocket.query_params.get("width", "1280"))))
+        height = max(240, min(4320, int(websocket.query_params.get("height", "720"))))
+        dpi = max(72, min(300, int(websocket.query_params.get("dpi", "96"))))
+        tunnel = await GuacdTunnel.connect(profile, width=width, height=height, dpi=dpi)
+        await websocket.send_text(encode_instruction("", tunnel.connection_id).decode("utf-8"))
+
+        async def relay_server() -> None:
+            while True:
+                _, _, raw = await read_instruction(tunnel.reader)
+                await websocket.send_text(raw.decode("utf-8"))
+
+        async def relay_client() -> None:
+            while True:
+                message = await websocket.receive_text()
+                if message.startswith("0.,"):
+                    await websocket.send_text(message)
+                    continue
+                tunnel.writer.write(message.encode("utf-8"))
+                await tunnel.writer.drain()
+
+        server_task = asyncio.create_task(relay_server())
+        client_task = asyncio.create_task(relay_client())
+        done, pending = await asyncio.wait(
+            {server_task, client_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            task.result()
+    except (WebSocketDisconnect, asyncio.IncompleteReadError):
+        pass
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            error = encode_instruction("error", str(exc), "512").decode("utf-8")
+            await websocket.send_text(error)
+    finally:
+        for task in (server_task, client_task):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+        if tunnel:
+            await tunnel.close()
+        with contextlib.suppress(Exception):
+            await websocket.close()
 
 
 @app.get("/api/connections/{profile_id}/databases")

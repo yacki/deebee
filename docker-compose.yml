@@ -11,6 +11,8 @@ services:
     environment:
       DEEBEE_CONNECTIONS_FILE: /app/data/connections.json
       DEEBEE_SECRET_FILE: /app/data/secret.key
+      DEEBEE_GUACD_HOST: guacd
+      DEEBEE_GUACD_PORT: 4822
     ports:
       - "${DEEBEE_BIND_ADDRESS:-127.0.0.1}:${DEEBEE_PORT:-3000}:3000"
     extra_hosts:
@@ -18,9 +20,15 @@ services:
     volumes:
       - ${DEEBEE_DATA_DIR:-./data}:/app/data
     restart: unless-stopped
+    depends_on:
+      - guacd
     healthcheck:
       test: ["CMD", "python", "-c", "import os, urllib.request; p=os.getenv('DEEBEE_BASE_PATH', '/deebee').strip('/'); urllib.request.urlopen('http://127.0.0.1:3000/' + (p + '/' if p else '') + 'api/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 4
       start_period: 10s
+
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
