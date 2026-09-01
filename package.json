@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "start": "vite preview --host 0.0.0.0 --port 3000",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
     "test:backend": "backend/.venv/bin/pytest -q backend/tests",
     "test:all": "npm run test:backend && npm test && npm run test:e2e",

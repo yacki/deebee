@@ -9,6 +9,7 @@ import RdpDesktop from "./components/RdpDesktop.vue";
 import SqlEditor from "./components/SqlEditor.vue";
 import SshTerminal from "./components/SshTerminal.vue";
 import TableDesigner from "./components/TableDesigner.vue";
+import { toolbarCapabilitiesFor, type ToolbarCapability } from "./toolbarPolicy";
 import { API_BASE, ApiError, api, authToken, download, isNetworkError, isSessionExpiredError, jsonBody, workspaceId } from "./api";
 import { inferEditableSingleSelectSource, inferSingleSelectSource, splitSqlStatements } from "./sqlAnalysis";
 import type { Catalog, ConnectionDraft, ConnectionDriver, DataTab, Database, DatabaseSchema, DbObject, DesignerTab, MenuItem, MenuState, Objects, ObjectsTab, Profile, QueryResponse, QueryTab, RemoteTab, ResultSet, TableData, TableSchema, TableSpec, WizardState, WorkTab } from "./types";
@@ -17,6 +18,7 @@ const TABLE_DATA_LIMIT = 1000;
 
 type ConnectionDialogState = ConnectionDraft & { mode: "create" | "edit"; id?: string; saving: boolean; testing: boolean; testMessage: string; error: string };
 type QueryDraft = Pick<QueryTab, "title" | "database" | "schema" | "sql" | "savedSql">;
+type ToolbarItem = { label: string; icon: string; action: () => void | Promise<void>; secondary?: boolean };
 
 const user = ref(""); const authReady = ref(false); const loginUser = ref("admin"); const loginPassword = ref(""); const loginError = ref(""); const loginLoading = ref(false);
 const profiles = ref<Profile[]>([]); const profile = ref<Profile>(); const serverExpanded = ref(true); const databases = ref<Database[]>([]); const database = ref(""); const schema = ref(""); const schemas = ref<Record<string, DatabaseSchema[]>>({}); const expanded = ref(new Set<string>()); const expandedSchemas = ref(new Set<string>()); const objects = ref<Record<string, Objects>>({}); const catalogs = ref<Record<string, Catalog>>({}); const treeFilter = ref("");
@@ -495,7 +497,27 @@ async function finishWizard(){if(!profile.value||!wizard.value)return;wizardRunn
 async function testCurrentConnection() { if (!profile.value) return; try { connectionState.value="checking"; const result=await api<{latency_ms:number}>(`/connections/${profile.value.id}/test`, { method:"POST" }); connectionState.value="online"; flash(`${driverLabel(profile.value.driver)} 连接正常 · ${result.latency_ms} ms`); } catch (reason) { connectionState.value="offline"; flashError(reason); } }
 function openRemoteSession(driver: ConnectionDriver = profile.value?.driver || "ssh") { if(!isRemoteDriver(driver))return;const count=tabs.value.filter(item=>item.type===driver).length+1;const tab:RemoteTab={id:uid(),type:driver,title:driver==="ssh"?`SSH 终端 ${count}`:`远程桌面 ${count}`,database:"",schema:""};tabs.value.push(tab);activeId.value=tab.id; }
 function acceptRemoteState(value:"online"|"checking"|"offline"){connectionState.value=value;}
-function toolbarItems(){const create={label:"新建连接",icon:"lucide:server-crash",action:()=>openCreateConnection()};if(profile.value&&!isRelational.value)return[create];const pg=isPostgres.value;return [create,{label:"新建数据库",icon:"lucide:database-backup",action:openCreateDatabase},{label:"新建查询",icon:"lucide:square-terminal",action:()=>newQuery()},{label:"新建表",icon:"lucide:table-properties",action:()=>openDesigner()},{label:"视图",icon:"lucide:panels-top-left",action:()=>newQuery(database.value,"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;",schema.value)},{label:"函数",icon:"lucide:function-square",action:()=>newQuery(database.value,pg?"CREATE FUNCTION function_name() RETURNS integer\nLANGUAGE sql AS $$ SELECT 1 $$;":"CREATE FUNCTION function_name() RETURNS INT DETERMINISTIC RETURN 1;",schema.value)},{label:"触发器",icon:"lucide:zap",action:()=>newQuery(database.value,pg?"CREATE FUNCTION trigger_function() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  RETURN NEW;\nEND $$;\n\nCREATE TRIGGER trigger_name BEFORE INSERT ON table_name\nFOR EACH ROW EXECUTE FUNCTION trigger_function();":"CREATE TRIGGER trigger_name BEFORE INSERT ON table_name FOR EACH ROW SET NEW.created_at = NOW();",schema.value)},...(!pg?[{label:"事件",icon:"lucide:clock-3",action:()=>newQuery(database.value,"CREATE EVENT event_name ON SCHEDULE EVERY 1 DAY DO SELECT 1;",schema.value)}]:[]),{label:"用户权限",icon:"lucide:user-round-cog",action:()=>showPrivileges(database.value,"",schema.value)},{label:"备份",icon:"lucide:archive-restore",action:()=>openWizard({kind:"dump",database:database.value,schema:schema.value})}]}
+function toolbarItems(): ToolbarItem[] {
+  const create: ToolbarItem = { label:"新建连接", icon:"lucide:server-crash", action:()=>openCreateConnection() };
+  const current = profile.value;
+  if (!current) return [create];
+  const pg = current.driver === "postgresql";
+  const actions: Record<ToolbarCapability, ToolbarItem> = {
+    database: { label:"新建数据库", icon:"lucide:database-backup", action:openCreateDatabase },
+    query: { label:"新建查询", icon:"lucide:square-terminal", action:()=>newQuery() },
+    table: { label:"新建表", icon:"lucide:table-properties", action:()=>openDesigner() },
+    view: { label:"视图", icon:"lucide:panels-top-left", secondary:true, action:()=>newQuery(database.value,"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;",schema.value) },
+    function: { label:"函数", icon:"lucide:function-square", secondary:true, action:()=>newQuery(database.value,pg?"CREATE FUNCTION function_name() RETURNS integer\nLANGUAGE sql AS $$ SELECT 1 $$;":"CREATE FUNCTION function_name() RETURNS INT DETERMINISTIC RETURN 1;",schema.value) },
+    trigger: { label:"触发器", icon:"lucide:zap", secondary:true, action:()=>newQuery(database.value,pg?"CREATE FUNCTION trigger_function() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  RETURN NEW;\nEND $$;\n\nCREATE TRIGGER trigger_name BEFORE INSERT ON table_name\nFOR EACH ROW EXECUTE FUNCTION trigger_function();":"CREATE TRIGGER trigger_name BEFORE INSERT ON table_name FOR EACH ROW SET NEW.created_at = NOW();",schema.value) },
+    event: { label:"事件", icon:"lucide:clock-3", secondary:true, action:()=>newQuery(database.value,"CREATE EVENT event_name ON SCHEDULE EVERY 1 DAY DO SELECT 1;",schema.value) },
+    privileges: { label:"用户权限", icon:"lucide:user-round-cog", action:()=>showPrivileges(database.value,"",schema.value) },
+    backup: { label:"备份", icon:"lucide:archive-restore", action:()=>openWizard({kind:"dump",database:database.value,schema:schema.value}) },
+    session: { label:current.driver==="ssh"?"新建终端":"新建桌面", icon:current.driver==="ssh"?"lucide:square-terminal":"lucide:monitor-up", action:()=>openRemoteSession(current.driver) },
+    test: { label:"测试连接", icon:"lucide:plug-zap", action:testCurrentConnection },
+    settings: { label:"连接设置", icon:"lucide:settings-2", action:openEditConnection },
+  };
+  return [create, ...toolbarCapabilitiesFor(current.driver).map(capability => actions[capability])];
+}
 </script>
 
 <template>
@@ -503,10 +525,10 @@ function toolbarItems(){const create={label:"新建连接",icon:"lucide:server-c
   <main v-else-if="!user" class="login-screen"><form class="login-card" @submit.prevent="login"><div class="brand-logo large">D</div><h1>DeeBee</h1><p>数据库 · SSH · Remote Desktop</p><label>用户名<input v-model="loginUser" aria-label="用户名" autocomplete="username" /></label><label>密码<input v-model="loginPassword" aria-label="密码" type="password" autocomplete="current-password" /></label><div v-if="loginError" class="form-error">{{ loginError }}</div><button class="primary login-button" :disabled="loginLoading">{{ loginLoading ? "正在登录…" : "登录工作台" }}</button></form></main>
   <main v-else-if="fatal" class="fatal"><section><Icon icon="lucide:circle-alert" /><h2>无法打开工作台</h2><p>{{ fatal }}</p><button @click="fatal='';bootstrap()">重试</button><button @click="logout()">退出登录</button></section></main>
   <main v-else class="app-shell">
-    <section class="toolbar" aria-label="数据库工具栏">
-      <button v-for="item in toolbarItems()" :key="item.label" @click="item.action"><Icon :icon="item.icon" /><span>{{ item.label }}</span></button><div class="toolbar-divider" />
+    <section class="toolbar" aria-label="上下文工具栏">
+      <button v-for="item in toolbarItems()" :key="item.label" :class="{'toolbar-secondary':item.secondary}" @click="item.action"><Icon :icon="item.icon" /><span>{{ item.label }}</span></button><div v-if="active?.type==='query'" class="toolbar-divider" />
       <button v-if="active?.type==='query'" :disabled="active.loading" @click="runQuery(active)"><Icon icon="lucide:play" class="green" /><span>运行</span></button><button v-if="active?.type==='query'" :disabled="!active.loading" @click="cancelQuery(active)"><Icon icon="lucide:square" /><span>停止</span></button><button v-if="active?.type==='query'" :disabled="active.autocommit||active.loading" @click="transaction(active,'commit')"><Icon icon="lucide:git-commit-horizontal" /><span>提交</span></button><button v-if="active?.type==='query'" :disabled="active.autocommit||active.loading" @click="transaction(active,'rollback')"><Icon icon="lucide:undo-2" /><span>回滚</span></button>
-      <span class="toolbar-spacer" /><label v-if="profiles.length>1" class="profile-switch"><Icon icon="lucide:server-cog" /><select :value="profile?.id" aria-label="数据库连接" @change="switchProfile(($event.target as HTMLSelectElement).value)"><option v-for="item in profiles" :key="item.id" :value="item.id">{{ item.name }} · {{ driverLabel(item.driver) }}</option></select></label>
+      <span class="toolbar-spacer" /><label v-if="profiles.length>1" class="profile-switch"><Icon icon="lucide:server-cog" /><select :value="profile?.id" aria-label="当前连接" @change="switchProfile(($event.target as HTMLSelectElement).value)"><option v-for="item in profiles" :key="item.id" :value="item.id">{{ item.name }} · {{ driverLabel(item.driver) }}</option></select></label>
       <button v-if="profile" class="connection-state" :class="connectionState" :title="connectionState==='online'?'连接正常；点击检测连接':'点击立即重新连接'" @click="testCurrentConnection"><i /><span>{{ profile.name }} · {{ driverLabel(profile.driver) }}<template v-if="profile.user"> · {{ profile.user }}</template></span><b>{{ connectionLabel }}</b></button><button class="avatar" title="退出登录" @click="logout()">{{ user.slice(0,2).toUpperCase() }}</button>
     </section>
     <section class="workspace">
