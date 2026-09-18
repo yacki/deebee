@@ -51,7 +51,7 @@ class LoginBody(BaseModel):
 class ConnectionBaseBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    driver: Literal["mysql", "postgresql", "redis", "clickhouse", "mongodb", "ssh", "rdp"]
+    driver: Literal["mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "ssh", "rdp"]
     name: str = Field(min_length=1, max_length=100)
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
@@ -64,11 +64,17 @@ class ConnectionBaseBody(BaseModel):
 class ConnectionCreateBody(ConnectionBaseBody):
     password: str = Field(default="", max_length=4096)
     private_key: str = Field(default="", max_length=65536)
+    ssh_password: str = Field(default="", max_length=4096)
+    ssh_private_key: str = Field(default="", max_length=65536)
+    proxy_password: str = Field(default="", max_length=4096)
 
 
 class ConnectionUpdateBody(ConnectionBaseBody):
     password: str | None = Field(default=None, max_length=4096)
     private_key: str | None = Field(default=None, max_length=65536)
+    ssh_password: str | None = Field(default=None, max_length=4096)
+    ssh_private_key: str | None = Field(default=None, max_length=65536)
+    proxy_password: str | None = Field(default=None, max_length=4096)
 
 
 class ConnectionTestBody(ConnectionUpdateBody):
@@ -165,6 +171,7 @@ class DatabaseCreateBody(BaseModel):
     name: str
     charset: str = "utf8mb4"
     collation: str = "utf8mb4_unicode_ci"
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class ObjectActionBody(SchemaBody):
@@ -225,12 +232,16 @@ def _sql_export_literal(value: Any, driver: str, data_type: str = "") -> str:
     if value is None:
         return "NULL"
     if isinstance(value, bool):
+        if driver == "mssql":
+            return "1" if value else "0"
         return "TRUE" if value else "FALSE"
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, dict) and isinstance(value.get("$binary"), str):
         hex_value = value["$binary"]
-        return f"decode('{hex_value}','hex')" if driver == "postgresql" else f"X'{hex_value}'"
+        if driver == "postgresql":
+            return f"decode('{hex_value}','hex')"
+        return f"0x{hex_value}" if driver == "mssql" else f"X'{hex_value}'"
     if isinstance(value, list) and driver == "postgresql" and data_type.strip().endswith("[]"):
         item_type = data_type.strip()[:-2]
         return "ARRAY[" + ", ".join(_sql_export_literal(item, driver, item_type) for item in value) + "]"
@@ -413,31 +424,45 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
     tunnel: GuacdTunnel | None = None
     server_task: asyncio.Task[Any] | None = None
     client_task: asyncio.Task[Any] | None = None
+    keepalive_task: asyncio.Task[Any] | None = None
+    send_lock = asyncio.Lock()
+
+    async def send_text(message: str) -> None:
+        async with send_lock:
+            await websocket.send_text(message)
+
     try:
         width = max(320, min(7680, int(websocket.query_params.get("width", "1280"))))
         height = max(240, min(4320, int(websocket.query_params.get("height", "720"))))
         dpi = max(72, min(300, int(websocket.query_params.get("dpi", "96"))))
         tunnel = await GuacdTunnel.connect(profile, width=width, height=height, dpi=dpi)
-        await websocket.send_text(encode_instruction("", tunnel.connection_id).decode("utf-8"))
+        await send_text(encode_instruction("", tunnel.connection_id).decode("utf-8"))
 
         async def relay_server() -> None:
             while True:
                 _, _, raw = await read_instruction(tunnel.reader)
-                await websocket.send_text(raw.decode("utf-8"))
+                await send_text(raw.decode("utf-8"))
 
         async def relay_client() -> None:
             while True:
                 message = await websocket.receive_text()
                 if message.startswith("0.,"):
-                    await websocket.send_text(message)
+                    await send_text(message)
                     continue
                 tunnel.writer.write(message.encode("utf-8"))
                 await tunnel.writer.drain()
 
+        async def keepalive() -> None:
+            message = encode_instruction("", "keepalive").decode("utf-8")
+            while True:
+                await asyncio.sleep(10)
+                await send_text(message)
+
         server_task = asyncio.create_task(relay_server())
         client_task = asyncio.create_task(relay_client())
+        keepalive_task = asyncio.create_task(keepalive())
         done, pending = await asyncio.wait(
-            {server_task, client_task}, return_when=asyncio.FIRST_COMPLETED
+            {server_task, client_task, keepalive_task}, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
@@ -448,9 +473,9 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
     except Exception as exc:
         with contextlib.suppress(Exception):
             error = encode_instruction("error", str(exc), "512").decode("utf-8")
-            await websocket.send_text(error)
+            await send_text(error)
     finally:
-        for task in (server_task, client_task):
+        for task in (server_task, client_task, keepalive_task):
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -490,7 +515,8 @@ async def catalog(
 @app.post("/api/databases")
 async def create_database(body: DatabaseCreateBody, _: str = Depends(current_user)) -> dict[str, Any]:
     return await asyncio.to_thread(
-        workbench.create_database, body.profile_id, body.name, body.charset, body.collation
+        workbench.create_database, body.profile_id, body.name, body.charset, body.collation,
+        body.options,
     )
 
 
@@ -675,8 +701,10 @@ async def export_data(
         media_type = "application/json"
     elif format == "sql":
         driver = workbench.profile_driver(profile_id)
-        quote = '"' if driver == "postgresql" else "`"
+        quote = '"' if driver == "postgresql" else "[" if driver == "mssql" else "`"
         def quote_name(value: str) -> str:
+            if driver == "mssql":
+                return "[" + value.replace("]", "]]" ) + "]"
             return quote + value.replace(quote, quote + quote) + quote
         output = []
         for row in rows:

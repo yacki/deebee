@@ -17,6 +17,7 @@ export type ToolbarCapability =
 export const driverToolbarCapabilities = {
   mysql: ["database", "query", "table", "view", "function", "trigger", "event", "privileges", "backup"],
   postgresql: ["database", "query", "table", "view", "function", "trigger", "privileges", "backup"],
+  mssql: ["database", "query", "view", "function", "trigger", "privileges", "backup"],
   redis: ["test", "settings"],
   clickhouse: ["test", "settings"],
   mongodb: ["test", "settings"],

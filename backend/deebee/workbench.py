@@ -19,12 +19,33 @@ from .connection_drivers import (
 from .connection_store import ConnectionStore
 from .config import settings
 from .mysql import DeeBeeError, MySQLWorkbench, Profile, workbench as mysql_workbench
+from .mssql import SQLServerProfile, SQLServerWorkbench, workbench as mssql_workbench
 from .postgres import (
     PostgresProfile,
     PostgresWorkbench,
     workbench as postgres_workbench,
 )
 from .remote_connections import RemoteConnectionWorkbench, RemoteProfile, remote_workbench
+from .transports import transport_manager
+
+
+DATABASE_DRIVERS = {"mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb"}
+TRANSPORT_OPTIONS = {
+    "ssh_tunnel",
+    "ssh_host",
+    "ssh_port",
+    "ssh_user",
+    "ssh_auth_method",
+    "ssh_host_key_mode",
+    "ssh_host_key_fingerprint",
+    "ssh_keepalive_seconds",
+    "proxy_enabled",
+    "proxy_type",
+    "proxy_host",
+    "proxy_port",
+    "proxy_user",
+    "proxy_dns",
+}
 
 
 def _environment_connections() -> list[dict[str, Any]]:
@@ -73,6 +94,7 @@ class DatabaseWorkbenches:
         self.engines: list[Any] = engines or [
             MySQLWorkbench(include_default=False),
             PostgresWorkbench(include_default=False),
+            SQLServerWorkbench(),
             RedisWorkbench(),
             ClickHouseWorkbench(),
             MongoDBWorkbench(),
@@ -82,6 +104,9 @@ class DatabaseWorkbenches:
             "mysql": next(engine for engine in self.engines if isinstance(engine, MySQLWorkbench)),
             "postgresql": next(
                 engine for engine in self.engines if isinstance(engine, PostgresWorkbench)
+            ),
+            "mssql": next(
+                engine for engine in self.engines if isinstance(engine, SQLServerWorkbench)
             ),
             "redis": next(engine for engine in self.engines if isinstance(engine, RedisWorkbench)),
             "clickhouse": next(
@@ -115,7 +140,7 @@ class DatabaseWorkbenches:
     @staticmethod
     def _normalize_record(value: dict[str, Any], profile_id: str = "") -> dict[str, Any]:
         driver = str(value.get("driver", "")).strip().lower()
-        supported = {"mysql", "postgresql", "redis", "clickhouse", "mongodb", "ssh", "rdp"}
+        supported = {"mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "ssh", "rdp"}
         if driver not in supported:
             raise DeeBeeError("不支持的连接类型")
         name = str(value.get("name", "")).strip()
@@ -125,7 +150,7 @@ class DatabaseWorkbenches:
             raise DeeBeeError("连接名称不能为空")
         if not host:
             raise DeeBeeError("主机地址不能为空")
-        if driver in {"mysql", "postgresql", "clickhouse", "ssh"} and not user:
+        if driver in {"mysql", "postgresql", "mssql", "clickhouse", "ssh"} and not user:
             raise DeeBeeError("用户名不能为空")
         password = str(value.get("password", ""))
         if driver == "mongodb" and password and not user:
@@ -134,6 +159,7 @@ class DatabaseWorkbenches:
             default_ports = {
                 "mysql": 3306,
                 "postgresql": 5432,
+                "mssql": 1433,
                 "redis": 6379,
                 "clickhouse": 8123,
                 "mongodb": 27017,
@@ -151,12 +177,15 @@ class DatabaseWorkbenches:
         allowed_options = {
             "mysql": set(),
             "postgresql": set(),
+            "mssql": {"encryption", "read_only"},
             "redis": {"tls", "verify_tls"},
             "clickhouse": {"tls", "verify_tls"},
             "mongodb": {"tls", "verify_tls", "auth_database", "direct_connection"},
             "ssh": {"auth_method", "strict_host_key", "host_key_fingerprint"},
             "rdp": {"domain", "security", "ignore_certificate", "color_depth", "timezone"},
         }[driver]
+        if driver in DATABASE_DRIVERS:
+            allowed_options |= TRANSPORT_OPTIONS
         unknown_options = set(raw_options) - allowed_options
         if unknown_options:
             raise DeeBeeError(f"{driver} 不支持连接选项：{', '.join(sorted(unknown_options))}")
@@ -168,6 +197,14 @@ class DatabaseWorkbenches:
             options[key] = option
         if driver == "mongodb":
             options["auth_database"] = str(raw_options.get("auth_database", "admin")).strip() or "admin"
+        if driver == "mssql":
+            encryption = str(raw_options.get("encryption", "request")).strip().lower()
+            if encryption not in {"off", "request", "require"}:
+                raise DeeBeeError("SQL Server 加密策略无效")
+            read_only = raw_options.get("read_only", False)
+            if not isinstance(read_only, bool):
+                raise DeeBeeError("连接选项 read_only 必须是布尔值")
+            options.update(encryption=encryption, read_only=read_only)
         if driver == "ssh":
             auth_method = str(raw_options.get("auth_method", "password")).strip()
             if auth_method not in {"password", "private_key"}:
@@ -194,10 +231,62 @@ class DatabaseWorkbenches:
                 color_depth=color_depth,
                 timezone=str(raw_options.get("timezone", "Etc/UTC")).strip() or "Etc/UTC",
             )
+        if driver in DATABASE_DRIVERS and TRANSPORT_OPTIONS & set(raw_options):
+            ssh_tunnel = raw_options.get("ssh_tunnel", False)
+            proxy_enabled = raw_options.get("proxy_enabled", False)
+            proxy_dns = raw_options.get("proxy_dns", True)
+            if not all(isinstance(item, bool) for item in (ssh_tunnel, proxy_enabled, proxy_dns)):
+                raise DeeBeeError("SSH 隧道和代理开关必须是布尔值")
+            ssh_auth_method = str(raw_options.get("ssh_auth_method", "password")).strip()
+            if ssh_auth_method not in {"password", "private_key"}:
+                raise DeeBeeError("SSH 隧道认证方式无效")
+            host_key_mode = str(raw_options.get("ssh_host_key_mode", "accept_new")).strip()
+            if host_key_mode not in {"accept_new", "strict", "insecure"}:
+                raise DeeBeeError("SSH 隧道主机密钥策略无效")
+            proxy_type = str(raw_options.get("proxy_type", "socks5")).strip().lower()
+            if proxy_type not in {"socks5", "http"}:
+                raise DeeBeeError("仅支持 SOCKS5 和 HTTP CONNECT 代理")
+            try:
+                ssh_port = int(raw_options.get("ssh_port", 22))
+                proxy_port = int(raw_options.get("proxy_port", 1080))
+                keepalive = int(raw_options.get("ssh_keepalive_seconds", 30))
+            except (TypeError, ValueError) as exc:
+                raise DeeBeeError("隧道和代理端口必须是数字") from exc
+            if not 1 <= ssh_port <= 65535 or not 1 <= proxy_port <= 65535:
+                raise DeeBeeError("隧道和代理端口必须在 1 到 65535 之间")
+            if not 0 <= keepalive <= 300:
+                raise DeeBeeError("SSH 保活间隔必须在 0 到 300 秒之间")
+            ssh_host = str(raw_options.get("ssh_host", "")).strip()
+            ssh_user = str(raw_options.get("ssh_user", "")).strip()
+            fingerprint = str(raw_options.get("ssh_host_key_fingerprint", "")).strip()
+            proxy_host = str(raw_options.get("proxy_host", "")).strip()
+            if ssh_tunnel and (not ssh_host or not ssh_user):
+                raise DeeBeeError("启用 SSH 隧道后必须填写 SSH 主机和用户名")
+            if ssh_tunnel and host_key_mode == "strict" and not fingerprint:
+                raise DeeBeeError("严格校验需要先填写 SSH 主机密钥指纹")
+            if proxy_enabled and not proxy_host:
+                raise DeeBeeError("启用代理后必须填写代理主机")
+            options.update(
+                ssh_tunnel=ssh_tunnel,
+                ssh_host=ssh_host,
+                ssh_port=ssh_port,
+                ssh_user=ssh_user,
+                ssh_auth_method=ssh_auth_method,
+                ssh_host_key_mode=host_key_mode,
+                ssh_host_key_fingerprint=fingerprint,
+                ssh_keepalive_seconds=keepalive,
+                proxy_enabled=proxy_enabled,
+                proxy_type=proxy_type,
+                proxy_host=proxy_host,
+                proxy_port=proxy_port,
+                proxy_user=str(raw_options.get("proxy_user", "")).strip(),
+                proxy_dns=proxy_dns,
+            )
 
         default_databases = {
             "mysql": "",
             "postgresql": "postgres",
+            "mssql": "master",
             "redis": "0",
             "clickhouse": "default",
             "mongodb": "",
@@ -223,22 +312,48 @@ class DatabaseWorkbenches:
             "user": user,
             "password": password,
             "private_key": str(value.get("private_key", "")),
+            "ssh_password": str(value.get("ssh_password", "")),
+            "ssh_private_key": str(value.get("ssh_private_key", "")),
+            "proxy_password": str(value.get("proxy_password", "")),
             "default_database": default_database,
             "default_schema": str(value.get("default_schema", "")).strip()
-            or ("public" if driver == "postgresql" else ""),
+            or ({"postgresql": "public", "mssql": "dbo"}.get(driver, "")),
             "options": options,
+        }
+
+    @staticmethod
+    def _transport(record: dict[str, Any]) -> dict[str, Any]:
+        if record["driver"] not in DATABASE_DRIVERS:
+            return {}
+        options = record["options"]
+        if not options.get("ssh_tunnel") and not options.get("proxy_enabled"):
+            return {}
+        return {
+            **{key: options.get(key) for key in TRANSPORT_OPTIONS},
+            "ssh_password": record.get("ssh_password", ""),
+            "ssh_private_key": record.get("ssh_private_key", ""),
+            "proxy_password": record.get("proxy_password", ""),
         }
 
     @staticmethod
     def _profile(
         record: dict[str, Any],
-    ) -> Profile | PostgresProfile | RedisProfile | ClickHouseProfile | MongoDBProfile | RemoteProfile:
+    ) -> Profile | PostgresProfile | SQLServerProfile | RedisProfile | ClickHouseProfile | MongoDBProfile | RemoteProfile:
         if record["driver"] == "postgresql":
             return PostgresProfile(
                 id=record["id"], name=record["name"], host=record["host"],
                 port=record["port"], user=record["user"], password=record["password"],
                 default_database=record["default_database"],
                 default_schema=record["default_schema"],
+                options=dict(record["options"]), transport=DatabaseWorkbenches._transport(record),
+            )
+        if record["driver"] == "mssql":
+            return SQLServerProfile(
+                id=record["id"], name=record["name"], host=record["host"],
+                port=record["port"], user=record["user"], password=record["password"],
+                default_database=record["default_database"],
+                default_schema=record["default_schema"], options=dict(record["options"]),
+                transport=DatabaseWorkbenches._transport(record),
             )
         connection_profile_types = {
             "redis": RedisProfile,
@@ -252,6 +367,7 @@ class DatabaseWorkbenches:
                 port=record["port"], user=record["user"], password=record["password"],
                 default_database=record["default_database"],
                 default_schema=record["default_schema"], options=dict(record["options"]),
+                transport=DatabaseWorkbenches._transport(record),
             )
         if record["driver"] in {"ssh", "rdp"}:
             return RemoteProfile(
@@ -263,7 +379,8 @@ class DatabaseWorkbenches:
         return Profile(
             id=record["id"], name=record["name"], host=record["host"],
             port=record["port"], user=record["user"], password=record["password"],
-            default_database=record["default_database"],
+            default_database=record["default_database"], options=dict(record["options"]),
+            transport=DatabaseWorkbenches._transport(record),
         )
 
     def _close_profile_sessions(self, profile_id: str) -> None:
@@ -299,9 +416,13 @@ class DatabaseWorkbenches:
             merged = {**current, **{key: item for key, item in value.items() if item is not None}}
             if value.get("password") is None:
                 merged["password"] = current["password"]
+            for secret in ("private_key", "ssh_password", "ssh_private_key", "proxy_password"):
+                if value.get(secret) is None:
+                    merged[secret] = current.get(secret, "")
             record = self._normalize_record(merged, profile_id=profile_id)
             previous = current
             self._close_profile_sessions(profile_id)
+            transport_manager.close(profile_id)
             self._records[profile_id] = record
             try:
                 self._store.replace(list(self._records.values()))
@@ -322,6 +443,7 @@ class DatabaseWorkbenches:
                 if record_id != profile_id
             ]
             self._close_profile_sessions(profile_id)
+            transport_manager.close(profile_id)
             self._store.replace(remaining)
             self._driver_engines[current["driver"]].profiles.pop(profile_id, None)
             self._records.pop(profile_id, None)
@@ -337,9 +459,19 @@ class DatabaseWorkbenches:
             candidate = {**current, **{key: item for key, item in value.items() if item is not None}}
             if value.get("password") is None:
                 candidate["password"] = current["password"]
-        record = self._normalize_record(candidate, profile_id="connection-test")
+            for secret in ("private_key", "ssh_password", "ssh_private_key", "proxy_password"):
+                if value.get(secret) is None:
+                    candidate[secret] = current.get(secret, "")
+        test_profile_id = f"connection-test-{uuid.uuid4()}"
+        record = self._normalize_record(candidate, profile_id=test_profile_id)
         engine = self._driver_engines[record["driver"]]
-        return engine.test_connection(self._profile(record))
+        try:
+            result = engine.test_connection(self._profile(record))
+            if record["driver"] in DATABASE_DRIVERS:
+                result.update(transport_manager.metadata(test_profile_id))
+            return result
+        finally:
+            transport_manager.close(test_profile_id)
 
     def _engine(self, profile_id: str) -> Any:
         for engine in self.engines:
@@ -360,7 +492,7 @@ class DatabaseWorkbenches:
     @staticmethod
     def _schema_call(engine: Any, method: str, *args: Any, schema: str = "", **kwargs: Any) -> Any:
         function = getattr(engine, method)
-        if isinstance(engine, PostgresWorkbench):
+        if isinstance(engine, (PostgresWorkbench, SQLServerWorkbench)):
             return function(*args, schema=schema, **kwargs)
         return function(*args, **kwargs)
 
@@ -380,14 +512,17 @@ class DatabaseWorkbenches:
         return profile
 
     def test_profile(self, profile_id: str) -> dict[str, Any]:
-        return self._engine(profile_id).test_profile(profile_id)
+        result = self._engine(profile_id).test_profile(profile_id)
+        if self.profile_driver(profile_id) in DATABASE_DRIVERS:
+            result.update(transport_manager.metadata(profile_id))
+        return result
 
     def databases(self, profile_id: str) -> list[dict[str, Any]]:
         return self._engine(profile_id).databases(profile_id)
 
     def schemas(self, profile_id: str, database: str) -> list[dict[str, Any]]:
         engine = self._engine(profile_id)
-        if isinstance(engine, PostgresWorkbench):
+        if isinstance(engine, (PostgresWorkbench, SQLServerWorkbench)):
             return engine.schemas(profile_id, database)
         return []
 
@@ -397,8 +532,14 @@ class DatabaseWorkbenches:
     def catalog(self, profile_id: str, database: str, schema: str = "") -> dict[str, Any]:
         return self._schema_call(self._engine(profile_id), "catalog", profile_id, database, schema=schema)
 
-    def create_database(self, profile_id: str, name: str, charset: str, collation: str) -> dict[str, Any]:
-        return self._engine(profile_id).create_database(profile_id, name, charset, collation)
+    def create_database(
+        self, profile_id: str, name: str, charset: str, collation: str,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        engine = self._engine(profile_id)
+        if isinstance(engine, SQLServerWorkbench):
+            return engine.create_database(profile_id, name, charset, collation, options)
+        return engine.create_database(profile_id, name, charset, collation)
 
     def drop_database(self, profile_id: str, name: str) -> dict[str, Any]:
         return self._engine(profile_id).drop_database(profile_id, name)
@@ -546,6 +687,7 @@ workbench = DatabaseWorkbenches(
     engines=[
         mysql_workbench,
         postgres_workbench,
+        mssql_workbench,
         redis_workbench,
         clickhouse_workbench,
         mongodb_workbench,

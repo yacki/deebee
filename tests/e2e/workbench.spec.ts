@@ -81,11 +81,11 @@ test.afterAll(async () => {
 test.describe.serial("DeeBee Vue MySQL workbench", () => {
   test("Vue/Iconify tree has reliable arrows and aligned icons with many tables", async ({ page }) => {
     await login(page);
-    const server = page.locator(".server-node");
+    const server = page.locator(".server-node.active");
     await expect(server).toContainText("db01.dev.idmesh.cn:3306");
-    await page.getByLabel(/收起服务器/).click();
+    await page.getByLabel(/收起连接 db01/).click();
     await expect(page.locator(".db-node")).toHaveCount(0);
-    await page.getByLabel(/展开服务器/).click();
+    await page.getByLabel(/打开连接 db01/).click();
     await expect(page.locator(".db-node").filter({ hasText: database })).toBeVisible();
     await expect(page.locator(".titlebar")).toHaveCount(0);
     const databaseNode = page.locator(".db-node").filter({ hasText: database });
@@ -202,7 +202,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.unroute("**/api/**");
     await page.locator(".connection-state").click();
     await expect(page.locator(".connection-state.online")).toBeVisible();
-    await expect(page.getByText("连接已恢复，本条 SQL 未自动重放，请重新执行。")).toBeVisible();
+    await expect(page.getByText(/本条 SQL 未自动重放/)).toBeVisible();
     await editor.press(runShortcut);
     await expect(page.getByRole("cell", { name: "88", exact: true })).toBeVisible();
   });

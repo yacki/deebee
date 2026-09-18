@@ -36,12 +36,14 @@ class ConnectionProfile:
     default_database: str = ""
     default_schema: str = ""
     options: dict[str, Any] = field(default_factory=dict)
+    transport: dict[str, Any] = field(default_factory=dict)
 
     driver: ClassVar[str] = ""
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("password")
+        value.pop("transport")
         value["driver"] = self.driver
         return value
 
@@ -106,10 +108,15 @@ class RedisWorkbench(ConnectionOnlyWorkbench):
             raise DeeBeeError("Redis 驱动未安装，请安装 redis")
         started = time.perf_counter()
         database = int(profile.default_database or "0")
+        from .transports import transport_manager
+
+        host, port = transport_manager.endpoint(
+            profile.id, profile.host, profile.port, profile.transport
+        )
         try:
             client = redis.Redis(
-                host=profile.host,
-                port=profile.port,
+                host=host,
+                port=port,
                 username=profile.user or None,
                 password=profile.password or None,
                 db=database,
@@ -158,10 +165,15 @@ class ClickHouseWorkbench(ConnectionOnlyWorkbench):
             raise DeeBeeError("ClickHouse 驱动未安装，请安装 clickhouse-connect")
         started = time.perf_counter()
         client = None
+        from .transports import transport_manager
+
+        host, port = transport_manager.endpoint(
+            profile.id, profile.host, profile.port, profile.transport
+        )
         try:
             client = clickhouse_connect.get_client(
-                host=profile.host,
-                port=profile.port,
+                host=host,
+                port=port,
                 username=profile.user or "default",
                 password=profile.password,
                 database=profile.default_database or "default",
@@ -196,14 +208,23 @@ class MongoDBWorkbench(ConnectionOnlyWorkbench):
             raise DeeBeeError("MongoDB 驱动未安装，请安装 pymongo")
         started = time.perf_counter()
         options = profile.options
+        from .transports import transport_manager
+
+        host, port = transport_manager.endpoint(
+            profile.id, profile.host, profile.port, profile.transport
+        )
         parameters: dict[str, Any] = {
-            "host": profile.host,
-            "port": profile.port,
+            "host": host,
+            "port": port,
             "serverSelectionTimeoutMS": 10000,
             "connectTimeoutMS": 10000,
             "appname": "DeeBee",
             "tls": bool(options.get("tls", False)),
-            "directConnection": bool(options.get("direct_connection", False)),
+            "directConnection": bool(
+                options.get("direct_connection", False)
+                or profile.transport.get("ssh_tunnel")
+                or profile.transport.get("proxy_enabled")
+            ),
         }
         if options.get("tls"):
             parameters["tlsAllowInvalidCertificates"] = not bool(

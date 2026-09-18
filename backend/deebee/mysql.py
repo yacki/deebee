@@ -9,7 +9,7 @@ import string
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 import pymysql
@@ -43,10 +43,13 @@ class Profile:
     user: str
     password: str
     default_database: str = ""
+    options: dict[str, Any] = field(default_factory=dict)
+    transport: dict[str, Any] = field(default_factory=dict)
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("password")
+        value.pop("transport")
         value["driver"] = "mysql"
         return value
 
@@ -108,10 +111,15 @@ class MySQLWorkbench:
     def _connect(
         self, profile: Profile, database: str = "", *, autocommit: bool = True
     ) -> pymysql.Connection:
+        from .transports import transport_manager
+
+        host, port = transport_manager.endpoint(
+            profile.id, profile.host, profile.port, profile.transport
+        )
         try:
             return pymysql.connect(
-                host=profile.host,
-                port=profile.port,
+                host=host,
+                port=port,
                 user=profile.user,
                 password=profile.password,
                 database=database or None,

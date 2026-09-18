@@ -15,6 +15,14 @@ from cryptography.fernet import Fernet, InvalidToken
 class ConnectionStore:
     """Small encrypted JSON store for user-managed connection secrets."""
 
+    _secret_fields = (
+        "password",
+        "private_key",
+        "ssh_password",
+        "ssh_private_key",
+        "proxy_password",
+    )
+
     def __init__(
         self, path: Path, secret: str, defaults: list[dict[str, Any]] | None = None
     ) -> None:
@@ -40,8 +48,8 @@ class ConnectionStore:
         encrypted: list[dict[str, Any]] = []
         for record in records:
             item = dict(record)
-            item["password"] = self._encrypt(str(item.get("password", "")))
-            item["private_key"] = self._encrypt(str(item.get("private_key", "")))
+            for field in self._secret_fields:
+                item[field] = self._encrypt(str(item.get(field, "")))
             encrypted.append(item)
         return {"version": 2, "connections": encrypted}
 
@@ -78,9 +86,11 @@ class ConnectionStore:
                 if not isinstance(value, dict):
                     raise RuntimeError("数据库连接配置文件格式无效")
                 item = dict(value)
-                item["password"] = self._decrypt(str(item.get("password", "")))
-                private_key = item.get("private_key")
-                item["private_key"] = self._decrypt(str(private_key)) if private_key else ""
+                for field in self._secret_fields:
+                    encrypted_value = item.get(field)
+                    item[field] = (
+                        self._decrypt(str(encrypted_value)) if encrypted_value else ""
+                    )
                 records.append(item)
             return records
 

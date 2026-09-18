@@ -6,7 +6,7 @@ import type { Database, DatabaseSchema, DbObject, Objects, Profile } from "../ty
 const props = defineProps<{
   profile: Profile; serverExpanded: boolean; databases: Database[];
   schemas: Record<string, DatabaseSchema[]>; selected: string; selectedSchema: string;
-  expanded: Set<string>; expandedSchemas: Set<string>; objects: Record<string, Objects>; filter: string;
+  expanded: Set<string>; expandedSchemas: Set<string>; objects: Record<string, Objects>; filter: string; rootless?: boolean;
 }>();
 const emit = defineEmits<{
   toggleServer: []; serverMenu: [event: MouseEvent]; selectDatabase: [database: string]; toggleDatabase: [database: string];
@@ -19,12 +19,15 @@ const emit = defineEmits<{
 
 const categoryOpen = reactive<Record<string, boolean>>({});
 const isPostgres = computed(() => props.profile.driver === "postgresql");
+const isMssql = computed(() => props.profile.driver === "mssql");
+const usesSchemas = computed(() => isPostgres.value || isMssql.value);
+const driverName = computed(() => isPostgres.value ? "PostgreSQL" : isMssql.value ? "SQL Server" : "MySQL");
 const definitions = computed(() => [
   { key: "tables" as const, label: "表", icon: "lucide:table-2" },
   { key: "views" as const, label: "视图", icon: "lucide:panels-top-left" },
   { key: "routines" as const, label: "函数与过程", icon: "lucide:function-square" },
   { key: "triggers" as const, label: "触发器", icon: "lucide:zap" },
-  ...(!isPostgres.value ? [{ key: "events" as const, label: "事件", icon: "lucide:clock-3" }] : []),
+  ...(!usesSchemas.value ? [{ key: "events" as const, label: "事件", icon: "lucide:clock-3" }] : []),
 ]);
 const visibleDatabases = computed(() => props.databases.filter(db => !props.filter || db.name.toLowerCase().includes(props.filter.toLowerCase()) || props.expanded.has(db.name)));
 function contextKey(database: string, schema = "") { return schema ? `${database}:${schema}` : database; }
@@ -38,17 +41,17 @@ function contextObjects(database: string, schema = "") { return props.objects[co
 </script>
 
 <template>
-  <div class="tree" role="tree" aria-label="数据库对象树">
-    <button class="tree-node server-node" role="treeitem" :aria-label="`${serverExpanded ? '收起' : '展开'}服务器 ${profile.name}`" :aria-expanded="serverExpanded" @click="emit('toggleServer')" @contextmenu.prevent="emit('serverMenu', $event)">
+  <div :class="rootless ? 'tree-children' : 'tree'" :role="rootless ? 'group' : 'tree'" :aria-label="rootless ? undefined : '数据库对象树'">
+    <button v-if="!rootless" class="tree-node server-node" role="treeitem" :aria-label="`${serverExpanded ? '收起' : '展开'}服务器 ${profile.name}`" :aria-expanded="serverExpanded" @click="emit('toggleServer')" @contextmenu.prevent="emit('serverMenu', $event)">
       <span class="tree-indent" /><span class="twisty"><Icon :icon="serverExpanded ? 'lucide:chevron-down' : 'lucide:chevron-right'" /></span><Icon icon="lucide:server" class="node-icon server-icon" />
-      <span class="node-label"><b>{{ profile.name }}</b><small>{{ profile.host }}:{{ profile.port }}</small></span><span class="server-driver">{{ isPostgres ? 'PostgreSQL' : 'MySQL' }}</span>
+      <span class="node-label"><b>{{ profile.name }}</b><small>{{ profile.host }}:{{ profile.port }}</small></span><span class="server-driver">{{ driverName }}</span>
     </button>
-    <template v-for="db in serverExpanded ? visibleDatabases : []" :key="db.name">
-      <button class="tree-node db-node" :class="{ active: selected === db.name && (!isPostgres || !selectedSchema) }" role="treeitem" :aria-label="`${expanded.has(db.name) ? '收起' : '展开'} ${db.name}`" :aria-expanded="expanded.has(db.name)" @click="emit('selectDatabase', db.name)" @contextmenu.prevent="emit('databaseMenu', $event, db)">
+    <template v-for="db in rootless || serverExpanded ? visibleDatabases : []" :key="db.name">
+      <button class="tree-node db-node" :class="{ active: selected === db.name && (!usesSchemas || !selectedSchema) }" role="treeitem" :aria-label="`${expanded.has(db.name) ? '收起' : '展开'} ${db.name}`" :aria-expanded="expanded.has(db.name)" @click="emit('selectDatabase', db.name)" @contextmenu.prevent="emit('databaseMenu', $event, db)">
         <span class="tree-indent level-one" /><span class="twisty" @click.stop="emit('toggleDatabase', db.name)"><Icon :icon="expanded.has(db.name) ? 'lucide:chevron-down' : 'lucide:chevron-right'" /></span><Icon icon="lucide:database" class="node-icon database-icon" /><span class="node-label">{{ db.name }}</span>
       </button>
       <template v-if="expanded.has(db.name)">
-        <template v-if="isPostgres">
+        <template v-if="usesSchemas">
           <div v-if="!schemas[db.name]" class="tree-loading">正在读取 Schema…</div>
           <template v-for="itemSchema in schemas[db.name] || []" v-else :key="schemaKey(db.name,itemSchema.name)">
             <button class="tree-node schema-node" :class="{active:selected===db.name && selectedSchema===itemSchema.name}" role="treeitem" :aria-expanded="expandedSchemas.has(schemaKey(db.name,itemSchema.name))" @click="emit('selectSchema',db.name,itemSchema.name)">
@@ -62,7 +65,7 @@ function contextObjects(database: string, schema = "") { return props.objects[co
                 </button>
                 <template v-if="isCategoryOpen(db.name,itemSchema.name,category.key)">
                   <div v-for="item in filtered(contextObjects(db.name,itemSchema.name)[category.key])" :key="`${category.key}:${item.object_id ?? item.name}`" class="tree-node object-node schema-object-node" role="treeitem" tabindex="0" @click="emit('inspect',item,db.name,itemSchema.name)" @keydown.enter="category.key==='tables'?emit('openTable',item.name,db.name,itemSchema.name):emit('openObject',category.key,item,db.name,itemSchema.name)" @dblclick="category.key==='tables'?emit('openTable',item.name,db.name,itemSchema.name):emit('openObject',category.key,item,db.name,itemSchema.name)" @contextmenu.prevent="category.key==='tables'?emit('tableMenu',$event,item,db.name,itemSchema.name):emit('objectMenu',$event,category.key,item,db.name,itemSchema.name)">
-                    <span class="tree-indent level-four" /><span class="twisty placeholder" /><Icon :icon="iconFor(category.key)" class="node-icon" /><span class="node-label">{{ item.name }}{{ item.identity_arguments !== undefined ? `(${item.identity_arguments})` : '' }}</span><button v-if="category.key==='tables'" class="row-action" title="设计表" @click.stop="emit('designTable',item.name,db.name,itemSchema.name)"><Icon icon="lucide:panel-top-open" /></button>
+                    <span class="tree-indent level-four" /><span class="twisty placeholder" /><Icon :icon="iconFor(category.key)" class="node-icon" /><span class="node-label">{{ item.name }}{{ item.identity_arguments !== undefined ? `(${item.identity_arguments})` : '' }}</span><button v-if="category.key==='tables'&&!isMssql" class="row-action" title="设计表" @click.stop="emit('designTable',item.name,db.name,itemSchema.name)"><Icon icon="lucide:panel-top-open" /></button>
                   </div>
                 </template>
               </template>

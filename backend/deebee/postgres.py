@@ -9,7 +9,7 @@ import string
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 try:
@@ -39,10 +39,13 @@ class PostgresProfile:
     password: str
     default_database: str = "postgres"
     default_schema: str = "public"
+    options: dict[str, Any] = field(default_factory=dict)
+    transport: dict[str, Any] = field(default_factory=dict)
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("password")
+        value.pop("transport")
         value["driver"] = "postgresql"
         return value
 
@@ -101,10 +104,15 @@ class PostgresWorkbench:
         self, profile: PostgresProfile, database: str = "", *, autocommit: bool = True
     ) -> Any:
         self._require_driver()
+        from .transports import transport_manager
+
+        host, port = transport_manager.endpoint(
+            profile.id, profile.host, profile.port, profile.transport
+        )
         try:
             return psycopg.connect(  # type: ignore[union-attr]
-                host=profile.host,
-                port=profile.port,
+                host=host,
+                port=port,
                 user=profile.user,
                 password=profile.password,
                 dbname=database or profile.default_database or "postgres",

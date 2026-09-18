@@ -1,11 +1,15 @@
-export type ConnectionDriver = "mysql" | "postgresql" | "redis" | "clickhouse" | "mongodb" | "ssh" | "rdp";
+export type ConnectionDriver = "mysql" | "postgresql" | "mssql" | "redis" | "clickhouse" | "mongodb" | "ssh" | "rdp";
 export type ConnectionOptions = {
   tls: boolean; verify_tls: boolean; auth_database: string; direct_connection: boolean;
   auth_method: "password" | "private_key"; strict_host_key: boolean; host_key_fingerprint: string;
   domain: string; security: "any" | "nla" | "tls" | "rdp"; ignore_certificate: boolean; color_depth: 16 | 24 | 32; timezone: string;
+  encryption: "off" | "request" | "require"; read_only: boolean;
+  ssh_tunnel: boolean; ssh_host: string; ssh_port: number; ssh_user: string; ssh_auth_method: "password" | "private_key";
+  ssh_host_key_mode: "accept_new" | "strict" | "insecure"; ssh_host_key_fingerprint: string; ssh_keepalive_seconds: number;
+  proxy_enabled: boolean; proxy_type: "socks5" | "http"; proxy_host: string; proxy_port: number; proxy_user: string; proxy_dns: boolean;
 };
-export type ConnectionDraft = { name: string; host: string; port: number; user: string; password: string; private_key: string; default_database: string; default_schema: string; options: ConnectionOptions; driver: ConnectionDriver };
-export type Profile = Omit<ConnectionDraft, "password" | "private_key"> & { id: string };
+export type ConnectionDraft = { name: string; host: string; port: number; user: string; password: string; private_key: string; ssh_password: string; ssh_private_key: string; proxy_password: string; default_database: string; default_schema: string; options: ConnectionOptions; driver: ConnectionDriver };
+export type Profile = Omit<ConnectionDraft, "password" | "private_key" | "ssh_password" | "ssh_private_key" | "proxy_password"> & { id: string };
 export type Database = { name: string; charset: string; collation: string };
 export type DatabaseSchema = { name: string; owner?: string; system?: boolean };
 export type DbObject = { name: string; object_type: string; object_id?: number; identity_arguments?: string; estimated_rows?: number; comment?: string; engine?: string; data_length?: number; index_length?: number; created_at?: string; updated_at?: string; collation?: string; status?: string; table_name?: string };
@@ -24,11 +28,12 @@ export type CatalogTable = { name: string; object_type: string; columns: Catalog
 export type Catalog = { database: string; schema?: string; tables: CatalogTable[]; routines: { name: string; object_type: string; data_type: string }[] };
 export type TableSpec = { database: string; schema: string; table: string; columns: Column[]; primary_key: string[]; indexes: Index[]; foreign_keys: ForeignKey[]; checks: CheckConstraint[]; engine: string; charset: string; collation: string; comment: string };
 
-export type QueryTab = { id: string; type: "query"; title: string; database: string; schema: string; sessionId: string; sql: string; savedSql: string; autocommit: boolean; loading: boolean; response?: QueryResponse; error?: string; resultIndex: number };
-export type DataTab = { id: string; type: "data"; title: string; database: string; schema: string; table: string; loading: boolean; data?: TableData; error?: string; page: number; filterColumn: string; filterValue: string; sort?: { column: string; direction: "asc" | "desc" }; selected: number | null };
-export type DesignerTab = { id: string; type: "designer"; title: string; database: string; schema: string; table: string; currentTable: string | null; loading: boolean; spec?: TableSpec; source?: TableSchema; error?: string; pane: "columns" | "indexes" | "foreign" | "checks" | "ddl"; statements: string[]; dangerous: string[] };
-export type ObjectsTab = { id: string; type: "objects"; title: string; database: string; schema: string; kind: "tables" | "views" | "routines" | "triggers" | "events" };
-export type RemoteTab = { id: string; type: "ssh" | "rdp"; title: string; database: ""; schema: "" };
+type TabConnection = { profileId: string };
+export type QueryTab = TabConnection & { id: string; type: "query"; title: string; database: string; schema: string; sessionId: string; sql: string; savedSql: string; autocommit: boolean; loading: boolean; response?: QueryResponse; error?: string; resultIndex: number };
+export type DataTab = TabConnection & { id: string; type: "data"; title: string; database: string; schema: string; table: string; loading: boolean; data?: TableData; error?: string; page: number; filterColumn: string; filterValue: string; sort?: { column: string; direction: "asc" | "desc" }; selected: number | null };
+export type DesignerTab = TabConnection & { id: string; type: "designer"; title: string; database: string; schema: string; table: string; currentTable: string | null; loading: boolean; spec?: TableSpec; source?: TableSchema; error?: string; pane: "columns" | "indexes" | "foreign" | "checks" | "ddl"; statements: string[]; dangerous: string[] };
+export type ObjectsTab = TabConnection & { id: string; type: "objects"; title: string; database: string; schema: string; kind: "tables" | "views" | "routines" | "triggers" | "events" };
+export type RemoteTab = TabConnection & { id: string; type: "ssh" | "rdp"; title: string; database: ""; schema: "" };
 export type WorkTab = QueryTab | DataTab | DesignerTab | ObjectsTab | RemoteTab;
 
 export type MenuItem = { id: string; label?: string; icon?: string; shortcut?: string; danger?: boolean; disabled?: boolean; separator?: boolean; children?: MenuItem[]; action?: () => void | Promise<void> };

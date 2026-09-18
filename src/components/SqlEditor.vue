@@ -7,7 +7,7 @@ import { completionContext, currentSqlBeforeCursor, type SqlTableReference } fro
 import type { Catalog } from "../types";
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
-const props = defineProps<{ modelValue: string; catalog?: Catalog; dialect?: "mysql" | "postgresql" }>();
+const props = defineProps<{ modelValue: string; catalog?: Catalog; dialect?: "mysql" | "postgresql" | "mssql" }>();
 const emit = defineEmits<{ "update:modelValue": [value: string]; run: [sql: string] }>();
 const host = ref<HTMLElement>();
 let monaco: typeof Monaco;
@@ -17,6 +17,7 @@ let updating = false;
 
 const keywords = ["SELECT","FROM","WHERE","JOIN","LEFT JOIN","RIGHT JOIN","INNER JOIN","ON","AS","DISTINCT","INSERT INTO","VALUES","UPDATE","SET","DELETE FROM","CREATE TABLE","ALTER TABLE","DROP TABLE","GROUP BY","ORDER BY","HAVING","LIMIT","OFFSET","UNION ALL","WITH","CASE","WHEN","THEN","ELSE","END","AND","OR","NOT","NULL","IS NULL","IS NOT NULL","IN","LIKE","BETWEEN","EXISTS","ASC","DESC","COUNT","SUM","AVG","MIN","MAX","NOW","DATE_FORMAT","CONCAT","COALESCE","IFNULL","JSON_EXTRACT"];
 const postgresKeywords = ["RETURNING","ILIKE","ON CONFLICT","DO NOTHING","DO UPDATE","GENERATED ALWAYS AS IDENTITY","SERIAL","BIGSERIAL","JSONB_BUILD_OBJECT","ARRAY_AGG","FILTER","LATERAL"];
+const mssqlKeywords = ["TOP","OUTPUT","MERGE","IDENTITY","SCOPE_IDENTITY","TRY_CONVERT","TRY_CAST","NVARCHAR","DATETIME2","UNIQUEIDENTIFIER","CROSS APPLY","OUTER APPLY","SET NOCOUNT ON","BEGIN TRY","BEGIN CATCH","THROW"];
 
 function currentStatement(editor: Monaco.editor.IStandaloneCodeEditor) {
   const model = editor.getModel(); if (!model) return editor.getValue();
@@ -117,13 +118,14 @@ function registerCompletion() {
         }
         for (const routine of catalog.routines) add(`routine:${routine.name.toLowerCase()}`, { label: routine.name, kind: monaco.languages.CompletionItemKind.Function, detail: `${routine.object_type} · ${routine.data_type}`, insertText: `${routine.name}($0)`, insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, sortText: `2_${routine.name}` });
       }
-      for (const keyword of props.dialect === "postgresql" ? [...keywords, ...postgresKeywords] : keywords) add(`keyword:${keyword}`, { label: keyword, kind: monaco.languages.CompletionItemKind.Keyword, detail: `${props.dialect === "postgresql" ? "PostgreSQL" : "MySQL"} 关键字`, insertText: keyword, range, sortText: `3_${keyword}` });
+      const dialectKeywords=props.dialect==="postgresql"?[...keywords,...postgresKeywords]:props.dialect==="mssql"?[...keywords,...mssqlKeywords]:keywords;
+      for (const keyword of dialectKeywords) add(`keyword:${keyword}`, { label: keyword, kind: monaco.languages.CompletionItemKind.Keyword, detail: `${props.dialect === "postgresql" ? "PostgreSQL" : props.dialect === "mssql" ? "SQL Server" : "MySQL"} 关键字`, insertText: keyword, range, sortText: `3_${keyword}` });
       return { suggestions: [...result.values()] };
     },
   });
 }
 
-function formatSql() { if (!instance) return; try { instance.setValue(format(instance.getValue(), { language: props.dialect === "postgresql" ? "postgresql" : "mysql", keywordCase: "upper" })); } catch { /* incomplete statement */ } }
+function formatSql() { if (!instance) return; try { instance.setValue(format(instance.getValue(), { language: props.dialect === "postgresql" ? "postgresql" : props.dialect === "mssql" ? "transactsql" : "mysql", keywordCase: "upper" })); } catch { /* incomplete statement */ } }
 defineExpose({ formatSql, focus: () => instance?.focus() });
 
 onMounted(async () => {
