@@ -1,0 +1,33 @@
+name: deebee-access-lab
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: lab_root_not_for_production
+      MYSQL_DATABASE: access_lab
+    ports: ["127.0.0.1:19306:3306"]
+    volumes:
+      - ./mysql.sql:/docker-entrypoint-initdb.d/lab.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: lab_root_not_for_production
+      POSTGRES_DB: access_lab
+    ports: ["127.0.0.1:19432:5432"]
+    volumes:
+      - ./postgres.sql:/docker-entrypoint-initdb.d/lab.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d access_lab"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  ssh:
+    build:
+      context: .
+      dockerfile: ssh.Dockerfile
+    ports: ["127.0.0.1:19222:22"]

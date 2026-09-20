@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "principals": [
+    {"id": "agent_ops", "name": "运维 Agent", "kind": "service", "enabled": true}
+  ],
+  "identity-bindings": [
+    {"id": "agent_local_binding", "source_id": "local_keys", "subject": "principal:agent_ops", "principal_id": "agent_ops", "enabled": true}
+  ],
+  "resources": [
+    {"id": "app_mysql", "name": "应用 MySQL", "type": "mysql", "host": "mysql.internal.example", "port": 3306, "database": "app", "tls": true, "enabled": false}
+  ],
+  "accounts": [
+    {"id": "app_mysql_reader", "resource_id": "app_mysql", "name": "应用库查询账号", "username": "app_reader", "tier": "normal", "enabled": false},
+    {"id": "app_mysql_operator", "resource_id": "app_mysql", "name": "应用库操作账号", "username": "app_operator", "tier": "privileged", "enabled": false}
+  ],
+  "access-grants": [
+    {"id": "grant_agent_mysql", "principal_id": "agent_ops", "resource_id": "app_mysql", "normal_account_id": "app_mysql_reader", "privileged_account_id": "app_mysql_operator", "allow_privileged": false, "enabled": false, "actions": ["resources:read", "db:query"]}
+  ]
+}

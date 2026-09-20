@@ -1,0 +1,13 @@
+CREATE USER lab_reader PASSWORD 'lab_reader_test_password';
+CREATE USER lab_operator PASSWORD 'lab_operator_test_password';
+CREATE TABLE public.items (id INT PRIMARY KEY, name VARCHAR(50), amount DECIMAL(16,2));
+INSERT INTO public.items VALUES (1, 'Alpha', 12.50), (2, 'Beta', 23.75);
+GRANT CONNECT ON DATABASE access_lab TO lab_reader, lab_operator;
+GRANT USAGE ON SCHEMA public TO lab_reader, lab_operator;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO lab_reader;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO lab_operator;
+GRANT CREATE ON SCHEMA public TO lab_operator;
+ALTER TABLE public.items OWNER TO lab_operator;
+CREATE SCHEMA restricted_lab;
+CREATE TABLE restricted_lab.secrets (value TEXT);
+INSERT INTO restricted_lab.secrets VALUES ('not_authorized');

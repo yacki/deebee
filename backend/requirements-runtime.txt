@@ -10,3 +10,11 @@ asyncssh==2.24.0
 cryptography>=44.0.0
 python-multipart==0.0.20
 openpyxl==3.1.5
+mcp==1.30.0
+PyJWT[crypto]==2.14.0
+sqlglot==28.10.1
+argon2-cffi==25.1.0
+httpx==0.28.1
+# Keep the established FastAPI runtime compatible with MCP's SSE dependency.
+starlette==0.47.3
+sse-starlette==2.4.1
