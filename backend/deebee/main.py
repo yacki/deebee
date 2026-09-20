@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import csv
+import hashlib
 import io
 import json
 import os
@@ -10,9 +11,9 @@ import secrets
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, File, Header, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Header, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -23,6 +24,7 @@ from .mysql import DeeBeeError
 from .security import issue_token, verify_token
 from .remote_connections import GuacdTunnel, encode_instruction, open_ssh, read_instruction
 from .workbench import workbench
+from .access.audit import preview_value, redact_text
 
 
 app = FastAPI(title="DeeBee API", version="0.1.0")
@@ -199,12 +201,21 @@ class GenericObjectActionBody(SchemaBody):
     action: Literal["drop", "enable", "disable"]
 
 
-def current_user(authorization: str | None = Header(default=None)) -> str:
+def current_user(request: Request, authorization: str | None = Header(default=None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise DeeBeeError("登录已失效")
     user = verify_token(authorization.removeprefix("Bearer ").strip())
     if not user:
         raise DeeBeeError("登录已失效")
+    request.state.audit_identity = {
+        "actor_id": user,
+        "actor_name": user,
+        "actor_kind": "local_admin",
+        "auth_method": "local_admin_token",
+        "source_id": "legacy_admin",
+        "subject": user,
+        "credential_id": "legacy:" + hashlib.sha256(authorization.encode()).hexdigest()[:24],
+    }
     return user
 
 
@@ -273,11 +284,19 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/api/auth/login")
-async def login(body: LoginBody) -> dict[str, Any]:
+async def login(request: Request, body: LoginBody) -> dict[str, Any]:
+    request.state.audit_identity = {
+        "actor_name": body.username or "anonymous",
+        "actor_kind": "local_admin",
+        "auth_method": "password",
+        "source_id": "legacy_admin",
+        "subject": body.username,
+    }
     valid_user = secrets.compare_digest(body.username, settings.admin_user)
     valid_password = secrets.compare_digest(body.password, settings.admin_password)
     if not (valid_user and valid_password):
         raise DeeBeeError("用户名或密码错误")
+    request.state.audit_identity["actor_id"] = body.username
     return {"token": issue_token(body.username), "user": {"username": body.username}}
 
 
@@ -334,13 +353,74 @@ def _websocket_user(websocket: WebSocket) -> str:
     return user
 
 
+def _archive_remote_session(
+    websocket: WebSocket,
+    user: str,
+    protocol: str,
+    profile_id: str,
+    profile: dict[str, Any],
+    started: float,
+    status_code: int,
+    user_input: str,
+    remote_output: str,
+    error_code: str,
+) -> None:
+    try:
+        store = websocket.scope["app"].state.access.store
+        request_preview, request_truncated = preview_value(
+            {"profile_id": profile_id, "input": redact_text(user_input), "protocol": protocol}
+        )
+        response_preview, response_truncated = preview_value(
+            {"output": redact_text(remote_output), "error": error_code}
+        )
+        store.audit(
+            user,
+            f"workbench.{protocol}.session",
+            profile_id,
+            {"transport": "websocket"},
+            surface="workbench",
+            actor_name=user,
+            actor_kind="local_admin" if user != "anonymous" else "anonymous",
+            auth_method="local_admin_token" if user != "anonymous" else "none",
+            source_id="legacy_admin" if user != "anonymous" else "",
+            subject=user if user != "anonymous" else "",
+            method="WEBSOCKET",
+            path=f"/api/connections/{profile_id}/{protocol}",
+            operation=f"workbench.{protocol}.session",
+            resource_id=profile_id,
+            account_username=str(profile.get("user", "")),
+            status_code=status_code,
+            duration_ms=max(0, int((asyncio.get_running_loop().time() - started) * 1000)),
+            client_ip=str((websocket.scope.get("client") or ("unknown",))[0]),
+            user_agent=websocket.headers.get("user-agent", "")[:256],
+            request_preview=request_preview,
+            response_preview=response_preview,
+            request_truncated=request_truncated,
+            response_truncated=response_truncated,
+            error_code=error_code,
+        )
+    except Exception:
+        # Closing the remote session must not be held hostage by audit I/O.
+        pass
+
+
 @app.websocket("/api/connections/{profile_id}/ssh")
 async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
+    started = asyncio.get_running_loop().time()
+    user = "anonymous"
+    profile: dict[str, Any] = {}
+    input_archive = ""
+    output_archive = ""
+    session_status = 101
+    session_error = ""
+    sensitive_input = False
     try:
-        _websocket_user(websocket)
+        user = _websocket_user(websocket)
         profile = workbench.remote_profile(profile_id, "ssh")
     except DeeBeeError:
+        session_status = 401
         await websocket.close(code=4401)
+        _archive_remote_session(websocket, user, "ssh", profile_id, profile, started, session_status, "", "", "UNAUTHENTICATED")
         return
 
     await websocket.accept()
@@ -367,10 +447,16 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
         )
 
         async def pump_output() -> None:
+            nonlocal output_archive, sensitive_input
             while True:
                 data = await process.stdout.read(32768)
                 if not data:
                     break
+                if len(output_archive.encode("utf-8")) < 4096:
+                    output_archive += data[:4096]
+                prompt_tail = data[-160:].lower()
+                if any(marker in prompt_tail for marker in ("password:", "passphrase:", "token:", "secret:")):
+                    sensitive_input = True
                 await websocket.send_json({"type": "data", "data": data})
             await websocket.send_json(
                 {"type": "state", "state": "closed", "message": "远程会话已结束"}
@@ -381,7 +467,12 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
             message = await websocket.receive_json()
             message_type = message.get("type")
             if message_type == "data":
-                process.stdin.write(str(message.get("data", "")))
+                typed = str(message.get("data", ""))
+                process.stdin.write(typed)
+                if len(input_archive.encode("utf-8")) < 4096:
+                    input_archive += ("[REDACTED]" if sensitive_input else typed)
+                if sensitive_input and any(char in typed for char in ("\n", "\r")):
+                    sensitive_input = False
             elif message_type == "resize":
                 width = max(20, min(500, int(message.get("cols", cols))))
                 height = max(5, min(200, int(message.get("rows", rows))))
@@ -391,6 +482,8 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
     except WebSocketDisconnect:
         pass
     except Exception as exc:
+        session_status = 500
+        session_error = type(exc).__name__
         with contextlib.suppress(Exception):
             await websocket.send_json(
                 {"type": "state", "state": "error", "message": str(exc)}
@@ -408,15 +501,26 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
                 await connection.wait_closed()
         with contextlib.suppress(Exception):
             await websocket.close()
+        _archive_remote_session(websocket, user, "ssh", profile_id, profile, started, session_status,
+                                input_archive, output_archive, session_error)
 
 
 @app.websocket("/api/connections/{profile_id}/rdp")
 async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
+    started = asyncio.get_running_loop().time()
+    user = "anonymous"
+    profile: dict[str, Any] = {}
+    input_archive = ""
+    output_archive = ""
+    session_status = 101
+    session_error = ""
     try:
-        _websocket_user(websocket)
+        user = _websocket_user(websocket)
         profile = workbench.remote_profile(profile_id, "rdp")
     except DeeBeeError:
+        session_status = 401
         await websocket.close(code=4401)
+        _archive_remote_session(websocket, user, "rdp", profile_id, profile, started, session_status, "", "", "UNAUTHENTICATED")
         return
 
     offered = websocket.headers.get("sec-websocket-protocol", "")
@@ -428,6 +532,9 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
     send_lock = asyncio.Lock()
 
     async def send_text(message: str) -> None:
+        nonlocal output_archive
+        if len(output_archive.encode("utf-8")) < 4096 and "keepalive" not in message:
+            output_archive += message[:4096]
         async with send_lock:
             await websocket.send_text(message)
 
@@ -444,11 +551,14 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
                 await send_text(raw.decode("utf-8"))
 
         async def relay_client() -> None:
+            nonlocal input_archive
             while True:
                 message = await websocket.receive_text()
                 if message.startswith("0.,"):
                     await send_text(message)
                     continue
+                if len(input_archive.encode("utf-8")) < 4096:
+                    input_archive += message[:4096]
                 tunnel.writer.write(message.encode("utf-8"))
                 await tunnel.writer.drain()
 
@@ -471,6 +581,8 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
     except (WebSocketDisconnect, asyncio.IncompleteReadError):
         pass
     except Exception as exc:
+        session_status = 500
+        session_error = type(exc).__name__
         with contextlib.suppress(Exception):
             error = encode_instruction("error", str(exc), "512").decode("utf-8")
             await send_text(error)
@@ -484,6 +596,8 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
             await tunnel.close()
         with contextlib.suppress(Exception):
             await websocket.close()
+        _archive_remote_session(websocket, user, "rdp", profile_id, profile, started, session_status,
+                                input_archive, output_archive, session_error)
 
 
 @app.get("/api/connections/{profile_id}/databases")
@@ -741,6 +855,7 @@ async def export_data(
 
 @app.post("/api/data/import")
 async def import_data(
+    request: Request,
     profile_id: str,
     database: str,
     table: str,
@@ -749,7 +864,10 @@ async def import_data(
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
+    request.state.audit_request_override = {"profile_id": profile_id, "database": database, "table": table,
+                                            "schema": schema, "filename": file.filename or "", "bytes": len(content)}
     rows = _parse_import_rows(file.filename or "", content)
+    request.state.audit_request_override.update(row_count=len(rows), rows=rows[:20])
     if len(rows) > 100000:
         raise DeeBeeError("单次最多导入 100000 行")
     return await asyncio.to_thread(workbench.bulk_insert, profile_id, database, table, rows, schema)
@@ -757,6 +875,7 @@ async def import_data(
 
 @app.post("/api/sql/execute-file")
 async def execute_sql_file(
+    request: Request,
     profile_id: str,
     database: str,
     schema: str = "",
@@ -770,12 +889,14 @@ async def execute_sql_file(
         sql = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
+    request.state.audit_request_override = {"profile_id": profile_id, "database": database, "schema": schema,
+                                            "filename": file.filename or "", "bytes": len(content), "sql": sql}
     return await asyncio.to_thread(workbench.execute_script, profile_id, database, sql, schema)
 
 
 @app.post("/api/jobs/sql-file")
 async def execute_sql_file_job(
-    profile_id: str, database: str, schema: str = "", file: UploadFile = File(...),
+    request: Request, profile_id: str, database: str, schema: str = "", file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
@@ -785,6 +906,8 @@ async def execute_sql_file_job(
         sql = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
+    request.state.audit_request_override = {"profile_id": profile_id, "database": database, "schema": schema,
+                                            "filename": file.filename or "", "bytes": len(content), "sql": sql}
     state: dict[str, str] = {}
 
     def cancel_running_query() -> None:
@@ -823,14 +946,17 @@ async def execute_sql_file_job(
 
 @app.post("/api/jobs/import")
 async def import_data_job(
-    profile_id: str, database: str, table: str, schema: str = "", file: UploadFile = File(...),
+    request: Request, profile_id: str, database: str, table: str, schema: str = "", file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
     filename = file.filename or ""
+    rows = _parse_import_rows(filename, content)
+    request.state.audit_request_override = {"profile_id": profile_id, "database": database, "table": table,
+                                            "schema": schema, "filename": filename, "bytes": len(content),
+                                            "row_count": len(rows), "rows": rows[:20]}
     def task(progress, cancelled):
-        progress(10, "正在解析文件")
-        rows = _parse_import_rows(filename, content)
+        progress(10, "正在校验文件")
         if len(rows) > 100000:
             raise DeeBeeError("单次最多导入 100000 行")
         if cancelled.is_set(): return None
@@ -912,14 +1038,24 @@ async def apply_ddl(body: DdlApplyBody, _: str = Depends(current_user)) -> dict[
     return await asyncio.to_thread(workbench.apply_ddl, body.profile_id, database, generated)
 
 
+from .access.api import install_access
+
+access_lifespan = install_access(app, legacy=workbench)
+
 web_directory = os.getenv("DEEBEE_WEB_DIR", "").strip()
 if web_directory:
+    @app.get("/admin", include_in_schema=False)
+    @app.get("/admin/", include_in_schema=False)
+    async def admin_workspace() -> FileResponse:
+        return FileResponse(Path(web_directory) / "index.html")
+
     app.mount("/", StaticFiles(directory=Path(web_directory), html=True), name="web")
 
 api_app = app
 if settings.base_path:
     public_app = FastAPI(
         title="DeeBee",
+        lifespan=access_lifespan,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

@@ -4,6 +4,12 @@ DeeBee 是一个浏览器一站式连接工作台。MySQL 和 PostgreSQL 已支�
 
 完整功能及测试映射见 `docs/FEATURE_MATRIX.md`。
 
+## 身份与访问 / Agent 接入 V1
+
+本分支新增独立管理入口 `/deebee/admin`（原本地管理员）和 `/deebee/#access-user`（映射用户），不改变原工作台布局。支持 API-Key、OIDC 身份映射，SSH/MySQL/PostgreSQL 资源与普通/特权账号授权，以及 `/deebee/mcp/` 和等价 REST 服务。旧连接不自动向外部 Agent 发布；新凭据不能进入原管理接口或 RDP。MCP、授权用户前端、管理端和原工作台业务 API 均写入可检索的身份审计。
+
+部署、无秘密 mapping 示例及独立 MCP 验收脚本见 [身份与访问说明](docs/ACCESS_V1.md)，实际测试及边界见 [实施验收记录](docs/ACCESS_IMPLEMENTATION_LOG.md)。本分支功能尚未推送到下方 `latest` 镜像；使用时需构建当前分支，不要直接替换已有实例。
+
 ## 直接运行
 
 无需本地打包，只要安装了 Docker，先创建内部网络并启动 RDP 网关：

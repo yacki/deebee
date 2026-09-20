@@ -1,0 +1,406 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="3584" viewBox="0 0 2400 3584" role="img" aria-labelledby="title description">
+  <title id="title">Agent安全家族全景架构图</title>
+  <desc id="description">管理员、普通运维人员与外部 Agent，通过 SenseMate、AgentMesh 的 Tools 和 MCP 生态，接入 DeeBee 的身份映射、按资源账号授权与受控执行。IDMesh 提供统一身份基础；DeeBee 同时支持本地独立身份模式。目标仅为 SSH、MySQL、PostgreSQL。右侧 AI Agent 安全为规划建议，跨产品集成待联调。所有文字与图形均为原生 SVG 矢量元素。</desc>
+  <defs>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#15345c;font-size:27px;font-weight:400}
+      .title{font-size:64px;font-weight:650;fill:#102c65;letter-spacing:1px}
+      .subtitle{font-size:30px;fill:#456488;letter-spacing:2px}
+      .heading{font-size:34px;font-weight:650;fill:#153568}
+      .card-title{font-size:30px;font-weight:600;fill:#163966}
+      .subhead{font-size:28px;font-weight:600;fill:#23558d}
+      .small{font-size:24px;fill:#496482}
+      .meta{font-size:22px;fill:#526a85}
+      .strong{font-weight:600}
+      .blue{fill:#2563c4}
+      .purple{fill:#7153b2}
+      .white{fill:#fff}
+      .zone{fill:#eef5ff;stroke:#b4cef1;stroke-width:2}
+      .teal-zone{fill:#eaf7f6;stroke:#b2dbd7;stroke-width:2}
+      .card{fill:#fff;stroke:#b7cde9;stroke-width:1.7}
+      .teal-card{fill:#f6fcfc;stroke:#b8dbd7;stroke-width:1.7}
+      .amber-card{fill:#fff8eb;stroke:#e5c798;stroke-width:1.7}
+      .violet-card{fill:#faf8ff;stroke:#c9bcec;stroke-width:1.7}
+      .flow{fill:none;stroke:#3474c9;stroke-width:3;stroke-linejoin:round;marker-end:url(#arrow)}
+      .bus{fill:none;stroke:#3474c9;stroke-width:2.5;stroke-linejoin:round}
+      .planned{fill:none;stroke:#8770bd;stroke-width:2.5;stroke-dasharray:9 7;marker-end:url(#purple-arrow)}
+      .identity{fill:none;stroke:#168cac;stroke-width:2.5;stroke-dasharray:10 7;stroke-linejoin:round}
+      .admin{fill:none;stroke:#698099;stroke-width:2;stroke-dasharray:5 6;stroke-linejoin:round;marker-end:url(#gray-arrow)}
+      .divider{stroke:#c7d8ed;stroke-width:1.5}
+    </style>
+    <marker id="arrow" markerWidth="11" markerHeight="11" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9" fill="none" stroke="#3474c9" stroke-width="2.5"/></marker>
+    <marker id="purple-arrow" markerWidth="11" markerHeight="11" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9" fill="none" stroke="#8770bd" stroke-width="2.5"/></marker>
+    <marker id="gray-arrow" markerWidth="11" markerHeight="11" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9" fill="none" stroke="#698099" stroke-width="2.2"/></marker>
+    <marker id="identity-arrow" markerWidth="11" markerHeight="11" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9" fill="none" stroke="#168cac" stroke-width="2.5"/></marker>
+  </defs>
+
+  <rect width="2400" height="3584" fill="#f6f9fe"/>
+  <rect width="2400" height="12" fill="#3457ad"/>
+  <text x="112" y="102" class="title">Agent安全家族全景架构图</text>
+  <text x="116" y="156" class="subtitle">身份底座 · Agent治理 · 工具生态 · 受控执行</text>
+  <g data-card="status">
+    <rect x="1732" y="56" width="556" height="111" rx="16" class="amber-card"/>
+    <text x="1758" y="98" class="small strong">产品家族目标架构 · 跨产品集成待联调</text>
+    <text x="1758" y="139" class="small">已有能力依代码；AI Agent 安全为规划</text>
+  </g>
+  <path d="M116 201H169" class="flow"/>
+  <text x="183" y="209" class="meta">调用 / 执行</text>
+  <path d="M392 201H445" class="planned"/>
+  <text x="461" y="209" class="meta">规划 / 待集成</text>
+  <path d="M699 201H752" class="identity" marker-end="url(#identity-arrow)"/>
+  <text x="768" y="209" class="meta">身份信任（待联调）</text>
+  <path d="M1110 201H1163" class="admin"/>
+  <text x="1179" y="209" class="meta">管理配置</text>
+  <text x="2288" y="209" text-anchor="end" class="meta">V3 · 2026.09 · 原生矢量 / 可缩放</text>
+
+  <!-- 01. People and entry points -->
+  <rect x="112" y="240" width="1752" height="236" rx="20" class="zone"/>
+  <text x="136" y="285" class="heading">01　使用者与入口</text>
+  <text x="535" y="283" class="small">不同角色 · 最小权限 · 管理面与执行面分离</text>
+  <g data-card="administrators">
+    <rect x="136" y="309" width="536" height="142" rx="14" class="card"/>
+    <text x="162" y="348" class="card-title">管理员</text>
+    <text x="162" y="391">配置身份源、映射、资源与账号</text>
+    <text x="162" y="429" class="small">授予 / 撤销特权 · 查询审计</text>
+  </g>
+  <g data-card="operators">
+    <rect x="704" y="309" width="536" height="142" rx="14" class="teal-card"/>
+    <text x="730" y="348" class="card-title">普通运维人员</text>
+    <text x="730" y="391">人工工作台或 AI 辅助操作</text>
+    <text x="730" y="429" class="small">仅发现、使用已授权资源与账号</text>
+  </g>
+  <g data-card="external-agents">
+    <rect x="1272" y="309" width="568" height="142" rx="14" class="amber-card"/>
+    <text x="1298" y="348" class="card-title">外部 Agent / 自动化</text>
+    <text x="1298" y="391">API-Key / OAuth Access Token</text>
+    <text x="1298" y="429" class="small">可经 AgentMesh；也可直连 DeeBee</text>
+  </g>
+  <text x="546" y="502" class="meta">AI 辅助</text>
+  <text x="1580" y="516" class="meta">经网关接入</text>
+  <path d="M136 381H88V1386H136" class="admin"/>
+  <text x="77" y="1190" transform="rotate(-90 77 1190)" class="meta">管理员配置 DeeBee 映射、账号与资源授权</text>
+
+  <!-- 02. Task execution is distinct from connection governance -->
+  <rect x="112" y="552" width="1752" height="318" rx="20" class="zone"/>
+  <text x="136" y="596" class="heading">02　Agent应用与连接治理</text>
+  <text x="720" y="594" class="small">SenseMate 发起任务；AgentMesh 负责接入、代理与治理</text>
+  <g data-card="sensemate">
+    <rect x="136" y="616" width="728" height="174" rx="14" class="card"/>
+    <text x="162" y="658" class="card-title">SenseMate · AI任务执行</text>
+    <text x="162" y="700">对话与任务计划 · 主 / 子 Agent</text>
+    <text x="162" y="737">Skills · Memory · MCP Client</text>
+    <text x="162" y="773" class="small">本地 Policy / Sandbox · Tools 调用</text>
+  </g>
+  <path d="M880 713H1054" class="planned"/>
+  <text x="967" y="669" text-anchor="middle" class="small purple">受控调用</text>
+  <text x="967" y="700" text-anchor="middle" class="meta purple">待联调</text>
+  <g data-card="agentmesh">
+    <rect x="1072" y="616" width="768" height="234" rx="14" class="card"/>
+    <text x="1098" y="658" class="card-title">AgentMesh · 连接与治理</text>
+    <text x="1098" y="700">Agent身份与凭据 · 资源策略 · 工具目录</text>
+    <text x="1098" y="738">模型接入 · 准入控制 · 调用审计</text>
+    <path d="M1098 757H1814" class="divider"/>
+    <text x="1098" y="790" class="small strong">管理员 → Console 控制面 → Gateway 数据面</text>
+    <text x="1098" y="828" class="small">代理与治理不替代 DeeBee 的最终资源授权</text>
+  </g>
+  <g data-card="local-tools">
+    <rect x="136" y="808" width="728" height="42" rx="9" class="teal-card"/>
+    <text x="156" y="837" class="small">本地 Tools / Skills → 本地策略；不默认经过网关</text>
+  </g>
+
+  <!-- 03. Tool ecosystem, explicitly outside the DeeBee boundary -->
+  <rect x="112" y="928" width="1752" height="312" rx="20" class="teal-zone"/>
+  <text x="136" y="974" class="heading">03　Tools / MCP生态</text>
+  <text x="636" y="972" class="small">原生 MCP 代理 · HTTP API 工具化 · 模型与业务接入</text>
+  <path d="M1456 850V1008H336" class="bus"/>
+  <path d="M1456 1008H1632" class="bus"/>
+  <text x="1490" y="906" class="small blue">发现 / 路由 / 准入</text>
+  <path d="M336 1008V1036M764 1008V1036M1200 1008V1036M1632 1008V1036" class="flow"/>
+  <g data-card="native-mcp">
+    <rect x="136" y="1036" width="400" height="176" rx="14" class="card"/>
+    <text x="160" y="1078" class="card-title">原生 MCP 服务</text>
+    <text x="160" y="1121">工具发现 · Schema</text>
+    <text x="160" y="1158">调用代理 · 访问控制</text>
+    <text x="160" y="1193" class="small">第三方 / 自建 MCP</text>
+  </g>
+  <g data-card="http-mcp">
+    <rect x="560" y="1036" width="408" height="176" rx="14" class="card"/>
+    <text x="584" y="1078" class="card-title">HTTP API → MCP</text>
+    <text x="584" y="1121">业务 API 工具化</text>
+    <text x="584" y="1158">统一目录与调用入口</text>
+    <text x="584" y="1193" class="small">HTTP_TO_MCP</text>
+  </g>
+  <g data-card="deebee-tool-entry">
+    <rect x="992" y="1036" width="416" height="176" rx="14" fill="#f1f7ff" stroke="#5d99e7" stroke-width="2.4"/>
+    <text x="1016" y="1078" class="card-title">DeeBee MCP / REST</text>
+    <text x="1016" y="1121">SSH · MySQL · PostgreSQL</text>
+    <text x="1016" y="1158">身份验证 · 受控执行</text>
+    <text x="1016" y="1193" class="small">产品接入网关：待联调</text>
+  </g>
+  <g data-card="other-ecosystem">
+    <rect x="1432" y="1036" width="408" height="176" rx="14" class="card"/>
+    <text x="1456" y="1078" class="card-title">模型与业务生态</text>
+    <text x="1456" y="1121">LLM · 企业 API</text>
+    <text x="1456" y="1158">知识检索 · 业务系统</text>
+    <text x="1456" y="1193" class="small">生态接入示例 · 非 DeeBee</text>
+  </g>
+  <path d="M1200 1212V1280" class="flow"/>
+  <text x="1230" y="1267" class="meta blue">MCP Streamable HTTP / 等价 REST</text>
+
+  <!-- 04. DeeBee detailed two-level identity and account model -->
+  <rect x="112" y="1280" width="1752" height="1300" rx="20" class="zone"/>
+  <text x="136" y="1330" class="heading">04　DeeBee · 身份映射与受控特权执行</text>
+  <text x="1150" y="1327" class="small">统一身份 · 逐资源授权 · 后端执行</text>
+  <g data-card="deebee-admin-plane">
+    <rect x="136" y="1352" width="1704" height="68" rx="12" class="amber-card"/>
+    <text x="160" y="1395" class="small"><tspan class="strong">独立管理面：</tspan>原本地管理员登录 → 配置映射 / 普通与特权账号 / Grant；外部同名 admin 不继承管理权限</text>
+  </g>
+
+  <text x="136" y="1458" class="subhead">A. 身份验证 · 外部与本地两条路径</text>
+  <g data-card="external-identity">
+    <rect x="136" y="1476" width="832" height="190" rx="14" class="card"/>
+    <text x="162" y="1518" class="card-title">外部身份源模式</text>
+    <text x="162" y="1558">IDMesh / 可信 OIDC：JWT 或 Introspection</text>
+    <text x="162" y="1598">可信外部 API-Key：固定验证服务返回主体</text>
+    <text x="162" y="1638" class="small">验证 issuer / audience / sub / 有效期 / scopes</text>
+  </g>
+  <g data-card="local-identity">
+    <rect x="1000" y="1476" width="840" height="190" rx="14" class="teal-card"/>
+    <text x="1026" y="1518" class="card-title">本地身份源模式</text>
+    <text x="1026" y="1558">本地用户密码 → 内部主体；本地 Key → 显式绑定</text>
+    <text x="1026" y="1598">DeeBee API-Key：摘要校验 / 到期 / 撤销</text>
+    <text x="1026" y="1638" class="small">保留原本地登录；服务身份不设人员密码；不依赖 IDMesh</text>
+  </g>
+  <path d="M552 1666V1682H660V1738H388V1750" class="flow"/>
+  <path d="M1420 1666V1689H962V1750" class="flow"/>
+  <text x="1010" y="1719" class="meta">本地密码直接解析主体；Key / OIDC 经绑定解析</text>
+
+  <text x="136" y="1724" class="subhead">B. 两级映射 · 先认人，再授权</text>
+  <g data-card="identity-binding">
+    <rect x="136" y="1750" width="504" height="152" rx="14" class="card"/>
+    <text x="160" y="1791" class="card-title">IdentityBinding · 身份绑定</text>
+    <text x="160" y="1831" class="small">source_id + subject → principal_id</text>
+    <text x="160" y="1871" class="small">显式绑定；无映射拒绝；不按昵称合并</text>
+  </g>
+  <path d="M646 1826H684" class="flow"/>
+  <g data-card="principal">
+    <rect x="692" y="1750" width="540" height="152" rx="14" class="teal-card"/>
+    <text x="716" y="1791" class="card-title">Principal · DeeBee内部身份</text>
+    <text x="716" y="1831">人员 / 服务主体 · 稳定内部 ID</text>
+    <text x="716" y="1871" class="small">统一承载授权与审计；可绑定多个来源</text>
+  </g>
+  <path d="M1238 1826H1276" class="flow"/>
+  <g data-card="access-grant">
+    <rect x="1284" y="1750" width="556" height="152" rx="14" class="card"/>
+    <text x="1308" y="1791" class="card-title">AccessGrant · 主体 × 资源</text>
+    <text x="1308" y="1831">普通账号 / 可选特权账号</text>
+    <text x="1308" y="1871" class="small">每个资源独立授权；动作与限制取交集</text>
+  </g>
+
+  <text x="136" y="1950" class="subhead">C. 资源账号与特权开关 · 不是全局管理员开关</text>
+  <g data-card="resource-account">
+    <rect x="136" y="1974" width="544" height="206" rx="14" class="card"/>
+    <text x="160" y="2015" class="card-title">ResourceAccount · 目标账号</text>
+    <text x="160" y="2056">目标系统中的真实账号</text>
+    <text x="160" y="2093">普通账号 / 可选特权账号</text>
+    <text x="160" y="2130" class="small">绑定指定资源；核验实际权限后启用</text>
+    <text x="160" y="2165" class="small strong">与 DeeBee 后台管理员角色分离</text>
+  </g>
+  <g data-card="privileged-switch">
+    <rect x="716" y="1974" width="544" height="206" rx="14" class="amber-card"/>
+    <rect x="742" y="1992" width="24" height="24" rx="3" fill="#fff" stroke="#42658e" stroke-width="2"/>
+    <text x="781" y="2015" class="card-title">允许使用特权账号</text>
+    <text x="742" y="2056">默认关闭；按“主体 × 资源”勾选</text>
+    <text x="742" y="2093" class="small">Grant 与凭据均允许 privilege:use</text>
+    <text x="742" y="2130" class="small">请求显式 mode=privileged</text>
+    <text x="742" y="2165" class="small">特权账号必须已核验、启用且有效</text>
+  </g>
+  <g data-card="resource-projection">
+    <rect x="1296" y="1974" width="544" height="206" rx="14" class="card"/>
+    <text x="1320" y="2015" class="card-title">投射给 Agent 的可用资源</text>
+    <text x="1320" y="2056">资源 ID / 类型 / 账号名 / 模式</text>
+    <text x="1320" y="2093">允许动作 / 限制 / 分页</text>
+    <text x="1320" y="2130" class="small">仅投射当前授权与凭据允许的范围</text>
+    <text x="1320" y="2165" class="small strong">不返回密码、私钥或任意账号选择权</text>
+  </g>
+  <g data-card="privileged-conditions">
+    <rect x="136" y="2200" width="1704" height="58" rx="10" class="amber-card"/>
+    <text x="160" y="2237" class="small strong">特权须同时满足全部条件；数据库写入另需 db:write；不自动 sudo / GRANT；V1 无逐次审批</text>
+  </g>
+
+  <text x="136" y="2300" class="subhead">D. 共享执行核心 · UI / REST / MCP 复用，执行前再校验</text>
+  <g data-card="final-authorization">
+    <rect x="136" y="2320" width="544" height="162" rx="14" class="card"/>
+    <text x="160" y="2363" class="card-title">最终授权与账号解析</text>
+    <text x="160" y="2405">复核主体、绑定、资源、动作及状态</text>
+    <text x="160" y="2445" class="small">选已授权账号；不借用管理员默认连接</text>
+  </g>
+  <path d="M686 2405H708" class="flow"/>
+  <g data-card="executor">
+    <rect x="716" y="2320" width="544" height="162" rx="14" class="card"/>
+    <text x="742" y="2363" class="card-title">独立执行器与任务状态</text>
+    <text x="742" y="2405">SSH 非交互命令 · SQL 查询 / 执行</text>
+    <text x="742" y="2445" class="small">超时 / 限额 / 幂等 / 分页 / 取消</text>
+  </g>
+  <path d="M1290 2405H1268" class="flow"/>
+  <g data-card="credential-vault">
+    <rect x="1296" y="2320" width="544" height="162" rx="14" class="amber-card"/>
+    <text x="1320" y="2363" class="card-title">加密凭据库 · 按引用取用</text>
+    <text x="1320" y="2405">数据库密码 / SSH 私钥</text>
+    <text x="1320" y="2445" class="small">仅受信后端读取；凭据不进入模型</text>
+  </g>
+  <g data-card="mcp-tools">
+    <rect x="136" y="2500" width="1704" height="54" rx="9" fill="#f9fcff" stroke="#b7cde9" stroke-width="1.5"/>
+    <text x="154" y="2535" class="meta"><tspan class="strong">MCP：</tspan>identity.me · resources.list · resources.get · db.schema · db.query · db.execute · ssh.exec · executions.get · executions.cancel</text>
+  </g>
+  <path d="M988 2482V2492H1878V2612H408" class="bus"/>
+  <path d="M988 2612H1568" class="bus"/>
+
+  <!-- 05. Native target boundaries -->
+  <rect x="112" y="2640" width="1752" height="242" rx="20" class="teal-zone"/>
+  <text x="136" y="2683" class="heading">05　目标资源与账号边界</text>
+  <text x="822" y="2681" class="small">仅 SSH / MySQL / PostgreSQL · 新 Agent 接口不含 RDP</text>
+  <g data-card="ssh-target">
+    <rect x="136" y="2704" width="544" height="160" rx="14" class="card"/>
+    <text x="160" y="2745" class="card-title">SSH · Linux 主机</text>
+    <text x="160" y="2780" class="small">普通 OS 账号 / 指定特权账号</text>
+    <text x="160" y="2814" class="small">目标机配置受限 sudo；校验主机指纹</text>
+    <text x="160" y="2848" class="meta strong">普通账号不等于只读</text>
+  </g>
+  <g data-card="mysql-target">
+    <rect x="716" y="2704" width="544" height="160" rx="14" class="card"/>
+    <text x="742" y="2745" class="card-title">MySQL · 业务数据库</text>
+    <text x="742" y="2780" class="small">只读账号 / 指定业务变更账号</text>
+    <text x="742" y="2814" class="small">数据库原生权限 + 执行限制兜底</text>
+    <text x="742" y="2848" class="meta">单语句 · 固定数据库 · TLS</text>
+  </g>
+  <g data-card="postgres-target">
+    <rect x="1296" y="2704" width="544" height="160" rx="14" class="card"/>
+    <text x="1320" y="2745" class="card-title">PostgreSQL · 业务数据库</text>
+    <text x="1320" y="2780" class="small">只读角色 / 指定业务变更角色</text>
+    <text x="1320" y="2814" class="small">数据库、schema 与对象权限兜底</text>
+    <text x="1320" y="2848" class="meta">单语句 · 拒绝越界访问 · TLS</text>
+  </g>
+
+  <!-- Planned cross-product Agent security rail -->
+  <rect x="1912" y="552" width="376" height="2330" rx="20" fill="#f7f4ff" stroke="#ac95da" stroke-width="2" stroke-dasharray="10 7"/>
+  <text x="2100" y="610" text-anchor="middle" class="heading">AI Agent安全</text>
+  <rect x="1956" y="632" width="288" height="46" rx="12" fill="#e9e0fa"/>
+  <text x="2100" y="664" text-anchor="middle" class="small purple strong">规划中 · 建议能力</text>
+  <g data-card="input-security">
+    <rect x="1936" y="712" width="328" height="208" rx="14" class="violet-card"/>
+    <text x="1958" y="756" class="card-title">输入与上下文</text>
+    <text x="1958" y="805">提示注入检测</text>
+    <text x="1958" y="845">来源标记与信任分区</text>
+    <text x="1958" y="890" class="small">外部内容不变成授权</text>
+  </g>
+  <g data-card="tool-security">
+    <rect x="1936" y="950" width="328" height="208" rx="14" class="violet-card"/>
+    <text x="1958" y="994" class="card-title">工具与供应链</text>
+    <text x="1958" y="1043">工具 / 插件准入</text>
+    <text x="1958" y="1083">Schema 与行为漂移</text>
+    <text x="1958" y="1128" class="small">完整性检查与隔离</text>
+  </g>
+  <g data-card="call-security">
+    <rect x="1936" y="1188" width="328" height="208" rx="14" class="violet-card"/>
+    <text x="1958" y="1232" class="card-title">调用与权限</text>
+    <text x="1958" y="1281">越权识别与阻断</text>
+    <text x="1958" y="1321">高风险操作审批</text>
+    <text x="1958" y="1366" class="small">审批协同：待建设</text>
+  </g>
+  <g data-card="runtime-security">
+    <rect x="1936" y="1426" width="328" height="208" rx="14" class="violet-card"/>
+    <text x="1958" y="1470" class="card-title">运行时约束</text>
+    <text x="1958" y="1519">沙箱隔离</text>
+    <text x="1958" y="1559">网络出口与工具边界</text>
+    <text x="1958" y="1604" class="small">限制执行环境的能力</text>
+  </g>
+  <g data-card="data-security">
+    <rect x="1936" y="1664" width="328" height="208" rx="14" class="violet-card"/>
+    <text x="1958" y="1708" class="card-title">数据与输出</text>
+    <text x="1958" y="1757">敏感数据脱敏</text>
+    <text x="1958" y="1797">泄露与外传防护</text>
+    <text x="1958" y="1842" class="small">结果进入模型前治理</text>
+  </g>
+  <g data-card="security-operations">
+    <rect x="1936" y="1902" width="328" height="208" rx="14" class="violet-card"/>
+    <text x="1958" y="1946" class="card-title">持续安全运营</text>
+    <text x="1958" y="1995">行为审计与关联分析</text>
+    <text x="1958" y="2035">异常告警与处置</text>
+    <text x="1958" y="2080" class="small">形成跨产品安全闭环</text>
+  </g>
+  <path d="M1912 730H1864" class="planned"/>
+  <path d="M1912 1740H1864" class="planned"/>
+  <path d="M1912 2370H1864" class="planned"/>
+  <g data-card="security-trust-boundaries">
+    <rect x="1936" y="2170" width="328" height="280" rx="14" fill="#eee7fa" stroke="#c9bcec" stroke-width="1.5"/>
+    <text x="1958" y="2214" class="subhead purple">安全边界说明</text>
+    <text x="1958" y="2264" class="small">不把提示词当权限边界</text>
+    <text x="1958" y="2307" class="small">网关允许 ≠ 目标允许</text>
+    <text x="1958" y="2350" class="small">本地沙箱不限制远程权限</text>
+    <text x="1958" y="2406" class="meta">以执行端与原生权限兜底</text>
+  </g>
+  <g data-card="security-integration-status">
+    <rect x="1936" y="2490" width="328" height="350" rx="14" class="violet-card"/>
+    <text x="1958" y="2534" class="subhead purple">规划与现状分开</text>
+    <text x="1958" y="2584" class="small">已有局部安全能力</text>
+    <text x="1958" y="2622" class="small">不等于完整平台已上线</text>
+    <path d="M1958 2652H2242" class="divider"/>
+    <text x="1958" y="2695" class="small">跨产品策略与 trace 关联</text>
+    <text x="1958" y="2733" class="small">仍需集成与端到端验收</text>
+    <text x="1958" y="2795" class="meta strong">DeeBee V1 无逐次审批</text>
+  </g>
+
+  <!-- 06. Foundational identity service, not a sequential execution step -->
+  <rect x="112" y="2940" width="2176" height="220" rx="20" class="teal-zone"/>
+  <text x="136" y="2988" class="heading">06　IDMesh · 统一身份基础（iam-lite）</text>
+  <text x="1160" y="2985" class="small">向上支撑 SenseMate / AgentMesh / DeeBee；各产品保留授权边界</text>
+  <g data-card="identity-people">
+    <rect x="136" y="3012" width="482" height="86" rx="12" class="card"/>
+    <text x="160" y="3049" class="subhead">人员 / 组织 / 应用</text>
+    <text x="160" y="3083" class="small">用户管理 · 组织关系 · 应用注册</text>
+  </g>
+  <g data-card="identity-protocols">
+    <rect x="642" y="3012" width="482" height="86" rx="12" class="card"/>
+    <text x="666" y="3049" class="subhead">OIDC / OAuth2</text>
+    <text x="666" y="3083" class="small">登录认证 · 令牌服务</text>
+  </g>
+  <g data-card="identity-discovery">
+    <rect x="1148" y="3012" width="482" height="86" rx="12" class="card"/>
+    <text x="1172" y="3049" class="subhead">Discovery / JWKS</text>
+    <text x="1172" y="3083" class="small">协议发现 · 公钥分发</text>
+  </g>
+  <g data-card="identity-token-validation">
+    <rect x="1654" y="3012" width="610" height="86" rx="12" class="card"/>
+    <text x="1678" y="3049" class="subhead">UserInfo / Token验证</text>
+    <text x="1678" y="3083" class="small">身份信息 · 令牌检查与生命周期</text>
+  </g>
+  <text x="136" y="3137" class="small strong">API 使用面向目标服务的 Access Token，非 ID Token；不可直接透传错误受众的 Token；本地 API-Key / 可信外部 Key 独立配置。</text>
+  <path d="M112 3053H48V584H112" class="identity" marker-end="url(#identity-arrow)"/>
+  <path d="M48 1558H112" class="identity" marker-end="url(#identity-arrow)"/>
+  <text x="34" y="2330" transform="rotate(-90 34 2330)" class="small" style="fill:#168cac">IDMesh 身份信任支撑 · 产品间接入待联调（不是业务执行链）</text>
+
+  <!-- 07. Two routes share the same execution engine -->
+  <rect x="112" y="3216" width="2176" height="240" rx="20" class="zone"/>
+  <text x="136" y="3263" class="heading">07　两条产品路线 · 同一执行内核</text>
+  <text x="977" y="3260" class="small">组合交付与独立接入均可用；不维护两套身份映射与执行逻辑</text>
+  <g data-card="integrated-route">
+    <rect x="136" y="3288" width="1040" height="143" rx="14" class="teal-card"/>
+    <text x="162" y="3329" class="card-title">内聚路线 · 统一任务与运维体验</text>
+    <text x="162" y="3372">用户 → SenseMate → AgentMesh → DeeBee → 目标资源</text>
+    <text x="162" y="3412" class="small">IDMesh 统一身份基础；人工可进入 DeeBee 工作台按授权执行</text>
+  </g>
+  <g data-card="open-route">
+    <rect x="1200" y="3288" width="1064" height="143" rx="14" class="amber-card"/>
+    <text x="1226" y="3329" class="card-title">开放路线 · 对外提供 MCP / REST 能力</text>
+    <text x="1226" y="3372">外部 Agent → DeeBee MCP / REST → 同一受控执行核心</text>
+    <text x="1226" y="3412" class="small">可直连或经 AgentMesh；本地身份可独立运行；直连仍需完整鉴权授权</text>
+  </g>
+  <rect x="112" y="3490" width="2176" height="62" rx="12" fill="#eaf0fd" stroke="#a7bfe7" stroke-width="1.7"/>
+  <text x="136" y="3530" class="small"><tspan class="strong">可追溯链：</tspan>外部 subject → 内部 Principal → 资源 / 目标账号 → 动作 / 结果</text>
+  <text x="2264" y="3530" text-anchor="end" class="meta">凭据不进模型 · 撤权拒绝新操作 · 取消请求 ≠ 已停止</text>
+  <!-- Layer-entry arrows are above the enclosing surfaces so arrowheads remain visible. -->
+  <path d="M972 451V505H500V552" class="flow"/>
+  <path d="M1556 451V552" class="flow"/>
+  <path d="M408 2612V2640M988 2612V2640M1568 2612V2640" class="flow"/>
+</svg>
