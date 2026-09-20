@@ -40,6 +40,8 @@ class AccessService:
         if kind not in ENTITY_MODELS:
             raise AccessError("INVALID_ENTITY", "不支持的配置类型")
         old = self.store.get(kind, entity_id) if entity_id else None
+        if old and old.get("deleted_at"):
+            raise AccessError("RESOURCE_DELETED", "资源或关联记录已删除", 409)
         expected = values.get("expected_version")
         if old and expected != old["version"]:
             raise AccessError("VERSION_CONFLICT", "配置已变化，请刷新后重试", 409)
@@ -49,15 +51,26 @@ class AccessService:
         body = model.model_validate(previous | supplied).model_dump()
         if old and old.get("legacy_profile_id"):
             locked = ("host", "port", "type", "database") if kind == "resources" else ("username", "auth_method")
+            if old.get("connection_sync") and kind == "resources":
+                locked += ("name", "schemas", "host_key")
             if any(body.get(k) != old.get(k) for k in locked) or any(body.get(k) for k in SECRET_FIELDS):
                 raise AccessError("LEGACY_READ_ONLY", "引用账号/地址/凭据请在原连接中修改，再刷新引用核验")
             body.update({k: old[k] for k in ("legacy_profile_id", "legacy_fingerprint")})
+            if old.get("connection_sync"):
+                body["connection_sync"] = old["connection_sync"]
+                if body.get("enabled"):
+                    resource = old if kind == "resources" else self.store.get("resources", old["resource_id"])
+                    if resource.get("connection_sync", {}).get("state") != "synced":
+                        raise AccessError("CONNECTION_NOT_READY", resource.get("connection_sync", {}).get("reason") or "原连接尚未就绪", 409)
+                    if not self.legacy:
+                        raise AccessError("LEGACY_UNAVAILABLE", "原连接引用不可用", 503)
+                    self.legacy.checked(old)
         entity_id = entity_id or create_id or new_id(kind[:-1])
         if create_id and self.store.db.execute("SELECT 1 FROM entities WHERE id=?", (create_id,)).fetchone():
             raise AccessError("DUPLICATE_MAPPING", "配置 ID 已存在", 409)
         if kind == "sources":
             if old and (old["type"] != body["type"] or old.get("issuer", "") != body.get("issuer", "") or old["validation_mode"] != body["validation_mode"]):
-                raise AccessError("IMMUTABLE_IDENTITY_NAMESPACE", "身份源类型、issuer 和验证方式不可改，请新增身份源")
+                raise AccessError("IMMUTABLE_IDENTITY_NAMESPACE", "身份验证服务类型、issuer 和验证方式不可改，请新增身份验证服务")
             for field in ("issuer", "verify_endpoint", "introspection_endpoint"):
                 if body.get(field) and not source_urls_validated:
                     await self.auth.validate_url(body[field])
@@ -86,9 +99,11 @@ class AccessService:
                 source = self.store.get("sources", body["source_id"])
                 self.store.get("principals", body["principal_id"])
                 if not source["enabled"] and body["enabled"]:
-                    raise AccessError("IDENTITY_DISABLED", "请先启用身份源")
+                    raise AccessError("IDENTITY_DISABLED", "请先启用身份验证服务")
             if kind == "accounts":
                 resource = self.store.get("resources", body["resource_id"])
+                if resource.get("deleted_at"):
+                    raise AccessError("RESOURCE_DELETED", "资源已删除", 409)
                 if old and old["resource_id"] != body["resource_id"]:
                     raise AccessError("INVALID_ARGUMENT", "账号不能移动到另一个资源")
                 if resource["type"] != "ssh" and body["auth_method"] != "password":
@@ -108,6 +123,8 @@ class AccessService:
             if kind == "grants":
                 self.store.get("principals", body["principal_id"])
                 resource = self.store.get("resources", body["resource_id"])
+                if resource.get("deleted_at"):
+                    raise AccessError("RESOURCE_DELETED", "资源已删除", 409)
                 for field, tier in (("normal_account_id", "normal"), ("privileged_account_id", "privileged")):
                     if body.get(field):
                         account = self.store.get("accounts", body[field])
@@ -124,13 +141,42 @@ class AccessService:
                 if current_secret:
                     body["credential_ref"] = self.store.save_secret(current_secret, (old or {}).get("credential_ref"))
                 if kind == "accounts" and body["enabled"] and not current_secret and not body.get("legacy_profile_id"):
-                    raise AccessError("CREDENTIAL_REQUIRED", "请配置目标账号凭据")
+                    raise AccessError("CREDENTIAL_REQUIRED", "请配置资源账号凭据")
             result = self.store.put(kind, entity_id, body, expected)
+            # Classification has no bearing on connection or account verification.
+            cosmetic = {"name", "environment", "project_groups", "tags"}
+            if kind == "resources" and old and all(body.get(k) == previous.get(k, model.model_fields[k].get_default(call_default_factory=True)) for k in model.model_fields if k not in cosmetic):
+                for account in self.store.list("accounts"):
+                    test = account.get("test_result", {})
+                    if account["resource_id"] == entity_id and test.get("resource_version") == old["version"]:
+                        self.store.put("accounts", account["id"], account | {"test_result": test | {"resource_version": result["version"]}}, account["version"])
             self.store.audit(actor, f"{kind}.update" if old else f"{kind}.create", entity_id,
                              {"before": public_entity(old) if old else None, "after": public_entity(result)})
         if self.on_change:
             self.on_change()
         return public_entity(result)
+
+    def delete_resource(self, resource_id: str, values: dict, actor: str) -> dict:
+        with self.store.transaction():
+            resource = self.store.get("resources", resource_id)
+            if resource.get("deleted_at"):
+                raise AccessError("RESOURCE_DELETED", "资源已删除", 409)
+            if values.get("expected_version") != resource["version"]:
+                raise AccessError("VERSION_CONFLICT", "资源已变化，请刷新后重试", 409)
+            if values.get("confirm_name") != resource["name"]:
+                raise AccessError("CONFIRMATION_REQUIRED", "请输入完整资源名称确认删除")
+            changes = {"enabled": False, "deleted_at": time.time()}
+            counts = {"accounts": 0, "grants": 0}
+            for kind in counts:
+                for item in self.store.list(kind):
+                    if item.get("resource_id") == resource_id and not item.get("deleted_at"):
+                        self.store.put(kind, item["id"], item | changes, item["version"])
+                        counts[kind] += 1
+            self.store.put("resources", resource_id, resource | changes, resource["version"])
+            self.store.audit(actor, "resources.delete", resource_id, {"name": resource["name"], **counts})
+        if self.on_change:
+            self.on_change()
+        return {"deleted": True, **counts}
 
     def create_key(self, values: dict, actor: str) -> dict:
         body = KeyCreate.model_validate(values).model_dump()
@@ -140,7 +186,7 @@ class AccessService:
             principal = self.store.get("principals", body["principal_id"])
             source = self.store.get("sources", body["source_id"])
             if not principal["enabled"] or not source["enabled"] or source["validation_mode"] != "managed":
-                raise AccessError("IDENTITY_DISABLED", "主体或本地 Key 来源不可用")
+                raise AccessError("IDENTITY_DISABLED", "系统账号或 API Key 验证服务不可用")
             for resource_id in body["resource_ids"]:
                 self.store.get("resources", resource_id)
             subject = "principal:" + principal["id"]
@@ -171,7 +217,7 @@ class AccessService:
             raise AccessError("TOKEN_EXPIRED", "身份凭据已到期", 401)
         principal = self.store.get("principals", ctx.principal_id, required=False)
         if not principal or not principal["enabled"]:
-            raise AccessError("IDENTITY_DISABLED", "内部身份已停用", 403)
+            raise AccessError("IDENTITY_DISABLED", "系统账号已停用", 403)
         if ctx.method != "local":
             source = self.store.get("sources", ctx.source_id, required=False)
             binding = self.store.get("bindings", ctx.binding_id, required=False)
@@ -207,19 +253,24 @@ class AccessService:
         return resource, account, grant
 
     def projected(self, ctx: AuthContext, resource_id: str) -> dict:
-        resource, _, _ = self.authorize(ctx, resource_id)
         modes = []
+        resource = None
+        denied = None
         for mode in ("normal", "privileged"):
             try:
-                _, account, grant = self.authorize(ctx, resource_id, mode)
-            except AccessError:
+                allowed_resource, account, grant = self.authorize(ctx, resource_id, mode)
+            except AccessError as exc:
+                denied = exc
                 continue
+            resource = allowed_resource
             actions = ["ssh.exec"] if resource["type"] == "ssh" else ["db.schema", "db.query"] + (["db.execute"] if mode == "privileged" else [])
             scopes = {"ssh.exec": "ssh:exec", "db.schema": "db:query", "db.query": "db:query", "db.execute": "db:write"}
             modes.append({"mode": mode, "account_alias": account["name"], "username": account["username"],
                           "actions": [a for a in actions if scopes[a] in ctx.scopes and scopes[a] in grant["actions"]], "limits": grant["limits"]})
-        return {"id": resource["id"], "name": resource["name"], "type": resource["type"], "database": resource["database"],
-                "default_mode": "normal", "access_modes": modes}
+        if not modes or resource is None:
+            raise denied or AccessError("RESOURCE_NOT_FOUND", "资源不存在或无访问权限", 404)
+        return {"id": resource["id"], "name": resource["name"], "type": resource["type"], "host": resource["host"], "port": resource["port"], "database": resource["database"],
+                "default_mode": modes[0]["mode"], "access_modes": modes}
 
     def resources(self, ctx: AuthContext) -> list[dict]:
         result = []

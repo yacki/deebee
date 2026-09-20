@@ -51,6 +51,41 @@ def identity(service, principal_id, scopes=None):
     return asyncio.run(service.auth.authenticate({"x-deebee-api-key": key})), key
 
 
+def test_resource_classification_preserves_verified_accounts(service):
+    resource, ids = published(service)
+    updated = save(service, "resources", {"expected_version": resource["version"], "environment": " prod ",
+        "project_groups": ["平台组", "平台组", "数据组"], "tags": ["ARM64", "", " ARM64 "]}, resource["id"])
+    assert updated["environment"] == "prod"
+    assert updated["project_groups"] == ["平台组", "数据组"]
+    assert updated["tags"] == ["ARM64"]
+    for account_id in ids:
+        account = service.store.get("accounts", account_id)
+        assert account["enabled"] and account["test_result"]["resource_version"] == updated["version"]
+    changed = save(service, "resources", {"expected_version": updated["version"], "host": "other.internal"}, resource["id"])
+    assert service.store.get("accounts", ids[0])["test_result"]["resource_version"] != changed["version"]
+
+
+def test_delete_resource_cascades_and_revokes_without_erasing_history(service):
+    p = principal(service)
+    resource, ids = published(service)
+    grant = save(service, "grants", {"principal_id": p["id"], "resource_id": resource["id"], "normal_account_id": ids[0]})
+    ctx, _ = identity(service, p["id"])
+    assert service.resources(ctx)
+    for body in ({"expected_version": 0, "confirm_name": resource["name"]}, {"expected_version": resource["version"], "confirm_name": "wrong"}):
+        with pytest.raises(AccessError):
+            service.delete_resource(resource["id"], body, "admin")
+    result = service.delete_resource(resource["id"], {"expected_version": resource["version"], "confirm_name": resource["name"]}, "admin")
+    assert result == {"deleted": True, "accounts": 2, "grants": 1}
+    assert service.resources(ctx) == []
+    assert service.store.get("grants", grant["id"])["deleted_at"]
+    assert any(a["action"] == "resources.delete" for a in service.store.audits())
+    for kind, body, id_ in [("resources", {"enabled": True}, resource["id"]), ("accounts", {"enabled": True}, ids[0])]:
+        with pytest.raises(AccessError, match="已删除"):
+            save(service, kind, body, id_)
+    with pytest.raises(AccessError, match="已删除"):
+        save(service, "accounts", {"name": "new", "username": "test", "resource_id": resource["id"]})
+
+
 def test_key_is_hashed_and_password_is_encrypted(service):
     p = principal(service)
     _, key = identity(service, p["id"])
@@ -90,6 +125,26 @@ def test_identity_and_grant_uniqueness(service):
     save(service, "grants", grant)
     with pytest.raises(AccessError):
         save(service, "grants", grant)
+
+
+def test_privileged_only_resource_account_keeps_explicit_permission_boundary(service):
+    p = principal(service)
+    resource, accounts = published(service)
+    grant = save(service, "grants", {"principal_id": p["id"], "resource_id": resource["id"],
+        "privileged_account_id": accounts[1], "allow_privileged": True})
+    ctx, _ = identity(service, p["id"])
+    result = service.resources(ctx)
+    assert len(result) == 1
+    assert result[0]["default_mode"] == "privileged"
+    assert [m["mode"] for m in result[0]["access_modes"]] == ["privileged"]
+    # Omitting mode must never silently elevate a call to the privileged account.
+    with pytest.raises(AccessError):
+        service.authorize(ctx, resource["id"], action="db:query")
+    assert service.authorize(ctx, resource["id"], "privileged", "db:query")[1]["id"] == accounts[1]
+    restricted, _ = identity(service, p["id"], {"resources:read", "db:query"})
+    assert service.resources(restricted) == []
+    save(service, "grants", {"expected_version": grant["version"], "allow_privileged": False}, grant["id"])
+    assert service.resources(ctx) == []
 
 
 def test_revoke_key_and_binding(service):

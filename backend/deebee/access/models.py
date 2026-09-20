@@ -53,7 +53,7 @@ class Source(Model):
     def valid_mode(self):
         valid = {"api_key": {"managed", "external_http"}, "oidc": {"jwt", "introspection"}}
         if self.validation_mode not in valid[self.type]:
-            raise ValueError("身份源类型与验证方式不匹配")
+            raise ValueError("身份验证服务类型与验证方式不匹配")
         if self.type == "oidc" and (not self.issuer or not self.audiences):
             raise ValueError("OIDC 需要 issuer 和 audience")
         if self.validation_mode == "external_http" and (not self.verify_endpoint or not self.audiences):
@@ -74,7 +74,10 @@ class Binding(Model):
 
 class Resource(Model):
     name: str = Field(min_length=1, max_length=100)
-    type: Literal["ssh", "mysql", "postgresql"]
+    environment: str = Field(default="", max_length=40)
+    project_groups: list[str] = Field(default_factory=list, max_length=30)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    type: Literal["ssh", "mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "rdp"]
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
     database: str = Field(default="", max_length=128)
@@ -90,7 +93,15 @@ class Resource(Model):
 
     @model_validator(mode="after")
     def boundary(self):
-        if self.type != "ssh" and not self.database:
+        self.environment = self.environment.strip()
+        for field in ("project_groups", "tags"):
+            values = list(dict.fromkeys(v.strip() for v in getattr(self, field) if v.strip()))
+            if any(len(v) > 64 for v in values):
+                raise ValueError("项目组和标签每项不能超过 64 个字符")
+            setattr(self, field, values)
+        if self.enabled and self.type not in {"ssh", "mysql", "postgresql"}:
+            raise ValueError("此连接类型可加入资源管理，但暂不支持 MCP 操作")
+        if self.enabled and self.type in {"mysql", "postgresql"} and not self.database:
             raise ValueError("数据库资源必须指定一个 database")
         if self.type == "postgresql" and not self.schemas:
             raise ValueError("PostgreSQL 至少指定一个 schema")
@@ -122,7 +133,7 @@ class Limits(Model):
 class Grant(Model):
     principal_id: str
     resource_id: str
-    normal_account_id: str
+    normal_account_id: str = ""
     privileged_account_id: str = ""
     allow_privileged: bool = False
     enabled: bool = True

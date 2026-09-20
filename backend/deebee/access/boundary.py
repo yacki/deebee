@@ -4,7 +4,7 @@ from urllib.parse import parse_qsl
 
 from starlette.responses import JSONResponse
 
-from .audit import CAPTURE_BYTES, parse_json, preview_bytes, preview_value, sanitize
+from .audit import RESPONSE_PREVIEW_BYTES, CAPTURE_BYTES, parse_json, preview_bytes, preview_value, sanitize
 from .models import AccessError
 
 
@@ -120,10 +120,10 @@ class AccessRequestBoundary:
         if not request_preview and query:
             request_preview, request_truncated = preview_value({"query": query})
         if path == "/api/admin/v1/audit-events" and method == "GET":
-            response_preview, response_truncated = preview_value({"archived_records_returned": True, "bytes": response_total})
+            response_preview, response_truncated = preview_value({"archived_records_returned": True, "bytes": response_total}, limit=RESPONSE_PREVIEW_BYTES)
         else:
             response_preview, response_truncated = preview_bytes(
-                response_raw, response_content_type, total_bytes=response_total, already_truncated=response_total > len(response_raw)
+                response_raw, response_content_type, total_bytes=response_total, already_truncated=response_total > len(response_raw), limit=RESPONSE_PREVIEW_BYTES
             )
 
         route = scope.get("route")

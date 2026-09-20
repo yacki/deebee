@@ -47,7 +47,7 @@ class Authenticator:
         if parsed.username or parsed.password or parsed.fragment or not parsed.hostname:
             raise AccessError("INVALID_IDENTITY_URL", "身份服务 URL 不合法")
         if parsed.scheme != "https" and not (dev and parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}):
-            raise AccessError("INVALID_IDENTITY_URL", "身份源必须使用 HTTPS（仅显式测试模式允许 loopback HTTP）")
+            raise AccessError("INVALID_IDENTITY_URL", "身份验证服务必须使用 HTTPS（仅显式测试模式允许 loopback HTTP）")
         if source:
             bases = [source.get("issuer", ""), source.get("verify_endpoint", ""), source.get("introspection_endpoint", ""), *source.get("trusted_origins", [])]
             origins = {(urlsplit(base).scheme, urlsplit(base).netloc) for base in bases if base}
@@ -56,13 +56,13 @@ class Authenticator:
         try:
             addresses = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
         except OSError as exc:
-            raise AccessError("IDENTITY_PROVIDER_UNAVAILABLE", "身份源地址无法解析", 503) from exc
+            raise AccessError("IDENTITY_PROVIDER_UNAVAILABLE", "身份验证服务地址无法解析", 503) from exc
         for address in addresses:
             ip = ipaddress.ip_address(address[4][0])
             if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
                 raise AccessError("INVALID_IDENTITY_URL", "身份服务不得指向链路本地或元数据地址")
             if not ip.is_global and not (dev and ip.is_loopback) and os.getenv("DEEBEE_ACCESS_ALLOW_PRIVATE_IDP", "") != "1":
-                raise AccessError("INVALID_IDENTITY_URL", "内网身份源需部署管理员显式启用 DEEBEE_ACCESS_ALLOW_PRIVATE_IDP")
+                raise AccessError("INVALID_IDENTITY_URL", "内网身份验证服务需部署管理员显式启用 DEEBEE_ACCESS_ALLOW_PRIVATE_IDP")
 
     async def http_json(self, url: str, source: dict, *, method: str = "GET", **kwargs) -> dict:
         await self.validate_url(url, source)
@@ -82,7 +82,7 @@ class Authenticator:
                         raise ValueError("identity response must be object")
                     return result
         except (httpx.HTTPError, ValueError) as exc:
-            raise AccessError("IDENTITY_PROVIDER_UNAVAILABLE", "身份源验证失败或不可用", 503) from exc
+            raise AccessError("IDENTITY_PROVIDER_UNAVAILABLE", "身份验证服务验证失败或不可用", 503) from exc
 
     async def discovery(self, source: dict, refresh: bool = False) -> dict:
         key = (source["id"], source["version"], "discovery")
@@ -165,10 +165,10 @@ class Authenticator:
             raise AccessError("INVALID_CLIENT", "该客户端未获允许", 403)
         binding = next((b for b in self.store.list("bindings") if b["source_id"] == source["id"] and b["subject"] == subject), None)
         if binding is None:
-            raise AccessError("IDENTITY_UNMAPPED", "此身份尚未映射到 DeeBee 内部身份", 403)
+            raise AccessError("IDENTITY_UNMAPPED", "此身份尚未映射到 DeeBee 系统账号", 403)
         principal = self.store.get("principals", binding["principal_id"])
         if not source.get("enabled") or not binding.get("enabled") or not principal.get("enabled"):
-            raise AccessError("IDENTITY_DISABLED", "身份源、绑定或内部身份已停用", 403)
+            raise AccessError("IDENTITY_DISABLED", "身份验证服务、绑定或系统账号已停用", 403)
         return AuthContext(principal["id"], source["id"], subject, binding["id"], credential_id,
                            method, scopes & SCOPES, expires, str(client_id), tuple(resource_ids or []), headers)
 
@@ -197,14 +197,14 @@ class Authenticator:
                 if not record["enabled"]:
                     raise AccessError("IDENTITY_DISABLED", "API-Key 已撤销", 403)
                 if source_id and record["source_id"] != source_id:
-                    raise AccessError("INVALID_IDENTITY_SOURCE", "API-Key 身份源不匹配", 401)
+                    raise AccessError("INVALID_IDENTITY_SOURCE", "API-Key 身份验证服务不匹配", 401)
                 source = self.store.get("sources", record["source_id"])
                 if source.get("validation_mode") != "managed":
                     raise AccessError("INVALID_IDENTITY_SOURCE", "API-Key 验证方式不匹配", 401)
                 return self.bind(source, {"sub": record["subject"], "exp": record["expires_at"], "scope": record["scopes"]},
                                  record["id"], "api_key", headers, record.get("resource_ids"))
             if not source_id:
-                raise AccessError("IDENTITY_SOURCE_REQUIRED", "外部 API-Key 需要身份源选择器", 401)
+                raise AccessError("IDENTITY_SOURCE_REQUIRED", "外部 API-Key 需要身份验证服务选择器", 401)
             source = self.enabled_source(source_id, "api_key")
             if source["validation_mode"] != "external_http":
                 raise AccessError("INVALID_IDENTITY_SOURCE", "该来源不支持外部 Key", 401)
@@ -237,10 +237,10 @@ class Authenticator:
                 try:
                     issuer = jwt.decode(token, options={"verify_signature": False}).get("iss")
                 except jwt.PyJWTError as exc:
-                    raise AccessError("IDENTITY_SOURCE_REQUIRED", "Opaque Token 需要身份源选择器", 401) from exc
+                    raise AccessError("IDENTITY_SOURCE_REQUIRED", "Opaque Token 需要身份验证服务选择器", 401) from exc
                 sources = [s for s in self.store.list("sources") if s.get("type") == "oidc" and s.get("issuer") == issuer]
                 if len(sources) != 1:
-                    raise AccessError("INVALID_ISSUER", "Token 身份源未受信任或需明确选择", 401)
+                    raise AccessError("INVALID_ISSUER", "Token 身份验证服务未受信任或需明确选择", 401)
                 source_id = sources[0]["id"]
             source = self.enabled_source(source_id, "oidc")
             if source["validation_mode"] == "jwt":
@@ -262,9 +262,9 @@ class Authenticator:
     def enabled_source(self, source_id: str, kind: str) -> dict:
         source = self.store.get("sources", source_id, required=False)
         if not source or source.get("type") != kind:
-            raise AccessError("INVALID_IDENTITY_SOURCE", "身份源不受信任", 401)
+            raise AccessError("INVALID_IDENTITY_SOURCE", "身份验证服务不受信任", 401)
         if not source.get("enabled"):
-            raise AccessError("IDENTITY_DISABLED", "身份源已停用", 403)
+            raise AccessError("IDENTITY_DISABLED", "身份验证服务已停用", 403)
         return source
 
     def login(self, username: str, password: str, ip: str) -> tuple[str, str]:

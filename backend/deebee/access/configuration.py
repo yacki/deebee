@@ -31,12 +31,16 @@ async def import_configuration(service, config: dict, actor: str, *, preview: bo
                 raise AccessError("INVALID_ARGUMENT", "配置 ID 缺失、重复或格式无效")
             seen.add(entity_id)
             fields = ENTITY_MODELS[kind].model_fields
-            if set(item) & (SECRET_FIELDS | INTERNAL_FIELDS) or set(item) - set(fields) - META_FIELDS - {"has_credentials", "test_result", "verified_at", "verified_by", "legacy_profile_id"}:
+            if set(item) & (SECRET_FIELDS | INTERNAL_FIELDS) or set(item) - set(fields) - META_FIELDS - {"has_credentials", "test_result", "verified_at", "verified_by", "legacy_profile_id", "connection_sync"}:
                 raise AccessError("INVALID_ARGUMENT", "导入不接受秘密、内部字段或未知字段")
             values = {k: v for k, v in item.items() if k in fields}
             old = service.store.get(kind, entity_id, required=False)
+            if old and old.get("deleted_at"):
+                raise AccessError("RESOURCE_DELETED", "不能导入已删除的资源或关联记录", 409)
             if item.get("legacy_profile_id") and (not old or old.get("legacy_profile_id") != item["legacy_profile_id"]):
                 raise AccessError("LEGACY_REFERENCE_REQUIRED", "原连接引用需先通过迁移预览建立，不能通过配置伪造")
+            if item.get("connection_sync") and (not old or old.get("connection_sync") != item["connection_sync"]):
+                raise AccessError("LEGACY_REFERENCE_REQUIRED", "连接同步状态由系统维护，不能通过配置导入更改")
             if old and item.get("version") != old["version"]:
                 raise AccessError("VERSION_CONFLICT", "导入版本已过期，请重新导出", 409)
             if kind == "sources":
@@ -69,4 +73,4 @@ async def import_configuration(service, config: dict, actor: str, *, preview: bo
     except PreviewRollback:
         pass
     return {"changes": changes, "updated": sum(c["action"] != "unchanged" for c in changes), "preview": preview,
-            "warning": "不删除记录、不导入秘密。新增身份源/账号可先禁用导入，再配置凭据和核验；更新必须携带最新 version。"}
+            "warning": "不删除记录、不导入秘密。新增身份验证服务/账号可先禁用导入，再配置凭据和核验；更新必须携带最新 version。"}

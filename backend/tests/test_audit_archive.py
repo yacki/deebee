@@ -7,6 +7,21 @@ from deebee.access.audit import preview_bytes, preview_value
 from deebee.access.store import AccessStore
 
 
+def test_response_preview_4k_redaction_and_utf8(tmp_path):
+    from deebee.access.audit import RESPONSE_PREVIEW_BYTES
+    payload = {"password": "never-log", "rows": "中" * 2500}
+    for result, truncated in [preview_value(payload, limit=RESPONSE_PREVIEW_BYTES),
+        preview_bytes(json.dumps(payload).encode(), "application/json", limit=RESPONSE_PREVIEW_BYTES)]:
+        assert 4093 <= len(result.encode()) <= 4096
+        assert truncated and "never-log" not in result and "[REDACTED]" in result
+    result, truncated = preview_value({"rows": "x" * 3000}, limit=RESPONSE_PREVIEW_BYTES)
+    assert not truncated and len(result) > 1024
+    store = AccessStore(tmp_path)
+    store.audit("admin", "test", "object", {"rows": "x" * 3000})
+    assert len(store.audits()[0]["response_preview"]) > 1024
+    store.close()
+
+
 def test_audit_preview_redacts_secrets_and_limits_utf8_bytes():
     preview, truncated = preview_bytes(
         json.dumps({"username": "alice", "password": "never-log", "command": "id"}).encode(), "application/json"

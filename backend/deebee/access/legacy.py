@@ -27,11 +27,14 @@ class LegacyBridge:
 
     def fingerprint(self, row):
         # Keyed digest covers credentials too, without exposing a password hash.
-        return self.store.digest(encode(row))
+        # A display-name change does not alter the target or its permissions.
+        return self.store.digest(encode({k: v for k, v in row.items() if k != "name"}))
 
     def checked(self, entity):
         row = self.record(entity["legacy_profile_id"])
-        if self.fingerprint(row) != entity["legacy_fingerprint"]:
+        # Accept pre-auto-pool fingerprints until the first reconciliation has
+        # migrated the reference. Both variants still cover all credentials.
+        if entity["legacy_fingerprint"] not in {self.fingerprint(row), self.store.digest(encode(row))}:
             raise AccessError("LEGACY_PROFILE_CHANGED", "原连接已变化，请刷新引用并重新核验账号", 403)
         return row
 
@@ -64,6 +67,8 @@ class LegacyBridge:
             suffix = self.store.digest(profile_id)[:24]
             resource_id, account_id = "legacy_resource_" + suffix, "legacy_account_" + suffix
             old_resource = self.store.get("resources", resource_id, required=False)
+            if old_resource and old_resource.get("deleted_at"):
+                raise AccessError("RESOURCE_DELETED", "资源已从管理中删除，不能重新同步", 409)
             old_account = self.store.get("accounts", account_id, required=False)
             fields = {k: v for k, v in (old_resource or {}).items() if k in Resource.model_fields}
             fields.update(name=row["name"], type=row["driver"], host=row["host"], port=row["port"],
@@ -72,6 +77,8 @@ class LegacyBridge:
             fields.setdefault("host_key", row.get("options", {}).get("host_key_fingerprint", ""))
             resource = Resource.model_validate(fields).model_dump()
             provenance = {"legacy_profile_id": profile_id, "legacy_fingerprint": fingerprint}
+            if (old_resource or {}).get("connection_sync"):
+                provenance["connection_sync"] = old_resource["connection_sync"]
             resource = self.store.put("resources", resource_id, resource | provenance, (old_resource or {}).get("version"))
             account = Account(name="原连接账号（待核验）", resource_id=resource_id, username=row["user"],
                               tier=(old_account or {}).get("tier", "privileged"),

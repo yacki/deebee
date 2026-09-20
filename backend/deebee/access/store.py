@@ -14,7 +14,7 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 
-from .audit import preview_value
+from .audit import RESPONSE_PREVIEW_BYTES, preview_value
 from .models import AccessError
 
 
@@ -238,7 +238,7 @@ class AccessStore:
             values["auth_method"] = values["auth_method"] or "control_plane_event"
             values["status_code"] = values["status_code"] or 200
             if not values["response_preview"] and detail:
-                values["response_preview"], values["response_truncated"] = preview_value(detail)
+                values["response_preview"], values["response_truncated"] = preview_value(detail, limit=RESPONSE_PREVIEW_BYTES)
             principal = self.get("principals", actor, required=False)
             if principal:
                 values["actor_name"] = principal.get("name") or principal.get("username") or actor

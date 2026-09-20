@@ -7,6 +7,7 @@ from urllib.parse import parse_qsl, urlencode
 
 
 PREVIEW_BYTES = 1024
+RESPONSE_PREVIEW_BYTES = 4096
 CAPTURE_BYTES = 65536
 REDACTED = "[REDACTED]"
 
@@ -83,12 +84,12 @@ def truncate_utf8(value: str, limit: int = PREVIEW_BYTES) -> tuple[str, bool]:
     return raw[:limit].decode("utf-8", errors="ignore"), True
 
 
-def preview_value(value: Any, *, already_truncated: bool = False) -> tuple[str, bool]:
+def preview_value(value: Any, *, already_truncated: bool = False, limit: int = PREVIEW_BYTES) -> tuple[str, bool]:
     try:
         text = json.dumps(sanitize(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError):
         text = redact_text(str(value))
-    result, truncated = truncate_utf8(text)
+    result, truncated = truncate_utf8(text, limit)
     return result, truncated or already_truncated
 
 
@@ -98,6 +99,7 @@ def preview_bytes(
     *,
     total_bytes: int | None = None,
     already_truncated: bool = False,
+    limit: int = PREVIEW_BYTES,
 ) -> tuple[str, bool]:
     content_type = content_type.split(";", 1)[0].strip().lower()
     total = len(raw) if total_bytes is None else total_bytes
@@ -126,7 +128,7 @@ def preview_bytes(
             text = redact_text(text)
     else:
         text = redact_text(text)
-    result, truncated = truncate_utf8(text)
+    result, truncated = truncate_utf8(text, limit)
     return result, truncated or capture_truncated
 
 

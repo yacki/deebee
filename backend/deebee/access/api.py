@@ -6,7 +6,7 @@ import hashlib
 import os
 import secrets
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
@@ -42,7 +42,9 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     service = AccessService(store)
     if legacy is not None:
         from .legacy import LegacyBridge
+        from .connection_pool import ConnectionPool
         service.legacy = LegacyBridge(store, legacy)
+        app.state.connection_pool = ConnectionPool(service.legacy)
     from .boundary import AccessRequestBoundary
     app.add_middleware(AccessRequestBoundary, authenticator=service.auth, store=store)
     executions = ExecutionManager(service)
@@ -223,7 +225,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
         principal = store.get("principals", body["principal_id"])
         ctx = AuthContext(principal["id"], "local", principal["id"], "preview", "preview", "local",
                           frozenset(body.get("scopes", SCOPES)), time.time() + 60, resource_ids=tuple(body.get("resource_ids", [])))
-        return {"resources": service.resources(ctx), "note": "预览资源授权与给定凭据上限；实际调用还需身份源/绑定/凭据有效"}
+        return {"resources": service.resources(ctx), "note": "预览资源授权与给定凭据上限；实际调用还需身份验证服务/绑定/凭据有效"}
 
     # Configuration names in the public API remain descriptive; storage uses short internal names.
     names = {"identity-sources": "sources", "identity-bindings": "bindings", "access-grants": "grants",
@@ -232,7 +234,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     @management.get("/access-config/export")
     async def export_config(actor: str = Depends(admin)):
         store.audit(actor, "config.export", "access")
-        return {"version": 1, **{name: [public_entity(v) for v in store.list(kind)] for name, kind in names.items()}}
+        return {"version": 1, **{name: [public_entity(v) for v in store.list(kind) if not v.get("deleted_at")] for name, kind in names.items()}}
 
     @management.post("/access-config/import-preview")
     async def import_preview(body: dict, actor: str = Depends(admin)):
@@ -249,7 +251,14 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
         kind = names.get(collection)
         if not kind:
             raise AccessError("NOT_FOUND", "管理功能不存在", 404)
-        return {"items": [public_entity(v) for v in store.list(kind)]}
+        if kind in {"resources", "accounts"} and legacy is not None:
+            if await asyncio.to_thread(app.state.connection_pool.sync):
+                executions.changed.set()
+        return {"items": [public_entity(v) for v in store.list(kind) if not v.get("deleted_at")]}
+
+    @management.delete("/resources/{resource_id}")
+    async def delete_resource(resource_id: str, body: dict, actor: str = Depends(admin)):
+        return service.delete_resource(resource_id, body, actor)
 
     @management.post("/{collection}", status_code=201)
     async def create_entity(collection: str, body: dict, actor: str = Depends(admin)):
@@ -428,7 +437,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     object_schema = {"type": "object", "additionalProperties": True}
     text_prop = {"type": "string"}
     definitions = {
-        "identity.me": ("返回经过验证的 DeeBee 内部身份与凭据上限。", {}),
+        "identity.me": ("返回经过验证的 DeeBee 系统账号与凭据上限。", {}),
         "resources.list": ("仅列出当前身份可以使用的 SSH/MySQL/PostgreSQL 资源和账号模式，不返回秘密。", {"cursor": text_prop, "type": text_prop, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}),
         "resources.get": ("读取一个获准资源的可用账号模式。", {"resource_id": text_prop}),
         "db.schema": ("读取获准数据库的结构。", {"resource_id": text_prop, "mode": {"enum": ["normal", "privileged"]}, "cursor": text_prop, "table": text_prop}),
@@ -527,18 +536,38 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
         except BlockingIOError:
             lock_file.close()
             raise RuntimeError("DeeBee access V1 requires a single worker per access directory")
-        store.recover_executions()
-        store.cleanup()
-        await executions.start()
+        pool_task = None
         try:
+            if legacy is not None:
+                await asyncio.to_thread(app.state.connection_pool.sync)
+                pool_task = asyncio.create_task(reconcile_connections())
+            store.recover_executions()
+            store.cleanup()
+            await executions.start()
             async with manager.run():
                 yield
         finally:
+            if pool_task:
+                pool_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pool_task
             await executions.close()
             browser_sessions.clear()
             oauth_states.clear()
             fcntl.flock(lock_file, fcntl.LOCK_UN)
             lock_file.close()
+
+    async def reconcile_connections():
+        import logging
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if await asyncio.to_thread(app.state.connection_pool.sync):
+                    executions.changed.set()
+            except Exception:
+                # Do not print connection records or exception text containing
+                # credentials. The next read/startup also retries this projection.
+                logging.getLogger(__name__).error("Connection pool synchronization failed; retrying in 30 seconds")
 
     app.router.lifespan_context = lifespan
     return lifespan

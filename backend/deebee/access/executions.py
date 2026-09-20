@@ -6,7 +6,7 @@ import json
 import time
 from contextlib import suppress
 
-from .audit import preview_value
+from .audit import RESPONSE_PREVIEW_BYTES, preview_value
 from .drivers import RunningHandle, database_execute, database_schema, inspect_account, ssh_execute
 from .models import AccessError, AuthContext, ExecutionInput
 from .service import AccessService, public_entity
@@ -79,7 +79,7 @@ class ExecutionManager:
             request_preview, request_truncated = preview_value(request_payload)
             response_preview, response_truncated = preview_value(result if result is not None else {
                 "status": body["status"], "error": body.get("error")
-            })
+            }, limit=RESPONSE_PREVIEW_BYTES)
             principal = self.store.get("principals", body["owner"], required=False) or {}
             self.store.audit(
                 body["owner"], "execution." + body["status"], execution_id,
@@ -131,7 +131,7 @@ class ExecutionManager:
             self.store.db.execute("INSERT INTO executions VALUES(?,?,?,?,?,?,?,?,?,?)",
                                   (execution_id, ctx.principal_id, ctx.binding_id, idem, request_hash, encode(record), self.store.encrypt(body), None, time.time(), time.time()))
             request_preview, request_truncated = preview_value(body)
-            response_preview, response_truncated = preview_value(self.public(record))
+            response_preview, response_truncated = preview_value(self.public(record), limit=RESPONSE_PREVIEW_BYTES)
             principal = self.store.get("principals", ctx.principal_id, required=False) or {}
             self.store.audit(
                 ctx.principal_id, "execution.queued", execution_id, record,
@@ -241,7 +241,13 @@ class ExecutionManager:
     async def test_account(self, account_id: str, actor: str):
         account = self.store.get("accounts", account_id)
         resource = self.store.get("resources", account["resource_id"])
+        if account.get("deleted_at") or resource.get("deleted_at"):
+            raise AccessError("RESOURCE_DELETED", "资源或账号已删除，不能检查连接", 409)
         try:
+            if resource.get("connection_sync", {}).get("state", "synced") != "synced":
+                raise AccessError("CONNECTION_NOT_READY", resource["connection_sync"]["reason"], 409)
+            if resource["type"] not in {"ssh", "mysql", "postgresql"} or (resource["type"] != "ssh" and not resource["database"]):
+                raise AccessError("CONNECTION_NOT_READY", "资源类型或数据库配置尚未就绪", 409)
             result = await asyncio.wait_for(inspect_account(resource, account, self.service.account_secret(account)), 20)
         except Exception:
             result = {"connected": False, "normal_safe": False, "message": "连接或权限测试失败，请检查地址、主机指纹/TLS 与账号凭据"}

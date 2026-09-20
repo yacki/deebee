@@ -320,24 +320,42 @@ async def test_connection_settings(
 
 @app.post("/api/connections", status_code=201)
 async def create_connection(
-    body: ConnectionCreateBody, _: str = Depends(current_user)
+    body: ConnectionCreateBody, user: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.create_connection, body.model_dump())
+    result = await asyncio.to_thread(workbench.create_connection, body.model_dump())
+    return result | {"resource_sync": await sync_connection_pool(user)}
 
 
 @app.patch("/api/connections/{profile_id}")
 async def update_connection(
-    profile_id: str, body: ConnectionUpdateBody, _: str = Depends(current_user)
+    profile_id: str, body: ConnectionUpdateBody, user: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         workbench.update_connection, profile_id, body.model_dump()
     )
+    return result | {"resource_sync": await sync_connection_pool(user)}
 
 
 @app.delete("/api/connections/{profile_id}", status_code=204)
-async def delete_connection(profile_id: str, _: str = Depends(current_user)) -> Response:
+async def delete_connection(profile_id: str, user: str = Depends(current_user)) -> Response:
     await asyncio.to_thread(workbench.delete_connection, profile_id)
+    result = await sync_connection_pool(user)
+    if result["state"] == "pending":
+        # Deletion is already durable; do not make the client retry it. The
+        # missing source blocks access immediately, even before reconciliation.
+        return Response(status_code=204, headers={"X-DeeBee-Resource-Sync": "pending"})
     return Response(status_code=204)
+
+
+async def sync_connection_pool(actor: str) -> dict[str, str]:
+    try:
+        if await asyncio.to_thread(api_app.state.connection_pool.sync, actor):
+            api_app.state.access_executions.changed.set()
+        return {"state": "synced"}
+    except Exception:
+        import logging
+        logging.getLogger(__name__).error("Connection saved; resource pool synchronization pending")
+        return {"state": "pending", "message": "连接已保存，资源池同步待重试；请刷新资源池查看状态"}
 
 
 @app.post("/api/connections/{profile_id}/test")
