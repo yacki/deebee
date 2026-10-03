@@ -21,15 +21,23 @@ class JobManager:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="deebee-job")
 
     def create(
-        self, kind: str, task: Task, *, on_cancel: CancelHook | None = None
+        self,
+        kind: str,
+        task: Task,
+        *,
+        on_cancel: CancelHook | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         job_id = str(uuid.uuid4())
         event = threading.Event()
+        now = time.time()
         job = {
             "id": job_id, "kind": kind, "status": "queued", "progress": 0,
-            "message": "等待执行", "result": None, "error": "", "created_at": time.time(),
+            "message": "等待执行", "result": None, "error": "", "created_at": now,
+            "updated_at": now, "metadata": dict(metadata or {}),
         }
         with self._lock:
+            self._prune_locked()
             self._jobs[job_id] = job
             self._events[job_id] = event
             if on_cancel:
@@ -57,7 +65,21 @@ class JobManager:
     def _update(self, job_id: str, **values: Any) -> None:
         with self._lock:
             if job_id in self._jobs:
+                values["updated_at"] = time.time()
                 self._jobs[job_id].update(values)
+
+    def _prune_locked(self) -> None:
+        if len(self._jobs) < 200:
+            return
+        terminal = [
+            item for item in self._jobs.values()
+            if item["status"] in {"completed", "failed", "cancelled"}
+        ]
+        for item in sorted(terminal, key=lambda value: value["updated_at"])[:50]:
+            job_id = item["id"]
+            self._jobs.pop(job_id, None)
+            self._events.pop(job_id, None)
+            self._cancel_hooks.pop(job_id, None)
 
     def public(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -65,6 +87,13 @@ class JobManager:
             if not job:
                 raise KeyError(job_id)
             return dict(job)
+
+    def list(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            ordered = sorted(
+                self._jobs.values(), key=lambda item: item["created_at"], reverse=True
+            )
+            return [dict(item) for item in ordered[: max(1, min(limit, 200))]]
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         hook: CancelHook | None = None

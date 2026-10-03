@@ -35,18 +35,18 @@ const sections: Section[] = [
     {key:"subject",label:"外部身份标识",required:true,hint:"OIDC 的 sub，或外部 API-Key 验证服务返回的 subject。"},
     {key:"principal_id",label:"系统账号",type:"select",collection:"principals",required:true},{key:"enabled",label:"启用外部身份",type:"check"}]},
   { id:"resources", name:"资源管理", icon:"lucide:server", description:"管理数据库、服务器及其资源账号。前台保存的连接自动出现在这里。", fields:[
-    {key:"name",label:"资源名称",required:true},{key:"environment",label:"环境",type:"environment",hint:"分类信息，不影响授权。"},{key:"project_groups",label:"项目组",type:"tags"},{key:"tags",label:"标签",type:"tags",hint:"例如 AMD64、ARM64、核心业务。"},{key:"type",label:"资源类型",type:"select",options:["ssh","mysql","postgresql"]},
+    {key:"name",label:"资源名称",required:true},{key:"environment",label:"环境",type:"environment",hint:"分类信息，不影响授权。"},{key:"project_groups",label:"项目组",type:"tags"},{key:"tags",label:"标签",type:"tags",hint:"例如 AMD64、ARM64、核心业务。"},{key:"type",label:"资源类型",type:"select",options:["ssh","mysql","postgresql","k8s"]},
     {key:"host",label:"主机地址",required:true},{key:"port",label:"端口",type:"number",required:true},
     {key:"database",label:"数据库名称",hint:"MySQL/PostgreSQL 必填，一个资源限定一个业务数据库。"},
-    {key:"schemas",label:"PostgreSQL Schema",type:"list"},{key:"host_key",label:"SSH 主机 SHA256 指纹",hint:"从可信渠道核验，必须在用户认证前验证。"},
+    {key:"namespaces",label:"获准 Namespace",type:"list",hint:"只允许在这些 Namespace 内进行查询或维护，逗号分隔。"},{key:"schemas",label:"PostgreSQL Schema",type:"list"},{key:"host_key",label:"SSH 主机 SHA256 指纹",hint:"从可信渠道核验，必须在用户认证前验证。"},
     {key:"host_key_algorithm",label:"SSH 主机密钥算法",type:"select",options:["ssh-ed25519","ecdsa-sha2-nistp256","rsa-sha2-512","rsa-sha2-256"]},
-    {key:"tls",label:"验证数据库 TLS",type:"check"},{key:"ca_file",label:"服务器上的 CA 文件路径"},
+    {key:"tls",label:"验证 TLS",type:"check"},{key:"ca_file",label:"服务器上的 CA 文件路径"},
     {key:"timeout_seconds",label:"执行超时上限（秒）",type:"number"},{key:"max_rows",label:"返回行数上限",type:"number"},
     {key:"enabled",label:"启用资源",type:"check"}]},
   { id:"accounts", name:"资源账号", icon:"lucide:key-round", description:"登录数据库或服务器所使用的账号。连接成功后，仍需核实权限再启用。", fields:[
     {key:"resource_id",label:"所属资源",type:"select",collection:"resources",required:true},{key:"name",label:"账号别名",required:true},
     {key:"username",label:"登录用户名",required:true},{key:"tier",label:"账号级别",type:"select",options:["normal","privileged"]},
-    {key:"auth_method",label:"登录方式",type:"select",options:["password","private_key"]},{key:"password",label:"资源账号密码",type:"password"},
+    {key:"auth_method",label:"登录方式",type:"select",options:["password","private_key"]},{key:"password",label:"密码 / Kubernetes Bearer Token",type:"password"},
     {key:"private_key",label:"SSH 私钥",type:"textarea",hint:"只用于 SSH 私钥认证；保存后不回显。"},{key:"passphrase",label:"私钥口令",type:"password"},
     {key:"permission_confirmed",label:"已核验资源账号的真实权限",type:"check"},{key:"permission_note",label:"权限核验说明",type:"textarea",hint:"普通数据库账号必须真正只读；SSH 普通账号仍可修改它有权修改的文件。"},
     {key:"enabled",label:"启用资源账号（需先检查连接）",type:"check"}]},
@@ -59,7 +59,7 @@ const sections: Section[] = [
   { id:"api-keys", name:"访问凭证（API Key）", icon:"lucide:fingerprint", description:"用于识别外部身份的 API Key，绑定到一个系统账号。密钥权限不能超过资源授权。", fields:[
     {key:"name",label:"凭证名称",required:true},{key:"principal_id",label:"系统账号",type:"select",collection:"principals",required:true},
     {key:"source_id",label:"身份验证服务",type:"select",collection:"identity-sources",required:true},{key:"expires_in_days",label:"有效天数",type:"number"},
-    {key:"scopes",label:"允许操作",type:"list",hint:"resources:read, ssh:exec, db:query；写入另需 db:write，特权另需 privilege:use。"},
+    {key:"scopes",label:"允许操作",type:"list",hint:"resources:read；只读检查使用 ssh:inspect、db:query、k8s:read。修改另需对应权限及 privilege:use。"},
     {key:"resource_ids",label:"限定可用资源（可选）",type:"list",hint:"留空仍受系统账号的显式资源授权约束。"}]},
   { id:"preview", name:"查看可用权限", icon:"lucide:scan-eye", description:"检查系统账号最终可使用的资源账号。凭证权限可能进一步限制访问。"},
   { id:"executions", name:"执行记录", icon:"lucide:activity", description:"执行实际使用的账号、状态与结果。unknown 需要核实远端状态，不应自动重放修改。"},
@@ -74,6 +74,7 @@ const records = ref<Record<string, Row[]>>({}); const form = ref<Row | null>(nul
 const report = ref<Row | null>(null); const reportType = ref(""); const reportTitle = ref(""); const newKey = ref(""); const sourceCredential = ref(""); const testingSource = ref<Row | null>(null);
 const csrf = ref(""); const me = ref<Row>({}); const status = ref<Row>({}); const loginSources = ref<Row[]>([]);
 const previewPrincipal = ref(""); const previewScopes = ref("resources:read, ssh:exec, db:query, db:write, privilege:use");
+const sshCheck = ref("overview"); const kubeNamespace = ref(""); const kubeKind = ref("pods"); const kubeName = ref(""); const kubeOperation = ref("list");
 const userResources = ref<Row[]>([]); const selectedResource = ref(""); const mode = ref("normal"); const operation = ref("db.query"); const command = ref("SELECT 1"); const userExecution = ref<Row | null>(null);
 const configText = ref(""); const importPreview = ref<Row | null>(null);
 const userSchema = ref<Row | null>(null);
@@ -81,7 +82,7 @@ const legacyItems = ref<Row[] | null>(null);
 const auditActor = ref(""); const auditOperation = ref(""); const auditSurface = ref("");
 async function previewLegacy(){await act(async()=>{legacyItems.value=(await request('/admin/v1/legacy-connections/preview')).items;});}
 async function importLegacy(item:Row){await act(async()=>{reportType.value="generic";reportTitle.value="连接导入结果";report.value=await request('/admin/v1/legacy-connections/import','POST',{profile_id:item.id,fingerprint:item.fingerprint});await load();message.value='已建立禁用引用，原连接未改动。请核验传输安全和账号权限后再发布。';});}
-watch([selectedResource,mode],()=>{userSchema.value=null;userExecution.value=null;operation.value=activeResource.value?.type==='ssh'?'ssh.exec':'db.query';});
+watch([selectedResource,mode],()=>{userSchema.value=null;userExecution.value=null;operation.value=defaultOperation();});
 const section = computed(()=>sections.find(s=>s.id===current.value)!);
 const resourceContext = ref("");
 const mainElement = ref<HTMLElement | null>(null);
@@ -143,6 +144,8 @@ const visibleFields = computed(()=>(section.value.fields||[]).filter(field=>{
     if(["client_id","client_secret"].includes(field.key))return f.browser_login;
   }
   if(current.value==="resources"){
+    if(field.key==="namespaces")return f.type==="k8s";
+    if(f.type==="k8s"&&field.key==="database")return false;
     if(f.type==="ssh")return !["database","schemas","tls","ca_file","max_rows"].includes(field.key);
     if(["host_key","host_key_algorithm"].includes(field.key))return false;
     if(field.key==="schemas")return f.type==="postgresql";
@@ -154,7 +157,7 @@ const visibleFields = computed(()=>(section.value.fields||[]).filter(field=>{
   return true;
 }));
 function fieldOptions(field:Field){if(field.key==="validation_mode")return form.value?.type==="oidc"?["jwt","introspection"]:["managed","external_http"];return field.options;}
-watch(()=>form.value?.type,(value,previous)=>{if(!form.value||!previous||value===previous)return;if(current.value==="identity-sources")form.value.validation_mode=value==="oidc"?"jwt":"managed";if(current.value==="resources")form.value.port=value==="ssh"?22:value==="mysql"?3306:5432;});
+watch(()=>form.value?.type,(value,previous)=>{if(!form.value||!previous||value===previous)return;if(current.value==="identity-sources")form.value.validation_mode=value==="oidc"?"jwt":"managed";if(current.value==="resources")form.value.port=value==="ssh"?22:value==="mysql"?3306:value==="k8s"?6443:5432;});
 
 async function request(path: string, method="GET", body?: unknown, admin=true): Promise<Row> {
   const headers: Record<string,string> = {};
@@ -193,7 +196,7 @@ function options(field:Field):Row[]{let items=records.value[field.collection || 
 function start(item?:Row){
   if(current.value==="accounts"&&!resourceContext.value){error.value="请先选择资源。";return;}
   editing.value=item||null;error.value="";report.value=null;newKey.value="";
-  const defaults:Record<string,Row>={principals:{kind:"human",enabled:true},"identity-sources":{type:"api_key",validation_mode:"managed",enabled:false},"identity-bindings":{enabled:true},resources:{type:"ssh",port:22,schemas:["public"],tls:true,enabled:false,timeout_seconds:60,max_rows:1000},accounts:{tier:"normal",auth_method:"password",enabled:false,permission_confirmed:false},"access-grants":{enabled:true,allow_privileged:false,actions:["resources:read"],limits:{timeout_seconds:60,max_rows:1000,max_output_bytes:1048576}},"api-keys":{source_id:"local_keys",expires_in_days:90,scopes:["resources:read","ssh:exec","db:query"]}};
+  const defaults:Record<string,Row>={principals:{kind:"human",enabled:true},"identity-sources":{type:"api_key",validation_mode:"managed",enabled:false},"identity-bindings":{enabled:true},resources:{type:"ssh",port:22,namespaces:["default"],schemas:["public"],tls:true,enabled:false,timeout_seconds:60,max_rows:1000},accounts:{tier:"normal",auth_method:"password",enabled:false,permission_confirmed:false},"access-grants":{enabled:true,allow_privileged:false,actions:["resources:read"],limits:{timeout_seconds:60,max_rows:1000,max_output_bytes:1048576}},"api-keys":{source_id:"local_keys",expires_in_days:90,scopes:["resources:read","ssh:exec","db:query"]}};
   form.value={...defaults[current.value]};
   for(const f of section.value.fields||[]){let v=item?.[f.key]??form.value[f.key]??(f.key==="allowed_algorithms"?["RS256"]:f.key==="host_key_algorithm"?"ssh-ed25519":f.type==="check"?false:"");if(f.type==="tags")v=Array.isArray(v)?v:[];if(f.type==="password"||f.key==="private_key")v="";if(f.type==="list")v=Array.isArray(v)?v.join(", "):v;if(f.type==="json")v=JSON.stringify(v||{},null,2);form.value[f.key]=v;}
   if(current.value==="accounts")form.value.resource_id=resourceContext.value;
@@ -232,8 +235,17 @@ async function cancelAdmin(item:Row){await act(async()=>{reportType.value="execu
 async function exportConfig(){await act(async()=>{configText.value=JSON.stringify(await request("/admin/v1/access-config/export"),null,2);message.value="配置已导出到下方，不含密码、私钥或 Key。";});}
 async function checkImport(){await act(async()=>{importPreview.value=await request("/admin/v1/access-config/import-preview","POST",JSON.parse(configText.value));});}
 async function applyImport(){await act(async()=>{await request("/admin/v1/access-config/import","POST",JSON.parse(configText.value));importPreview.value=null;await load();message.value="配置已更新";});}
-function chooseResource(){mode.value=activeResource.value?.default_mode||"normal";operation.value=activeResource.value?.type==="ssh"?"ssh.exec":"db.query";command.value=activeResource.value?.type==="ssh"?"id":"SELECT 1";userExecution.value=null;}
-async function executeUser(){await act(async()=>{const path=operation.value==="ssh.exec"?"/v1/ssh/executions":operation.value==="db.execute"?"/v1/db/executions":"/v1/db/queries";const body:Row={resource_id:selectedResource.value,mode:mode.value,idempotency_key:crypto.randomUUID()};body[operation.value==="ssh.exec"?"command":"sql"]=command.value;userExecution.value=await request(path,"POST",body,false);});}
+function defaultOperation(){return activeResource.value?.access_modes.find((m:Row)=>m.mode===mode.value)?.actions.find((a:string)=>a!=="db.schema")||"";}
+function chooseResource(){mode.value=activeResource.value?.default_mode||"normal";operation.value=defaultOperation();command.value=activeResource.value?.type==="ssh"?"id":"SELECT 1";kubeNamespace.value=activeResource.value?.namespaces?.[0]||"";kubeName.value="";userExecution.value=null;}
+async function executeUser(){await act(async()=>{
+  const paths:Record<string,string>={"ssh.exec":"/v1/ssh/executions","ssh.inspect":"/v1/ssh/inspections","db.query":"/v1/db/queries","db.execute":"/v1/db/executions","k8s.read":"/v1/k8s/queries","k8s.restart":"/v1/k8s/restarts"};
+  const path=paths[operation.value]; if(!path)throw new Error("请选择获准操作");
+  const body:Row={resource_id:selectedResource.value,mode:mode.value,idempotency_key:crypto.randomUUID()};
+  if(operation.value==="ssh.inspect")body.check=sshCheck.value;
+  else if(operation.value.startsWith("k8s."))Object.assign(body,{namespace:kubeNamespace.value,kind:operation.value==="k8s.restart"?"deployments":kubeOperation.value==="logs"?"pods":kubeOperation.value==="rollout"?"deployments":kubeKind.value,name:operation.value==="k8s.read"&&kubeOperation.value==="list"?"":kubeName.value,operation:operation.value==="k8s.restart"?"restart":kubeOperation.value});
+  else body[operation.value==="ssh.exec"?"command":"sql"]=command.value;
+  userExecution.value=await request(path,"POST",body,false);
+});}
 async function pollUser(cursor:unknown=""){await act(async()=>{if(userExecution.value)userExecution.value=await request(`/v1/executions/${userExecution.value.execution_id}${typeof cursor==='string'&&cursor?'?cursor='+encodeURIComponent(cursor):''}`,"GET",undefined,false);});}
 async function loadSchema(cursor=""){await act(async()=>{userSchema.value=await request(`/v1/resources/${selectedResource.value}/schema?mode=${mode.value}&cursor=${encodeURIComponent(cursor)}`,"GET",undefined,false);});}
 async function cancelUser(){await act(async()=>{if(userExecution.value)userExecution.value=await request(`/v1/executions/${userExecution.value.execution_id}/cancel`,"POST",{},false);});}
@@ -436,9 +448,15 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
       <p v-if="!userResources.length" class="access-empty">暂无可用资源账号，请联系管理员配置资源授权。</p>
       <section v-if="activeResource" class="access-panel">
         <h2>{{ activeResource.name }}</h2><label>资源账号<a-select v-model="mode"><a-option v-for="m in activeResource.access_modes" :key="m.mode" :value="m.mode">{{ m.username }} · {{ optionLabel(m.mode) }}</a-option></a-select></label>
-        <a-button v-if="activeResource.type!=='ssh'" :disabled="busy" @click="loadSchema()">查看数据库结构</a-button><JsonPanel v-if="userSchema" :value="userSchema" /><a-button v-if="userSchema?.next_cursor" :disabled="busy" @click="loadSchema(userSchema.next_cursor)">下一页</a-button>
+        <a-button v-if="['mysql','postgresql'].includes(activeResource.type)" :disabled="busy" @click="loadSchema()">查看数据库结构</a-button><JsonPanel v-if="userSchema" :value="userSchema" /><a-button v-if="userSchema?.next_cursor" :disabled="busy" @click="loadSchema(userSchema.next_cursor)">下一页</a-button>
         <label>操作<a-select v-model="operation"><a-option v-for="action in activeResource.access_modes.find((m:Row)=>m.mode===mode)?.actions.filter((a:string)=>a!=='db.schema')" :key="action" :value="action">{{ optionLabel(action) }}</a-option></a-select></label>
-        <label>{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></label>
+        <label v-if="operation==='ssh.inspect'">检查项目<a-select v-model="sshCheck"><a-option v-for="c in ['overview','disk','memory','processes','network']" :key="c" :value="c">{{ ({overview:'概览',disk:'磁盘与 inode',memory:'内存',processes:'进程',network:'网络'})[c] }}</a-option></a-select></label>
+        <template v-else-if="activeResource.type==='k8s'">
+          <label>Namespace<a-select v-model="kubeNamespace"><a-option v-for="n in activeResource.namespaces" :key="n" :value="n">{{ n }}</a-option></a-select></label>
+          <template v-if="operation==='k8s.read'"><label>查询类型<a-select v-model="kubeOperation"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></label><label>资源类型<a-select v-model="kubeKind"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></label></template>
+          <label v-if="operation==='k8s.restart'||kubeOperation!=='list'">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></label>
+        </template>
+        <label v-else>{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></label>
         <p v-if="mode==='privileged'" class="access-warning">正在使用已授权的高权限资源账号，操作可能修改数据或服务器文件。</p>
         <a-button type="primary" :disabled="busy" @click="executeUser">提交执行</a-button>
         <div v-if="userExecution" class="access-panel"><span>{{ optionLabel(userExecution.status) }}</span><a-button :disabled="busy" @click="pollUser">刷新结果</a-button><a-button v-if="userExecution.result?.next_cursor" :disabled="busy" @click="pollUser(userExecution.result.next_cursor)">下一页结果</a-button><a-button :disabled="busy" @click="cancelUser">请求取消</a-button><JsonPanel :value="userExecution" /></div>

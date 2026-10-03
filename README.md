@@ -1,6 +1,6 @@
 # DeeBee
 
-DeeBee 是一个浏览器一站式连接工作台。MySQL 和 PostgreSQL 已支持对象树、SQL 编辑与元数据补全、结果编辑、事务、导入导出和表结构设计；Redis、ClickHouse 和 MongoDB 当前支持连接配置、加密保存与真实连通性测试；SSH 提供交互终端，Remote Desktop 通过 Apache Guacamole 提供浏览器内 RDP 桌面。
+DeeBee 是一个浏览器一站式连接工作台。MySQL 和 PostgreSQL 已支持对象树、SQL 编辑与元数据补全、结果编辑、事务、导入导出和表结构设计；Redis、ClickHouse 和 MongoDB 当前支持连接配置、加密保存与真实连通性测试；SSH 提供交互终端，Kubernetes 提供集群资源树、集群 kubectl 终端和 Pod 容器终端，Remote Desktop 通过 Apache Guacamole 提供浏览器内 RDP 桌面。
 
 完整功能及测试映射见 `docs/FEATURE_MATRIX.md`。
 
@@ -29,9 +29,21 @@ DeeBee 是一个浏览器一站式连接工作台。MySQL 和 PostgreSQL 已支�
 管理员保存的所有连接自动出现在“资源管理”；升级启动时会补齐已有连接，读取资源列表和后台每 30 秒也会核对一次。以原连接 ID 建立稳定引用，密码/私钥仍只保存在原连接配置中，不复制到访问控制库。
 
 - 创建、修改、删除连接会同步资源池。删除保留停用记录及审计；地址、账号、密码等变化会停用关联账号并清除旧核验，重新核验后才能对外执行。仅改名保留已有核验。
-- 全部连接都能入池。MCP 当前执行端支持 SSH/MySQL/PostgreSQL；其他类型、隧道/代理、缺少默认数据库或 SSH 主机指纹的连接会显示具体原因，不能误当作可执行资源。当前数据库资源仍限定一个默认数据库，不自动扫描整台数据库服务器。
+- 全部连接都能入池。MCP 当前执行端支持 SSH/MySQL/PostgreSQL 和使用 Bearer Token 的 Kubernetes；其他类型、隧道/代理、缺少默认数据库或 SSH 主机指纹的连接会显示具体原因，不能误当作可执行资源。当前数据库资源仍限定一个默认数据库，不自动扫描整台数据库服务器。
 - 出现在资源管理中不等于允许访问：原管理员账号不会自动发布给 Agent，不会创建新的 API Key 或资源授权。仍需启用资源、核验资源账号权限并授权给系统账号。
 - 若连接保存后同步暂时失败，前台提示“同步待重试”，无需重复创建连接；后台及下一次读取资源池会重试。原连接变化或删除会立即使旧凭据引用失效。
+
+### Agent 运维接口
+
+`resources.list` / `GET /api/v1/resources` 返回环境、项目组、标签和 K8s namespace；筛选后仍提示授权范围内的同名候选，便于 Agent 先澄清目标。资源 ID 必须来自实时发现，不能用显示名替代。
+
+- `ssh.inspect` / `POST /api/v1/ssh/inspections`：固定的 Linux 磁盘/inode、内存、进程、网络与概览检查，权限为 `ssh:inspect`。原 `ssh.exec` 的任意命令和破坏性标记保持不变。
+- `k8s.read` / `POST /api/v1/k8s/queries`：指定获准 namespace 中的 Pod、Deployment、事件、Service、ReplicaSet 查询，以及有行数/字节限制的 Pod 日志；权限为 `k8s:read`。不提供 secrets、exec 或任意 API 路径。
+- `k8s.restart` / `POST /api/v1/k8s/restarts`：`operation=restart`、`kind=deployments`、`name` 和显式 `mode=privileged`，需要 `k8s:write` 与 `privilege:use`。复用现有执行记录、幂等、撤销、审计和配置变更失效机制。收到成功响应后仍需核验 rollout。
+
+K8s 资源配置 `namespaces`（默认 `["default"]`）以及 TLS；资源账号的 password 存放 Bearer Token（仍加密存储）。普通账号通过实际 RBAC 核验，权限不完整或有写权限时不能标为普通只读账号。Kubeconfig 工作台连接的原有功能不变，目前 MCP 使用 Token 账号。新增权限不会自动扩大旧 Key、旧 Grant 的权限，需要按实际用途配置。
+
+所有执行提交仍返回 execution ID，客户端通过 `executions.get` / `GET /api/v1/executions/{id}` 读取终态与结果。`queued` 不代表执行成功，`unknown` 不应自动重放。
 
 ## 直接运行
 
@@ -60,7 +72,7 @@ Docker 会自动从 GitHub Container Registry 拉取包含前端和后端的完�
 
 默认只监听当前电脑。正式使用建议在命令中增加 `-e DEEBEE_ADMIN_PASSWORD='你的强密码'`；如果需要让局域网其他设备访问，将端口参数改为 `-p 3000:3000`，并务必设置强密码。
 
-登录后点击左侧“连接”标题旁的 `+`，可添加 MySQL、PostgreSQL、Redis、ClickHouse、MongoDB、SSH 或 Remote Desktop。目标服务运行在 Docker 宿主机上时，连接主机名使用 `host.docker.internal`。SSH 支持密码和加密私钥认证，并在首次连接时确认主机密钥指纹；RDP 支持域、NLA/TLS/RDP 安全模式、动态分辨率和全屏。
+登录后点击左侧“连接”标题旁的 `+`，可添加 MySQL、PostgreSQL、Redis、ClickHouse、MongoDB、SSH、Kubernetes 或 Remote Desktop。目标服务运行在 Docker 宿主机上时，连接主机名使用 `host.docker.internal`。SSH 支持密码和加密私钥认证，并在首次连接时确认主机密钥指纹；Kubernetes 支持 Bearer Token 和完整 Kubeconfig（包括客户端证书）；RDP 支持域、NLA/TLS/RDP 安全模式、动态分辨率和全屏。Kubernetes 的设计与安全边界见 [Kubernetes 功能说明](docs/KUBERNETES.md)。
 
 ### 路径与反向代理
 
@@ -91,10 +103,10 @@ location ^~ /deebee/ {
 
 连接配置和加密密钥都保存在运行命令所在目录的 `./deebee-data` 中：
 
-- `deebee-data/connections.json`：已保存的服务器连接，密码和 SSH 私钥为密文；
+- `deebee-data/connections.json`：已保存的服务器连接，密码、SSH 私钥和 Kubeconfig 为密文；
 - `deebee-data/secret.key`：自动生成的本地加密密钥。
 
-重启或重建容器不会丢失配置。迁移或备份时必须一起保留整个 `deebee-data` 目录；丢失 `secret.key` 后，已保存的连接密码和 SSH 私钥将无法解密。也可以把命令中冒号左边的 `$PWD/deebee-data` 换成其他宿主机绝对路径。
+重启或重建容器不会丢失配置。迁移或备份时必须一起保留整个 `deebee-data` 目录；丢失 `secret.key` 后，已保存的连接密码、SSH 私钥和 Kubeconfig 将无法解密。也可以把命令中冒号左边的 `$PWD/deebee-data` 换成其他宿主机绝对路径。
 
 停止与再次启动：
 
@@ -140,3 +152,9 @@ cd backend
 ```bash
 npm run build
 ```
+
+### MCP SSH 提权
+
+`ssh.exec` 的 `mode` 选择已授权账号，不会隐式把登录用户变成 root。需要 sudo 时显式传 `mode: "privileged"`、`elevation: "sudo"`；默认 `elevation: "none"` 保留原有行为。
+
+账号管理 API 支持可选 `sudo_password`，独立于 SSH 登录密码加密保存，资源投影和审计预览不会返回该值。配置后由服务端经 SSH 标准输入提供给 sudo，密码不进入命令参数；未配置时使用非交互 sudo。执行负载的标准输入被关闭，避免 NOPASSWD 场景把未消费的密码传给应用。调用方不应在命令中填写密码。普通模式不能请求提权，数据库工具也不接受该参数。

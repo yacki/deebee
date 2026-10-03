@@ -5,11 +5,13 @@ external grant or substitutes a workbench connection test for permission checks.
 """
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from .models import Account, Resource
 from .store import encode
 
 
-SUPPORTED = {"ssh", "mysql", "postgresql"}
+SUPPORTED = {"ssh", "mysql", "postgresql", "k8s"}
 
 
 class ConnectionPool:
@@ -55,6 +57,13 @@ class ConnectionPool:
         fields = {k: v for k, v in (old or {}).items() if k in Resource.model_fields}
         fields.update(name=row["name"], type=row["driver"], host=row["host"], port=row["port"],
                       database=row.get("default_database", ""), schemas=[row.get("default_schema") or "public"])
+        if row["driver"] == "k8s":
+            options = row.get("options", {})
+            fields["namespaces"] = [options.get("namespace") or "default"]
+            parsed = urlsplit(row["host"] if "://" in row["host"] else "https://" + row["host"])
+            fields["host"] = parsed.hostname or row["host"]
+            fields["port"] = parsed.port or row["port"]
+            fields["tls"] = parsed.scheme != "http"
         if row["driver"] == "ssh":
             fields["host_key"] = row.get("options", {}).get("host_key_fingerprint", "")
         if source_changed or reason:
@@ -104,7 +113,13 @@ class ConnectionPool:
         options = row.get("options", {})
         if options.get("ssh_tunnel") or options.get("proxy_enabled"):
             return "已加入资源管理；MCP 执行端暂不支持此连接的隧道或代理"
-        if row["driver"] != "ssh" and not row.get("default_database"):
+        if row["driver"] == "k8s":
+            parsed = urlsplit(row["host"] if "://" in row["host"] else "https://" + row["host"])
+            if parsed.scheme not in {"http", "https"} or parsed.path not in {"", "/"} or parsed.query or parsed.fragment or parsed.username:
+                return "K8s MCP 需要不带路径、认证信息或查询参数的 API Server 地址"
+        if row["driver"] == "k8s" and row.get("options", {}).get("k8s_auth_method", "token") != "token":
+            return "K8s MCP 当前使用 Bearer Token；kubeconfig 连接仍可在工作台使用"
+        if row["driver"] in {"mysql", "postgresql"} and not row.get("default_database"):
             return "已加入资源管理；请在前台连接中指定默认数据库后启用 MCP 资源"
         if row["driver"] == "ssh" and not options.get("host_key_fingerprint", "").startswith("SHA256:"):
             return "已加入资源管理；请在前台连接中核验 SSH 主机指纹"

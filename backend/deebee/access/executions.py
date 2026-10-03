@@ -9,12 +9,13 @@ from contextlib import suppress
 from .audit import RESPONSE_PREVIEW_BYTES, preview_value
 from .drivers import RunningHandle, database_execute, database_schema, inspect_account, ssh_execute
 from .models import AccessError, AuthContext, ExecutionInput
+from .operations import KubernetesInput, SSHInspectInput, SSH_CHECKS, kubernetes_execute, namespace_for
 from .service import AccessService, public_entity
 from .sql import prepare_sql
 from .store import encode, new_id
 
 
-ACTION_SCOPES = {"ssh.exec": "ssh:exec", "db.query": "db:query", "db.execute": "db:write"}
+ACTION_SCOPES = {"ssh.exec": "ssh:exec", "db.query": "db:query", "db.execute": "db:write", "ssh.inspect": "ssh:inspect", "k8s.read": "k8s:read", "k8s.restart": "k8s:write"}
 TERMINAL = {"succeeded", "failed", "cancelled", "unknown"}
 
 
@@ -97,13 +98,29 @@ class ExecutionManager:
         return body
 
     async def submit(self, ctx: AuthContext, tool: str, values: dict) -> dict:
-        body = ExecutionInput.model_validate(values).model_dump()
+        model = KubernetesInput if tool.startswith("k8s.") else SSHInspectInput if tool == "ssh.inspect" else ExecutionInput
+        body = model.model_validate(values).model_dump()
         action = ACTION_SCOPES[tool]
         resource, account, grant = self.service.authorize(ctx, body["resource_id"], body["mode"], action)
-        if tool == "ssh.exec":
+        if tool.startswith("k8s."):
+            if resource["type"] != "k8s":
+                raise AccessError("INVALID_ARGUMENT", "此操作需要 Kubernetes 资源")
+            namespace_for(resource, body["namespace"])
+            if (tool == "k8s.restart") != (body["operation"] == "restart"):
+                raise AccessError("INVALID_ARGUMENT", "restart 必须使用 k8s.restart；只读工具不接受变更")
+            if tool == "k8s.restart" and body["mode"] != "privileged":
+                raise AccessError("PRIVILEGE_DENIED", "重启必须显式使用特权模式", 403)
+        elif tool == "ssh.inspect":
+            if resource["type"] != "ssh":
+                raise AccessError("INVALID_ARGUMENT", "此检查需要 SSH 资源")
+        elif tool == "ssh.exec":
             if resource["type"] != "ssh" or not body["command"] or body["sql"] or body["parameters"]:
                 raise AccessError("INVALID_ARGUMENT", "SSH 执行需要 SSH 资源和命令，不接受 SQL/参数")
+            if body["elevation"] == "sudo" and body["mode"] != "privileged":
+                raise AccessError("PRIVILEGE_DENIED", "sudo 提权必须显式使用特权模式", 403)
         else:
+            if body.get("elevation", "none") != "none":
+                raise AccessError("INVALID_ARGUMENT", "提权只适用于 SSH 命令")
             if resource["type"] not in {"mysql", "postgresql"} or body["command"]:
                 raise AccessError("INVALID_ARGUMENT", "数据库执行只接受 MySQL/PostgreSQL 和 SQL")
             if tool == "db.execute" and body["mode"] != "privileged":
@@ -163,8 +180,12 @@ class ExecutionManager:
             timeout = min(body["timeout_seconds"], resource["timeout_seconds"], grant["limits"]["timeout_seconds"], max(0, fresh.expires_at - time.time()))
             max_bytes = min(resource["max_output_bytes"], grant["limits"]["max_output_bytes"])
             self.update(execution_id, {"status": "running", "started_at": time.time()})
-            if record["tool"] == "ssh.exec":
-                work = asyncio.create_task(ssh_execute(resource, account, secret, body["command"], max_bytes, handle))
+            if record["tool"].startswith("k8s."):
+                work = asyncio.create_task(kubernetes_execute(resource, account, secret, body, max_bytes, handle))
+            elif record["tool"] in {"ssh.exec", "ssh.inspect"}:
+                command = SSH_CHECKS[body["check"]] if record["tool"] == "ssh.inspect" else body["command"]
+                work = asyncio.create_task(ssh_execute(resource, account, secret, command, max_bytes, handle,
+                                                      elevation=body.get("elevation", "none")))
             else:
                 work = asyncio.create_task(asyncio.to_thread(database_execute, resource, account, secret, body["sql"], body["parameters"],
                     record["tool"] == "db.execute", max(1, int(timeout)), min(body["max_rows"], resource["max_rows"], grant["limits"]["max_rows"]), max_bytes, handle))
@@ -181,7 +202,7 @@ class ExecutionManager:
             if handle.cancelled.is_set():
                 self.update(execution_id, {"status": "unknown", "ended_at": time.time(), "error": {"code": "CANCELLATION_UNCONFIRMED", "message": "取消与完成竞争，远端结果需核实"}}, result)
             else:
-                status = "failed" if record["tool"] == "ssh.exec" and result.get("exit_code") != 0 else "succeeded"
+                status = "failed" if record["tool"] in {"ssh.exec", "ssh.inspect"} and result.get("exit_code") != 0 else "succeeded"
                 self.update(execution_id, {"status": status, "ended_at": time.time()}, result)
         except AccessError as exc:
             status = "unknown" if exc.code == "CANCELLATION_UNCONFIRMED" else "cancelled" if exc.code == "CANCELLED" else "failed"
@@ -194,7 +215,7 @@ class ExecutionManager:
         except Exception:
             # Driver exceptions may contain SQL literals or credentials. Never return raw text.
             record = self.get_body(execution_id)
-            uncertain = record["tool"] in {"db.execute", "ssh.exec"} and record["status"] == "running"
+            uncertain = record["tool"] in {"db.execute", "ssh.exec", "k8s.restart"} and record["status"] == "running"
             self.update(execution_id, {"status": "unknown" if uncertain or handle.cancelled.is_set() else "failed", "ended_at": time.time(),
                                       "error": {"code": "TARGET_EXECUTION_FAILED", "message": "目标执行失败，请核验目标状态和连接配置；未自动重试"}})
 
@@ -246,7 +267,7 @@ class ExecutionManager:
         try:
             if resource.get("connection_sync", {}).get("state", "synced") != "synced":
                 raise AccessError("CONNECTION_NOT_READY", resource["connection_sync"]["reason"], 409)
-            if resource["type"] not in {"ssh", "mysql", "postgresql"} or (resource["type"] != "ssh" and not resource["database"]):
+            if resource["type"] not in {"ssh", "mysql", "postgresql", "k8s"} or (resource["type"] in {"mysql", "postgresql"} and not resource["database"]):
                 raise AccessError("CONNECTION_NOT_READY", "资源类型或数据库配置尚未就绪", 409)
             result = await asyncio.wait_for(inspect_account(resource, account, self.service.account_secret(account)), 20)
         except Exception:

@@ -10,6 +10,7 @@ import asyncssh
 
 from .config import settings
 from .mysql import DeeBeeError
+from .kubernetes import test_kubernetes
 
 
 @dataclass
@@ -288,6 +289,8 @@ class RemoteConnectionWorkbench:
             return asyncio.run(test_ssh(profile))
         if profile.driver == "rdp":
             return asyncio.run(test_rdp(profile))
+        if profile.driver == "k8s":
+            return test_kubernetes(profile)
         raise DeeBeeError("不支持的远程连接类型")
 
     def test_profile(self, profile_id: str) -> dict[str, Any]:

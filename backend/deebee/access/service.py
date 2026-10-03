@@ -10,7 +10,7 @@ from .models import AccessError, AuthContext, ENTITY_MODELS, KeyCreate, SCOPES
 from .store import AccessStore, encode, new_id
 
 
-SECRET_FIELDS = {"password", "private_key", "passphrase", "service_secret", "client_secret"}
+SECRET_FIELDS = {"password", "private_key", "passphrase", "sudo_password", "service_secret", "client_secret"}
 INTERNAL_FIELDS = {"password_hash", "digest", "credential_ref", "legacy_fingerprint"}
 META_FIELDS = {"id", "version", "created_at", "updated_at"}
 
@@ -244,7 +244,7 @@ class AccessService:
         account_id = grant.get("privileged_account_id" if mode == "privileged" else "normal_account_id")
         account = self.store.get("accounts", account_id or "", required=False)
         if not account or not account["enabled"] or account["resource_id"] != resource_id or account["tier"] != mode:
-            raise AccessError("ACCOUNT_UNAVAILABLE", "账号当前不可用", 403)
+            raise AccessError("ACCOUNT_UNAVAILABLE", f"当前资源的 {mode} 模式账号不可用；请读取资源详情核对已授权的账号模式，不会自动提升权限", 403)
         if account.get("test_result", {}).get("resource_version") != resource["version"]:
             raise AccessError("ACCOUNT_NOT_VERIFIED", "资源配置已变化，需要重新核验账号", 403)
         test = account.get("test_result", {})
@@ -263,13 +263,20 @@ class AccessService:
                 denied = exc
                 continue
             resource = allowed_resource
-            actions = ["ssh.exec"] if resource["type"] == "ssh" else ["db.schema", "db.query"] + (["db.execute"] if mode == "privileged" else [])
-            scopes = {"ssh.exec": "ssh:exec", "db.schema": "db:query", "db.query": "db:query", "db.execute": "db:write"}
+            if resource["type"] == "ssh":
+                actions = ["ssh.inspect", "ssh.exec"]
+            elif resource["type"] == "k8s":
+                actions = ["k8s.read"] + (["k8s.restart"] if mode == "privileged" else [])
+            else:
+                actions = ["db.schema", "db.query"] + (["db.execute"] if mode == "privileged" else [])
+            scopes = {"ssh.exec": "ssh:exec", "db.schema": "db:query", "db.query": "db:query", "db.execute": "db:write", "ssh.inspect": "ssh:inspect", "k8s.read": "k8s:read", "k8s.restart": "k8s:write"}
             modes.append({"mode": mode, "account_alias": account["name"], "username": account["username"],
                           "actions": [a for a in actions if scopes[a] in ctx.scopes and scopes[a] in grant["actions"]], "limits": grant["limits"]})
         if not modes or resource is None:
             raise denied or AccessError("RESOURCE_NOT_FOUND", "资源不存在或无访问权限", 404)
         return {"id": resource["id"], "name": resource["name"], "type": resource["type"], "host": resource["host"], "port": resource["port"], "database": resource["database"],
+                "environment": resource.get("environment", ""), "project_groups": resource.get("project_groups", []), "tags": resource.get("tags", []),
+                **({"namespaces": resource["namespaces"]} if resource["type"] == "k8s" else {}),
                 "default_mode": modes[0]["mode"], "access_modes": modes}
 
     def resources(self, ctx: AuthContext) -> list[dict]:

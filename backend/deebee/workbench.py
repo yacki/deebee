@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +27,7 @@ from .postgres import (
     workbench as postgres_workbench,
 )
 from .remote_connections import RemoteConnectionWorkbench, RemoteProfile, remote_workbench
+from .sql_import import execute_sql_file
 from .transports import transport_manager
 
 
@@ -121,6 +123,9 @@ class DatabaseWorkbenches:
             "rdp": next(
                 engine for engine in self.engines if isinstance(engine, RemoteConnectionWorkbench)
             ),
+            "k8s": next(
+                engine for engine in self.engines if isinstance(engine, RemoteConnectionWorkbench)
+            ),
         }
         for engine in self.engines:
             engine.profiles.clear()
@@ -140,7 +145,7 @@ class DatabaseWorkbenches:
     @staticmethod
     def _normalize_record(value: dict[str, Any], profile_id: str = "") -> dict[str, Any]:
         driver = str(value.get("driver", "")).strip().lower()
-        supported = {"mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "ssh", "rdp"}
+        supported = {"mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "ssh", "rdp", "k8s"}
         if driver not in supported:
             raise DeeBeeError("不支持的连接类型")
         name = str(value.get("name", "")).strip()
@@ -165,6 +170,7 @@ class DatabaseWorkbenches:
                 "mongodb": 27017,
                 "ssh": 22,
                 "rdp": 3389,
+                "k8s": 443,
             }
             port = int(value.get("port", default_ports[driver]))
         except (TypeError, ValueError) as exc:
@@ -183,6 +189,7 @@ class DatabaseWorkbenches:
             "mongodb": {"tls", "verify_tls", "auth_database", "direct_connection"},
             "ssh": {"auth_method", "strict_host_key", "host_key_fingerprint"},
             "rdp": {"domain", "security", "ignore_certificate", "color_depth", "timezone"},
+            "k8s": {"k8s_auth_method", "namespace", "verify_tls"},
         }[driver]
         if driver in DATABASE_DRIVERS:
             allowed_options |= TRANSPORT_OPTIONS
@@ -230,6 +237,18 @@ class DatabaseWorkbenches:
                 ignore_certificate=bool(raw_options.get("ignore_certificate", False)),
                 color_depth=color_depth,
                 timezone=str(raw_options.get("timezone", "Etc/UTC")).strip() or "Etc/UTC",
+            )
+        if driver == "k8s":
+            auth_method = str(raw_options.get("k8s_auth_method", "token")).strip()
+            if auth_method not in {"token", "kubeconfig"}:
+                raise DeeBeeError("Kubernetes 认证方式无效")
+            namespace = str(raw_options.get("namespace", "")).strip()
+            if namespace and (len(namespace) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", namespace)):
+                raise DeeBeeError("Kubernetes Namespace 无效")
+            options.update(
+                k8s_auth_method=auth_method,
+                namespace=namespace,
+                verify_tls=bool(raw_options.get("verify_tls", True)),
             )
         if driver in DATABASE_DRIVERS and TRANSPORT_OPTIONS & set(raw_options):
             ssh_tunnel = raw_options.get("ssh_tunnel", False)
@@ -292,6 +311,7 @@ class DatabaseWorkbenches:
             "mongodb": "",
             "ssh": "",
             "rdp": "",
+            "k8s": "",
         }
         default_database = str(value.get("default_database", "")).strip() or default_databases[driver]
         if driver == "redis":
@@ -369,7 +389,7 @@ class DatabaseWorkbenches:
                 default_schema=record["default_schema"], options=dict(record["options"]),
                 transport=DatabaseWorkbenches._transport(record),
             )
-        if record["driver"] in {"ssh", "rdp"}:
+        if record["driver"] in {"ssh", "rdp", "k8s"}:
             return RemoteProfile(
                 id=record["id"], driver=record["driver"], name=record["name"],
                 host=record["host"], port=record["port"], user=record["user"],
@@ -672,6 +692,41 @@ class DatabaseWorkbenches:
 
     def execute_script(self, profile_id: str, database: str, sql: str, schema: str = "") -> dict[str, Any]:
         return self._schema_call(self._engine(profile_id), "execute_script", profile_id, database, sql, schema=schema)
+
+    def import_sql_file(
+        self,
+        profile_id: str,
+        database: str,
+        path: str | Path,
+        schema: str = "",
+        *,
+        cancelled: threading.Event | None = None,
+        progress: Callable[[int, int, int], None] | None = None,
+        session_started: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        driver = self.profile_driver(profile_id)
+        session = self.create_session(profile_id, database, True, schema=schema)
+        session_id = session["id"]
+        if session_started:
+            session_started(session_id)
+        engine = self._session_engine(session_id)
+
+        def execute_batch(sql: str) -> None:
+            optimized = getattr(engine, "execute_import_batch", None)
+            if optimized:
+                optimized(session_id, sql)
+            else:
+                engine.execute(session_id, sql, 1)
+
+        try:
+            return execute_sql_file(
+                path, driver, execute_batch, cancelled=cancelled, progress=progress
+            )
+        finally:
+            try:
+                self.close_session(session_id)
+            except DeeBeeError:
+                pass
 
     def dump_sql(
         self, profile_id: str, database: str, table: str = "",

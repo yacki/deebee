@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-SCOPES = {"resources:read", "ssh:exec", "db:query", "db:write", "privilege:use"}
+SCOPES = {"resources:read", "ssh:exec", "db:query", "db:write", "privilege:use", "ssh:inspect", "k8s:read", "k8s:write"}
 KINDS = {"principals", "sources", "bindings", "resources", "accounts", "grants", "keys"}
 
 
@@ -77,10 +77,11 @@ class Resource(Model):
     environment: str = Field(default="", max_length=40)
     project_groups: list[str] = Field(default_factory=list, max_length=30)
     tags: list[str] = Field(default_factory=list, max_length=50)
-    type: Literal["ssh", "mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "rdp"]
+    type: Literal["ssh", "mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "rdp", "k8s"]
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
     database: str = Field(default="", max_length=128)
+    namespaces: list[str] = Field(default_factory=lambda: ["default"], min_length=1, max_length=30)
     schemas: list[str] = Field(default_factory=lambda: ["public"])
     host_key: str = ""
     host_key_algorithm: Literal["ssh-ed25519", "ecdsa-sha2-nistp256", "rsa-sha2-512", "rsa-sha2-256"] = "ssh-ed25519"
@@ -93,13 +94,19 @@ class Resource(Model):
 
     @model_validator(mode="after")
     def boundary(self):
+        if self.type == "k8s":
+            import re
+            if any(not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", n) or len(n) > 63 for n in self.namespaces):
+                raise ValueError("Kubernetes namespace 格式无效")
+            if any(c in self.host for c in "/?#@"):
+                raise ValueError("Kubernetes host 不接受 URL 路径")
         self.environment = self.environment.strip()
         for field in ("project_groups", "tags"):
             values = list(dict.fromkeys(v.strip() for v in getattr(self, field) if v.strip()))
             if any(len(v) > 64 for v in values):
                 raise ValueError("项目组和标签每项不能超过 64 个字符")
             setattr(self, field, values)
-        if self.enabled and self.type not in {"ssh", "mysql", "postgresql"}:
+        if self.enabled and self.type not in {"ssh", "mysql", "postgresql", "k8s"}:
             raise ValueError("此连接类型可加入资源管理，但暂不支持 MCP 操作")
         if self.enabled and self.type in {"mysql", "postgresql"} and not self.database:
             raise ValueError("数据库资源必须指定一个 database")
@@ -119,6 +126,7 @@ class Account(Model):
     password: str = Field(default="", max_length=4096)
     private_key: str = Field(default="", max_length=65536)
     passphrase: str = Field(default="", max_length=4096)
+    sudo_password: str = Field(default="", max_length=4096, description="可选 sudo 凭据，仅服务端保存，不返回给调用方")
     enabled: bool = False
     permission_confirmed: bool = False
     permission_note: str = Field(default="", max_length=2000)
@@ -155,7 +163,7 @@ class KeyCreate(Model):
     principal_id: str
     source_id: str = "local_keys"
     expires_in_days: int = Field(default=90, ge=1, le=365)
-    scopes: list[str] = Field(default_factory=lambda: sorted(SCOPES - {"privilege:use", "db:write"}))
+    scopes: list[str] = Field(default_factory=lambda: sorted(SCOPES - {"privilege:use", "db:write", "k8s:write"}))
     resource_ids: list[str] = Field(default_factory=list)
 
 
@@ -163,6 +171,7 @@ class ExecutionInput(Model):
     resource_id: str
     mode: Literal["normal", "privileged"] = "normal"
     command: str = Field(default="", max_length=16384)
+    elevation: Literal["none", "sudo"] = Field(default="none", description="仅 ssh.exec：sudo 要求 mode=privileged，由服务端提供提权凭据；命令中不要包含密码")
     sql: str = Field(default="", max_length=65536)
     parameters: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=30, ge=1, le=300)

@@ -8,6 +8,7 @@ import io
 import json
 import os
 import secrets
+import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +24,7 @@ from .jobs import jobs
 from .mysql import DeeBeeError
 from .security import issue_token, verify_token
 from .remote_connections import GuacdTunnel, encode_instruction, open_ssh, read_instruction
+from .kubernetes import KubernetesTerminalProcess, kubernetes_tree, temporary_kubeconfig
 from .workbench import workbench
 from .access.audit import preview_value, redact_text
 
@@ -53,7 +55,7 @@ class LoginBody(BaseModel):
 class ConnectionBaseBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    driver: Literal["mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "ssh", "rdp"]
+    driver: Literal["mysql", "postgresql", "mssql", "redis", "clickhouse", "mongodb", "ssh", "rdp", "k8s"]
     name: str = Field(min_length=1, max_length=100)
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
@@ -237,6 +239,33 @@ def _parse_import_rows(filename: str, content: bytes) -> list[dict[str, Any]]:
         headers = [str(item) if item is not None else "" for item in values[0]]
         return [dict(zip(headers, row)) for row in values[1:]]
     raise DeeBeeError("仅支持 CSV、JSON 和 XLSX 文件")
+
+
+MAX_SQL_IMPORT_BYTES = 2 * 1024 * 1024 * 1024
+
+
+async def _spool_sql_upload(file: UploadFile) -> tuple[Path, int, str]:
+    filename = Path(file.filename or "import.sql").name
+    if Path(filename).suffix.lower() not in {".sql", ".txt"}:
+        raise DeeBeeError("请选择 SQL 或 TXT 文件")
+    fd, raw_path = tempfile.mkstemp(prefix="deebee-sql-", suffix=".sql")
+    path = Path(raw_path)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as target:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_SQL_IMPORT_BYTES:
+                    raise DeeBeeError("SQL 文件不能超过 2 GB")
+                target.write(chunk)
+        if not size:
+            raise DeeBeeError("SQL 文件没有内容")
+        return path, size, filename
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
 
 
 def _sql_export_literal(value: Any, driver: str, data_type: str = "") -> str:
@@ -521,6 +550,109 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
             await websocket.close()
         _archive_remote_session(websocket, user, "ssh", profile_id, profile, started, session_status,
                                 input_archive, output_archive, session_error)
+
+
+@app.get("/api/connections/{profile_id}/k8s/tree")
+async def k8s_tree(profile_id: str, _: str = Depends(current_user)) -> list[dict[str, Any]]:
+    profile = workbench.remote_profile(profile_id, "k8s")
+    return await asyncio.to_thread(kubernetes_tree, profile)
+
+
+@app.websocket("/api/connections/{profile_id}/k8s")
+async def k8s_terminal(websocket: WebSocket, profile_id: str) -> None:
+    user = "anonymous"
+    await websocket.accept()
+    try:
+        authentication = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        if authentication.get("type") != "auth":
+            raise DeeBeeError("登录已失效")
+        user = verify_token(str(authentication.get("token", ""))) or ""
+        if not user:
+            raise DeeBeeError("登录已失效")
+        profile = workbench.remote_profile(profile_id, "k8s")
+    except DeeBeeError:
+        await websocket.close(code=4401)
+        return
+    except (TimeoutError, WebSocketDisconnect):
+        await websocket.close(code=4401)
+        return
+    sessions: dict[str, KubernetesTerminalProcess] = {}
+    send_lock = asyncio.Lock()
+
+    async def send(payload: dict[str, Any]) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    def archive(session: KubernetesTerminalProcess, status: int = 101, error: str = "") -> None:
+        _archive_remote_session(
+            websocket,
+            user,
+            "k8s",
+            profile_id,
+            profile.public(),
+            session.started,
+            status,
+            session.input_archive,
+            session.output_archive,
+            error,
+        )
+
+    try:
+        with temporary_kubeconfig(profile) as config_path:
+            await send({"type": "state", "state": "connected"})
+            while True:
+                message = await websocket.receive_json()
+                message_type = str(message.get("type", ""))
+                terminal_id = str(message.get("id", ""))[:100]
+                try:
+                    if message_type == "open":
+                        if not terminal_id:
+                            raise DeeBeeError("终端会话 ID 不能为空")
+                        if terminal_id in sessions:
+                            await sessions.pop(terminal_id).close()
+                        session = KubernetesTerminalProcess(
+                            id=terminal_id,
+                            profile=profile,
+                            config_path=config_path,
+                            namespace=str(message.get("namespace", "")),
+                            pod=str(message.get("pod", "")),
+                            container=str(message.get("container", "")),
+                        )
+                        sessions[terminal_id] = session
+                        await session.start(
+                            int(message.get("cols", 120)),
+                            int(message.get("rows", 32)),
+                            send,
+                        )
+                    elif message_type == "data" and terminal_id in sessions:
+                        sessions[terminal_id].write(str(message.get("data", ""))[:65536])
+                    elif message_type == "resize" and terminal_id in sessions:
+                        sessions[terminal_id].resize(
+                            int(message.get("cols", 120)), int(message.get("rows", 32))
+                        )
+                    elif message_type == "close" and terminal_id in sessions:
+                        session = sessions.pop(terminal_id)
+                        await session.close()
+                        archive(session)
+                    elif message_type == "ping":
+                        await send({"type": "pong"})
+                except (DeeBeeError, OSError, ValueError) as exc:
+                    await send({"type": "error", "id": terminal_id, "message": str(exc)})
+                    failed = sessions.pop(terminal_id, None)
+                    if failed:
+                        await failed.close()
+                        archive(failed, 500, type(exc).__name__)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            await send({"type": "state", "state": "error", "message": str(exc)})
+    finally:
+        for session in list(sessions.values()):
+            await session.close()
+            archive(session)
+        with contextlib.suppress(Exception):
+            await websocket.close()
 
 
 @app.websocket("/api/connections/{profile_id}/rdp")
@@ -900,16 +1032,19 @@ async def execute_sql_file(
     file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise DeeBeeError("SQL 文件不能超过 50 MB")
-    try:
-        sql = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
+    path, size, filename = await _spool_sql_upload(file)
     request.state.audit_request_override = {"profile_id": profile_id, "database": database, "schema": schema,
-                                            "filename": file.filename or "", "bytes": len(content), "sql": sql}
-    return await asyncio.to_thread(workbench.execute_script, profile_id, database, sql, schema)
+                                            "filename": filename, "bytes": size, "streaming": True}
+    try:
+        if size <= 50 * 1024 * 1024:
+            try:
+                sql = path.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
+            return await asyncio.to_thread(workbench.execute_script, profile_id, database, sql, schema)
+        return await asyncio.to_thread(workbench.import_sql_file, profile_id, database, path, schema)
+    finally:
+        path.unlink(missing_ok=True)
 
 
 @app.post("/api/jobs/sql-file")
@@ -917,15 +1052,9 @@ async def execute_sql_file_job(
     request: Request, profile_id: str, database: str, schema: str = "", file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise DeeBeeError("SQL 文件不能超过 50 MB")
-    try:
-        sql = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise DeeBeeError("SQL 文件必须使用 UTF-8 编码") from exc
+    path, size, filename = await _spool_sql_upload(file)
     request.state.audit_request_override = {"profile_id": profile_id, "database": database, "schema": schema,
-                                            "filename": file.filename or "", "bytes": len(content), "sql": sql}
+                                            "filename": filename, "bytes": size, "background": True}
     state: dict[str, str] = {}
 
     def cancel_running_query() -> None:
@@ -934,32 +1063,41 @@ async def execute_sql_file_job(
             workbench.cancel(session_id)
 
     def task(progress, cancelled):
-        progress(10, "正在解析 SQL")
-        if cancelled.is_set(): return None
-        progress(25, "正在执行 SQL")
-        session = workbench.create_session(
-            profile_id, database, True, schema=schema
-        )
-        state["session_id"] = session["id"]
+        progress(3, "正在校验 SQL 文件")
         try:
             if cancelled.is_set():
                 raise DeeBeeError("任务已取消")
-            response = workbench.execute(session["id"], sql, 1000)
-            if cancelled.is_set():
-                raise DeeBeeError("任务已取消")
-            return {
-                "ok": True,
-                "statements": len(response["results"]),
-                "elapsed_ms": response.get("elapsed_ms", 0),
-                "results": response["results"],
-            }
+            return workbench.import_sql_file(
+                profile_id,
+                database,
+                path,
+                schema,
+                cancelled=cancelled,
+                session_started=lambda session_id: state.update(session_id=session_id),
+                progress=lambda done, total, statements: progress(
+                    5 + int(94 * done / max(total, 1)),
+                    f"已执行 {statements:,} 条 · {done / 1024 / 1024:.1f}/{total / 1024 / 1024:.1f} MB",
+                ),
+            )
         finally:
             state.pop("session_id", None)
-            try:
-                workbench.close_session(session["id"])
-            except DeeBeeError:
-                pass
-    return jobs.create("sql-file", task, on_cancel=cancel_running_query)
+            path.unlink(missing_ok=True)
+    try:
+        return jobs.create(
+            "sql-file",
+            task,
+            on_cancel=cancel_running_query,
+            metadata={
+                "filename": filename,
+                "bytes": size,
+                "profile_id": profile_id,
+                "database": database,
+                "schema": schema,
+            },
+        )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 @app.post("/api/jobs/import")
@@ -988,7 +1126,19 @@ async def import_data_job(
         )
         progress(95, "正在刷新表数据")
         return result
-    return jobs.create("import", task)
+    return jobs.create(
+        "import",
+        task,
+        metadata={
+            "filename": filename,
+            "bytes": len(content),
+            "profile_id": profile_id,
+            "database": database,
+            "schema": schema,
+            "table": table,
+            "rows": len(rows),
+        },
+    )
 
 
 @app.post("/api/jobs/generate")
@@ -1001,7 +1151,22 @@ async def generate_data_job(body: GenerateBody, _: str = Depends(current_user)) 
                 10 + int(85 * done / max(total, 1)), f"已生成 {done}/{total} 行"
             ),
         )
-    return jobs.create("generate", task)
+    return jobs.create(
+        "generate",
+        task,
+        metadata={
+            "profile_id": body.profile_id,
+            "database": body.database,
+            "schema": body.schema_,
+            "table": body.table,
+            "rows": body.count,
+        },
+    )
+
+
+@app.get("/api/jobs")
+async def list_jobs(limit: int = Query(default=50, ge=1, le=200), _: str = Depends(current_user)) -> list[dict[str, Any]]:
+    return jobs.list(limit)
 
 
 @app.get("/api/jobs/{job_id}")

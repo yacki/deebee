@@ -1,12 +1,13 @@
 # DeeBee 功能与 E2E 矩阵
 
-本矩阵是 P0、P1、P2 的验收基线。浏览器用例位于 `tests/e2e/workbench.spec.ts`，真实 MySQL 和可选 PostgreSQL API 用例位于 `backend/tests`。
+本矩阵是 P0、P1、P2 的验收基线。浏览器用例位于 `tests/e2e`，真实 MySQL、可选 PostgreSQL 和可选 Kubernetes 用例位于 `backend/tests` 与 `tests/e2e/kubernetes.spec.ts`。
 
 | 领域 | 已实现功能 | E2E 覆盖 |
 |---|---|---|
 | Vue 与图标 | Vue 3 单页工作台；Iconify Lucide 图标本地打包，不依赖运行时公网请求 | 生产构建断言；浏览器树与工具栏图标验收 |
-| 连接管理 | MySQL/PostgreSQL/Redis/ClickHouse/MongoDB/SSH/RDP 多服务器连接；新增前测试、加密保存、编辑、复制、删除和切换；Redis 支持 ACL/逻辑库，MongoDB 支持 authSource/单节点直连；SSH 支持密码/私钥和首次主机指纹确认；RDP 支持域、安全模式、证书策略与色深 | `test_connection_crud_is_encrypted_and_survives_restart`、`test_new_database_connections.py`、`test_remote_connections.py`；本地 Docker 真实协议联调 |
+| 连接管理 | MySQL/PostgreSQL/Redis/ClickHouse/MongoDB/SSH/RDP/Kubernetes 多服务器连接；新增前测试、加密保存、编辑、复制、删除和切换；Redis 支持 ACL/逻辑库，MongoDB 支持 authSource/单节点直连；SSH 支持密码/私钥和首次主机指纹确认；Kubernetes 支持 Token/完整 Kubeconfig；RDP 支持域、安全模式、证书策略与色深 | `test_connection_crud_is_encrypted_and_survives_restart`、`test_new_database_connections.py`、`test_remote_connections.py`、`test_kubernetes.py`；本地 Docker 真实协议联调 |
 | SSH 终端 | xterm.js 交互终端、常驻多标签、PTY 自适应、10,000 行回滚、复制、粘贴、清屏、重连、后端保活 | AsyncSSH 密码认证、主机指纹锁定和命令执行集成验证；前端生产构建与浏览器验收 |
+| Kubernetes | JumpServer 同款 Namespace → Pod → Container 资源树、搜索、最近容器、可调整侧栏、集群 kubectl 终端、容器 exec 终端、bash/sh/PowerShell/cmd 探测、多标签、PTY 自适应、复制/粘贴/清屏/重连、会话审计；集群终端通过本地代理隔离原始凭据 | `test_kubernetes.py`；`DEEBEE_KUBECONFIG=... npx playwright test tests/e2e/kubernetes.spec.ts` 真实集群的连接、资源树、集群终端与容器终端验收 |
 | Remote Desktop | Guacamole WebSocket 隧道、浏览器 RDP 画布、键盘鼠标、动态分辨率、全屏和重连；guacd 作为 Compose 内部服务 | Guacamole 指令编解码单测；guacd + xrdp 本地容器握手及浏览器画布验收 |
 | 对象树 | 26px 独立展开热区；单击选择与展开互不干扰；深层对象固定网格对齐；大量表滚动 | 浏览器连续收起/展开和 13+ 表图标坐标断言 |
 | PostgreSQL 层级 | PostgreSQL 按服务器/数据库/Schema/对象分类展示；对象缓存、查询会话、补全、数据页和设计器均以 database + schema 隔离 | `test_postgres_database_schema_object_hierarchy_and_isolation`（设置 `DEEBEE_POSTGRES_ENABLED=true` 后运行） |
@@ -20,10 +21,10 @@
 | 查询结果 | Message/Summary/Result/Profile/Status，多结果集、行/单元格选择、Copy As 六种格式、持久列宽、行高、冻结列、跳转记录 | 浏览器结果网格菜单及状态用例；`test_complete_mysql_workflow` |
 | 数据浏览 | 服务端分页、排序、筛选，新增、双击单元格原地编辑、删除、NULL/JSON 展示、可拖动且持久化列宽，CSV/JSON/SQL/XLSX 导出 | 浏览器原地编辑持久化/列宽/筛选用例；`test_complete_mysql_workflow` |
 | 表设计器 | 字段、主键、索引、外键、CHECK、生成列、默认值、表引擎、字符集、排序规则、表注释、DDL 预览和危险操作确认 | 浏览器设计器用例；`test_table_designer_create_and_alter`；生成列回归 |
-| 数据向导 | CSV/JSON/XLSX 导入，CSV/JSON/SQL/XLSX 导出，SQL 文件执行，结构/数据转储，测试数据生成 | 浏览器向导用例；`test_wizards_dump_script_and_generated_data_roundtrip` |
-| 后台任务 | 导入、SQL 文件、数据生成的进度轮询、失败信息和取消 | `test_background_jobs_report_progress_results_and_cancellation` |
+| 数据向导 | CSV/JSON/XLSX/SQL 导入，CSV/JSON/SQL/XLSX 导出，最大 2 GB SQL 流式执行，结构/数据转储，测试数据生成 | 浏览器向导用例；`test_wizards_dump_script_and_generated_data_roundtrip`；`test_sql_import.py` |
+| 后台任务 | 导入、SQL 文件、数据生成的真实字节/语句进度、可收起执行、最近任务列表、失败信息和取消 | `test_background_jobs_report_progress_results_and_cancellation`；`test_sql_import.py` |
 | 维护与权限 | CHECK、ANALYZE、OPTIMIZE、REPAIR；当前账户授权查看 | `test_database_object_and_completion_workflows` |
-| 安全 | 标识符引用、DDL 预览一致性、危险操作确认、登录令牌、会话清理、连接密码与 SSH 私钥加密落盘且不返回前端、SSH 主机密钥变化阻断、guacd 不暴露公网端口 | 后端完整工作流、连接仓库测试、远程连接测试及 DDL E2E |
+| 安全 | 标识符引用、DDL 预览一致性、危险操作确认、登录令牌、会话清理、连接密码、SSH 私钥与 Kubeconfig 加密落盘且不返回前端、Kubernetes 临时文件 0600 并会话后删除、WebSocket URL 不携带登录令牌、SSH 主机密钥变化阻断、guacd 不暴露公网端口 | 后端完整工作流、连接仓库测试、远程连接测试、Kubernetes 真实集群及 DDL E2E |
 | 布局 | 1280 和 1024 宽度、水平大表、固定对象树、菜单贴边、向导及结果区布局 | 集成浏览器视觉验收 |
 
 不属于 P0/P1/P2 的模型图、图表、自动化调度和打印模板仍作为后续独立模块，不在本矩阵中伪装为已完成。

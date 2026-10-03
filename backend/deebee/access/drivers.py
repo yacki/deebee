@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import decimal
 import os
+import shlex
 import ssl
 import threading
 from typing import Any
@@ -79,10 +80,28 @@ class RunningHandle:
                 await result
 
 
-async def ssh_execute(resource: dict, account: dict, secret: dict, command: str, limit: int, handle: RunningHandle):
+def elevated_ssh_command(account: dict, secret: dict, command: str, elevation: str) -> tuple[str, str]:
+    if elevation == "none":
+        return command, ""
+    if elevation != "sudo" or account.get("tier") != "privileged":
+        raise AccessError("PRIVILEGE_DENIED", "sudo 提权需要已授权的特权账号", 403)
+    password = secret.get("sudo_password", "")
+    if "\n" in password or "\r" in password:
+        raise AccessError("INVALID_CREDENTIAL", "sudo 凭据格式无效")
+    # stdin is reserved for authentication. Even with NOPASSWD, the payload
+    # must never receive an unread password. The shell replaces its fd 0 first.
+    wrapped = shlex.quote("exec </dev/null\n" + command)
+    return ("sudo -S -p '' -- sh -c " if password else "sudo -n -- sh -c ") + wrapped, password
+
+
+async def ssh_execute(resource: dict, account: dict, secret: dict, command: str, limit: int, handle: RunningHandle, *, elevation: str = "none"):
+    command, sudo_password = elevated_ssh_command(account, secret, command, elevation)
     connection = await ssh_connect(resource, account, secret)
     try:
         process = await connection.create_process(command, encoding="utf-8", errors="replace", request_pty=False)
+        if sudo_password:
+            process.stdin.write(sudo_password + "\n")
+        process.stdin.write_eof()
         async def stop():
             process.terminate()
             connection.close()
@@ -107,6 +126,9 @@ async def ssh_execute(resource: dict, account: dict, secret: dict, command: str,
         await process.wait_closed()
         if handle.cancelled.is_set():
             raise AccessError("CANCELLATION_UNCONFIRMED", "连接已关闭，无法确认远端所有子进程已终止", 409)
+        if sudo_password:
+            for field in ("stdout", "stderr"):
+                output[field] = output[field].replace(sudo_password, "[REDACTED]")
         return output | {"exit_code": process.exit_status}
     finally:
         handle.stop = None
@@ -231,6 +253,9 @@ def inspect_database(resource: dict, account: dict, secret: dict) -> dict:
 
 
 async def inspect_account(resource: dict, account: dict, secret: dict) -> dict:
+    if resource["type"] == "k8s":
+        from .operations import inspect_kubernetes
+        return await inspect_kubernetes(resource, account, secret)
     if resource["type"] != "ssh":
         return await asyncio.to_thread(inspect_database, resource, account, secret)
     connection = await ssh_connect(resource, account, secret)

@@ -13,6 +13,9 @@ export const actionOptions = [
   { value: 'resources:read', label: '查看资源' },
   { value: 'db:query', label: '查询数据库' },
   { value: 'db:write', label: '修改数据库', warning: true },
+  { value: 'ssh:inspect', label: '只读检查服务器' },
+  { value: 'k8s:read', label: '查看集群与日志' },
+  { value: 'k8s:write', label: '重启集群工作负载', warning: true },
   { value: 'ssh:exec', label: '执行服务器命令', warning: true },
   { value: 'privilege:use', label: '使用高权限资源账号', warning: true },
 ];
@@ -24,7 +27,7 @@ export function optionLabel(value: string): string {
     api_key: 'API Key', oidc: '企业登录（OIDC）', succeeded: '成功', failed: '失败',
     queued: '排队中', running: '执行中', cancelled: '已取消', unknown: '结果待确认',
     'ssh.exec': '执行服务器命令', 'db.schema': '查看数据库结构', 'db.query': '查询数据库',
-    'db.execute': '修改数据库',
+    'db.execute': '修改数据库', 'ssh.inspect': '只读检查服务器', 'k8s.read': '查看集群与日志', 'k8s.restart': '重启 Deployment',
   } as Record<string, string>)[value] || value;
 }
 
@@ -61,4 +64,10 @@ export function expiryTimestamp(value: string): number | null {
   const time = new Date(value).getTime() / 1000;
   if (!Number.isFinite(time)) throw new Error('请选择有效的到期时间。');
   return time;
+}
+
+export function actionsForResource(resourceType?: string) {
+  if (!resourceType) return actionOptions;
+  const prefix = resourceType === 'ssh' ? 'ssh:' : resourceType === 'k8s' ? 'k8s:' : 'db:';
+  return actionOptions.filter(item => item.value === 'resources:read' || item.value === 'privilege:use' || item.value.startsWith(prefix));
 }

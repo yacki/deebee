@@ -23,6 +23,7 @@ export const driverToolbarCapabilities = {
   mongodb: ["test", "settings"],
   ssh: ["session", "test", "settings"],
   rdp: ["session", "test", "settings"],
+  k8s: ["session", "test", "settings"],
 } as const satisfies Record<ConnectionDriver, readonly ToolbarCapability[]>;
 
 export function toolbarCapabilitiesFor(driver: ConnectionDriver): readonly ToolbarCapability[] {

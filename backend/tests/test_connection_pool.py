@@ -222,3 +222,16 @@ def test_existing_manual_reference_is_adopted_without_duplicate_or_lost_verifica
     pool.manager.update_connection(profile["id"], {"name": "Rename after upgrade"})
     pool.sync()
     assert pool.service.account_secret(pool.store.list("accounts")[0])["password"] == "pool-secret-for-test"
+
+
+def test_kubernetes_token_pool_preserves_source_and_requires_verification(pool):
+    profile = pool.manager.create_connection(connection('k8s', name='Cluster', host='https://cluster.example:6443', port=6443,
+        options={'k8s_auth_method': 'token', 'namespace': 'payments'}))
+    assert pool.sync() == 1
+    resource = pool.store.list('resources')[0]
+    assert resource['host'] == 'cluster.example' and resource['port'] == 6443 and resource['tls']
+    assert resource['namespaces'] == ['payments'] and resource['connection_sync']['state'] == 'synced'
+    assert not resource['enabled'] and not pool.store.list('accounts')[0]['enabled']
+    assert not pool.store.list('grants') and not pool.store.list('keys')
+    assert pool.sync() == 0
+    assert pool.service.legacy.record(profile['id'])['host'] == 'https://cluster.example:6443'

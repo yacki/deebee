@@ -344,6 +344,27 @@ class MySQLWorkbench:
             finally:
                 session.running_thread_id = None
 
+    def execute_import_batch(self, session_id: str, sql: str) -> None:
+        """Execute and fully drain an import batch without materializing results."""
+        session = self.require_session(session_id)
+        with session.lock:
+            try:
+                session.running_thread_id = session.connection.thread_id()
+                with session.connection.cursor() as cursor:
+                    cursor.execute(sql)
+                    while True:
+                        if cursor.description:
+                            while cursor.fetchmany(1000):
+                                pass
+                        if not cursor.nextset():
+                            break
+            except pymysql.MySQLError as exc:
+                code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else None
+                message = str(exc.args[1] if len(exc.args) > 1 else exc)
+                raise DeeBeeError(message, code) from exc
+            finally:
+                session.running_thread_id = None
+
     def databases(self, profile_id: str) -> list[dict[str, Any]]:
         profile = self.require_profile(profile_id)
         conn = self._connect(profile)

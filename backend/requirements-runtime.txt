@@ -1,5 +1,6 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
+PyYAML==6.0.3
 pymysql==1.1.2
 pymssql==2.4.0
 psycopg[binary]==3.2.9

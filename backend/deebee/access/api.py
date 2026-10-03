@@ -24,6 +24,7 @@ from ..security import verify_token
 from .auth import PASSWORDS
 from .executions import ExecutionManager
 from .models import AccessError, AuthContext, ExecutionInput, KINDS, SCOPES
+from .operations import KubernetesInput, SSHInspectInput
 from .service import AccessService, public_entity
 from .store import AccessStore, encode
 
@@ -148,7 +149,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     @management.get("/status")
     async def status(request: Request):
         return {"enabled": True, "mcp_url": base(request) + "/mcp/", "api_url": base(request) + "/api/v1",
-                "protocols": ["ssh", "mysql", "postgresql"], "local_login_preserved": True}
+                "protocols": ["ssh", "mysql", "postgresql", "k8s"], "local_login_preserved": True}
 
     @management.get("/audit-events")
     async def audits(
@@ -294,12 +295,19 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
         return resource_page(ctx, cursor, limit, type)
 
     def resource_page(ctx, cursor="", limit=100, type=""):
-        items = service.resources(ctx)
-        if type:
-            items = [r for r in items if r["type"] == type]
+        authorized = service.resources(ctx)
+        items = [r for r in authorized if r["type"] == type] if type else authorized
         offset = service.offset(ctx, "resources:" + type, cursor)
         limit = max(1, min(limit, 100))
-        return {"resources": items[offset:offset + limit], "next_cursor": service.cursor(ctx, "resources:" + type, offset + limit) if offset + limit < len(items) else None}
+        page = items[offset:offset + limit]
+        names = {r["name"] for r in page}
+        page_ids = {r["id"] for r in page}
+        alternatives = [{k: r[k] for k in ("id", "name", "type", "environment", "project_groups", "tags")}
+                        for r in authorized if r["name"] in names and r["id"] not in page_ids]
+        return {"resources": page, "next_cursor": service.cursor(ctx, "resources:" + type, offset + limit) if offset + limit < len(items) else None,
+                "selection_context": {"type_filter": type or None, "total_authorized": len(authorized),
+                    "same_name_alternatives": alternatives[:100], "alternatives_truncated": len(alternatives) > 100,
+                    "note": "筛选结果唯一不等于用户目标唯一；未指定数据库类型或环境时，不应自行添加筛选。同名候选需根据用户约束选择，仍有歧义则先询问。"}}
 
     @data.get("/resources/{resource_id}")
     async def resource(resource_id: str, ctx: AuthContext = Depends(context)):
@@ -312,6 +320,18 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     @data.post("/ssh/executions", status_code=202)
     async def ssh(body: ExecutionInput, ctx: AuthContext = Depends(context)):
         return await executions.submit(ctx, "ssh.exec", body.model_dump())
+
+    @data.post("/ssh/inspections", status_code=202)
+    async def ssh_inspect(body: SSHInspectInput, ctx: AuthContext = Depends(context)):
+        return await executions.submit(ctx, "ssh.inspect", body.model_dump())
+
+    @data.post("/k8s/queries", status_code=202)
+    async def k8s_read(body: KubernetesInput, ctx: AuthContext = Depends(context)):
+        return await executions.submit(ctx, "k8s.read", body.model_dump())
+
+    @data.post("/k8s/restarts", status_code=202)
+    async def k8s_restart(body: KubernetesInput, ctx: AuthContext = Depends(context)):
+        return await executions.submit(ctx, "k8s.restart", body.model_dump())
 
     @data.post("/db/queries", status_code=202)
     async def query(body: ExecutionInput, ctx: AuthContext = Depends(context)):
@@ -438,13 +458,13 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     text_prop = {"type": "string"}
     definitions = {
         "identity.me": ("返回经过验证的 DeeBee 系统账号与凭据上限。", {}),
-        "resources.list": ("仅列出当前身份可以使用的 SSH/MySQL/PostgreSQL 资源和账号模式，不返回秘密。", {"cursor": text_prop, "type": text_prop, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}),
+        "resources.list": ("列出获准 SSH/Linux、MySQL/PostgreSQL、Kubernetes 资源，包含 environment、project_groups、tags、namespace 和账号动作。不返回秘密。若宿主提供 operations Skill，在选择目标前加载其工作流。先发现真实资源，再按用户语义选择资源 ID；同名或环境不明确时询问用户，不按列表顺序猜测。继续读取 next_cursor 以免漏掉候选。", {"cursor": text_prop, "type": {"type": "string", "enum": ["", "ssh", "mysql", "postgresql", "k8s"], "description": "仅当用户明确指定资源协议类型时筛选；没有指定请省略，不能假设数据库是 MySQL。"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}),
         "resources.get": ("读取一个获准资源的可用账号模式。", {"resource_id": text_prop}),
         "db.schema": ("读取获准数据库的结构。", {"resource_id": text_prop, "mode": {"enum": ["normal", "privileged"]}, "cursor": text_prop, "table": text_prop}),
         "executions.get": ("查询自己的执行状态和分页结果。unknown 表示需核实远端状态，不能自动重放变更。", {"execution_id": text_prop, "cursor": text_prop}),
         "executions.cancel": ("请求终止自己的执行；不保证已提交修改回滚或 SSH 子进程停止。", {"execution_id": text_prop}),
     }
-    for tool, desc in (("ssh.exec", "在授权 SSH 资源执行独立非交互命令。普通 OS 账号不等于只读；显式 privileged 才使用已授权特权账号。"),
+    for tool, desc in (("ssh.exec", "任意 SSH shell 命令（可能修改主机）。磁盘、inode、内存、进程、网络的只读 Linux 诊断请使用 ssh.inspect，无需调用本工具。显式 privileged 才使用已授权特权账号。"),
                        ("db.query", "以真正只读账号和只读事务执行受支持的单条 SELECT，使用命名参数。"),
                        ("db.execute", "以已授权特权账号执行单条业务数据或表结构变更；可能产生不可逆修改，无逐次人工审批。")):
         schema = ExecutionInput.model_json_schema()
@@ -455,22 +475,46 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
             properties.pop("max_rows")
         else:
             properties.pop("command")
+            properties.pop("elevation")
+        properties["resource_id"]["description"] = "必须先 resources.list，使用返回的真实资源 id；不得把显示名称当 ID。"
         definitions[tool] = (desc, properties)
+
+    for name, model, description in (
+        ("ssh.inspect", SSHInspectInput, "SSH Linux 主机只读诊断，磁盘容量/inode、内存、进程、网络检查；disk df、memory free、processes ps、network ss/netstat、overview。使用固定检查，无任意 shell。先 resources.list 选准主机；返回 queued 后必须用 executions.get 等到终态并读取结果。"),
+        ("k8s.read", KubernetesInput, "只读 Kubernetes 诊断：list/get pods、deployments、events、services、replicasets；logs 读取 Pod 日志；rollout 等待指定 deployment 的新代副本全部可用（受 timeout_seconds 限制），适合维护后的复查。必须绑定已发现的集群和获准 namespace；不支持 secrets 或任意命令。queued 后用 executions.get 读取终态结果。"),
+        ("k8s.restart", KubernetesInput, "在显式 privileged 模式重启指定 namespace 的 deployment。必须使用 operation=restart。仅在用户明确指定目标并授权变更后调用；之后必须使用 k8s.read operation=rollout 等待新代副本就绪，再检查 Pod；中间状态不代表维护完成。queued 不等于成功，不自动重放 unknown。"),
+    ):
+        properties = model.model_json_schema()["properties"]
+        if name == "k8s.read":
+            properties["operation"]["enum"] = ["list", "get", "logs", "rollout"]
+        elif name == "k8s.restart":
+            properties["operation"].update(enum=["restart"], default="restart")
+            properties["kind"].update(enum=["deployments"], default="deployments")
+        properties["resource_id"]["description"] = "必须使用 resources.list 返回的真实 id，不能传显示名称、环境名称或自行拼接 ID。目标不唯一时先询问用户。"
+        definitions[name] = (description, properties)
 
     @server.list_tools()
     async def list_tools():
         result = []
         for name, (description, properties) in definitions.items():
             required = [key for key in ("resource_id", "execution_id", "idempotency_key") if key in properties]
+            if name == "k8s.restart":
+                required.extend(["operation", "kind", "name", "mode"])
             if name == "ssh.exec":
                 required.append("command")
             elif name in {"db.query", "db.execute"}:
                 required.append("sql")
+            if "idempotency_key" in properties:
+                properties["idempotency_key"]["description"] = (
+                    "标识一次逻辑提交。每次新的查询/检查（包括变更后的复查）使用新键；"
+                    "仅重试完全相同的那次提交时复用原键。相同键和参数会返回旧执行，"
+                    "不代表重新读取了当前状态；参数不同会返回冲突。写入状态未知时先查询原 execution_id。"
+                )
             result.append(types.Tool(name=name, description=description,
                 inputSchema={"type": "object", "properties": properties, "required": required, "additionalProperties": False},
                 outputSchema=object_schema,
-                annotations=types.ToolAnnotations(readOnlyHint=name in {"identity.me", "resources.list", "resources.get", "db.schema", "db.query", "executions.get"},
-                                                 destructiveHint=name in {"ssh.exec", "db.execute"}, openWorldHint=True)))
+                annotations=types.ToolAnnotations(readOnlyHint=name in {"identity.me", "resources.list", "resources.get", "db.schema", "db.query", "executions.get", "ssh.inspect", "k8s.read"},
+                                                 destructiveHint=name in {"ssh.exec", "db.execute", "k8s.restart"}, openWorldHint=True)))
         return result
 
     @server.call_tool()
@@ -573,4 +617,4 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     return lifespan
 
 
-ACTION_TOOLS = {"ssh.exec", "db.query", "db.execute"}
+ACTION_TOOLS = {"ssh.exec", "db.query", "db.execute", "ssh.inspect", "k8s.read", "k8s.restart"}

@@ -32,3 +32,10 @@ test('expiry is entered in local time, not Unix seconds',()=>{
   assert.equal(expiryTimestamp(''),null);
   assert.throws(()=>expiryTimestamp('bad-date'));
 });
+
+test('operation scopes stay within the selected resource protocol', async()=>{
+  const {actionsForResource}=await import('../src/accessPolicy.ts');
+  assert.deepEqual(actionsForResource('k8s').map(a=>a.value),['resources:read','k8s:read','k8s:write','privilege:use']);
+  assert.deepEqual(actionsForResource('ssh').map(a=>a.value),['resources:read','ssh:inspect','ssh:exec','privilege:use']);
+  assert.deepEqual(actionsForResource('mysql').map(a=>a.value),['resources:read','db:query','db:write','privilege:use']);
+});
