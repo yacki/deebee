@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { Icon } from "@iconify/vue";
 import { API_BASE, authToken } from "../api";
 import JsonPanel from "./JsonPanel.vue";
+import SessionRecordings from "./SessionRecordings.vue";
 import ResourceCatalog from "./ResourceCatalog.vue";
 import AccessActions from "./AccessActions.vue";
 import { accessNavigation, actionOptions, optionLabel, selectedGrantAccounts, grantAccountFields, localDateTime, expiryTimestamp } from "../accessPolicy";
@@ -63,9 +64,11 @@ const sections: Section[] = [
     {key:"resource_ids",label:"限定可用资源（可选）",type:"list",hint:"留空仍受系统账号的显式资源授权约束。"}]},
   { id:"preview", name:"查看可用权限", icon:"lucide:scan-eye", description:"检查系统账号最终可使用的资源账号。凭证权限可能进一步限制访问。"},
   { id:"executions", name:"执行记录", icon:"lucide:activity", description:"执行实际使用的账号、状态与结果。unknown 需要核实远端状态，不应自动重放修改。"},
+  { id:"session-recordings", name:"会话录像", icon:"lucide:clapperboard", description:"SSH 与 RDP 会话自动录制；结束会话后可回放或下载。仅管理员可查看。" },
   { id:"audit-events", name:"审计日志", icon:"lucide:scroll-text", description:"按真实登录身份归档 MCP、授权用户、管理端和原工作台操作；请求保留 1 KiB，返回内容保留 4 KiB，均先脱敏。历史截断内容无法恢复。"},
   { id:"integration", name:"系统设置", icon:"lucide:plug", description:"配置外部身份的验证方式、程序接入地址和配置备份。"},
 ];
+const recordingsPanel = ref<InstanceType<typeof SessionRecordings>>();
 const location = window.location;
 const isUser = ref(location.hash === "#access-user");
 const loggedIn = ref(false); const busy = ref(false); const message = ref(""); const error = ref("");
@@ -179,6 +182,7 @@ async function load() {
 }
 async function login(){await act(async()=>{if(isUser.value){const result=await request("/v1/local/login","POST",{username:loginName.value,password:loginPassword.value},false);csrf.value=result.csrf;}else{const result=await request("/auth/login","POST",{username:loginName.value,password:loginPassword.value},false);sessionStorage.setItem("deebee_token",result.token);}loginPassword.value="";await load();});}
 async function refresh(){
+  if(current.value==="session-recordings"){await recordingsPanel.value?.refresh();return;}
   if(current.value==="audit-events"){
     const query=new URLSearchParams();if(auditActor.value)query.set("actor",auditActor.value);if(auditOperation.value)query.set("operation",auditOperation.value);if(auditSurface.value)query.set("surface",auditSurface.value);
     records.value[current.value]=(await request(`/admin/v1/audit-events?${query}`)).items;
@@ -309,7 +313,8 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <p v-if="resourceDetail?.connection_sync">来自工作台连接。{{ connectionNotice(resourceDetail) || '资源账号启用后，还需要在“资源授权”中分配给系统账号。' }}</p>
         </section>
         <section v-if="newKey" class="access-secret" role="status"><h2>API Key 仅显示一次</h2><p>请安全保存，不要发到聊天或写入日志。</p><a-input aria-label="新 API Key" :model-value="newKey" readonly /><a-button @click="newKey=''">已保存，隐藏原文</a-button></section>
-        <form v-if="form" class="access-form" @submit.prevent="save">
+        <SessionRecordings v-if="current==='session-recordings'" ref="recordingsPanel" />
+        <form v-else-if="form" class="access-form" @submit.prevent="save">
           <h2>{{ editing?'编辑':'新增' }}{{ section.name }}</h2>
           <p v-if="editing?.connection_sync">来自工作台连接，地址和登录凭证请在工作台修改。{{ connectionNotice(editing) }}</p>
           <div class="access-fields">

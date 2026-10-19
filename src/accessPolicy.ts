@@ -5,6 +5,7 @@ export const accessNavigation = [
   { id: 'resources', name: '资源管理', icon: 'lucide:server' },
   { id: 'access-grants', name: '资源授权', icon: 'lucide:badge-check' },
   { id: 'executions', name: '执行记录', icon: 'lucide:activity' },
+  { id: 'session-recordings', name: '会话录像', icon: 'lucide:clapperboard' },
   { id: 'audit-events', name: '审计日志', icon: 'lucide:scroll-text' },
   { id: 'integration', name: '系统设置', icon: 'lucide:settings' },
 ];

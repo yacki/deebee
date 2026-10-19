@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -26,6 +27,7 @@ from .security import issue_token, verify_token
 from .remote_connections import GuacdTunnel, encode_instruction, open_ssh, rdp_error_message, read_instruction
 from .kubernetes import KubernetesTerminalProcess, kubernetes_tree, temporary_kubeconfig
 from .workbench import workbench
+from .recordings import SessionRecorder
 from .access.audit import preview_value, redact_text
 
 
@@ -474,11 +476,15 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
     connection = None
     process = None
     output_task: asyncio.Task[Any] | None = None
+    input_task: asyncio.Task[Any] | None = None
+    recording: SessionRecorder | None = None
     try:
+        recording = await SessionRecorder.start(app.state.recordings, "ssh", user, profile)
         await websocket.send_json({"type": "state", "state": "connecting"})
         connection = await open_ssh(profile)
         cols = max(20, min(500, int(websocket.query_params.get("cols", "120"))))
         rows = max(5, min(200, int(websocket.query_params.get("rows", "32"))))
+        recording.append((json.dumps({"version": 2, "width": cols, "height": rows, "timestamp": int(time.time()), "title": profile.name}, ensure_ascii=False) + "\n").encode())
         process = await connection.create_process(
             term_type="xterm-256color",
             term_size=(cols, rows),
@@ -499,6 +505,7 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
                 data = await process.stdout.read(32768)
                 if not data:
                     break
+                recording.event("o", data)
                 if len(output_archive.encode("utf-8")) < 4096:
                     output_archive += data[:4096]
                 prompt_tail = data[-160:].lower()
@@ -509,23 +516,31 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
                 {"type": "state", "state": "closed", "message": "远程会话已结束"}
             )
 
+        async def pump_input() -> None:
+            nonlocal input_archive, sensitive_input
+            while True:
+                message = await websocket.receive_json()
+                message_type = message.get("type")
+                if message_type == "data":
+                    typed = str(message.get("data", ""))
+                    process.stdin.write(typed)
+                    if len(input_archive.encode("utf-8")) < 4096:
+                        input_archive += ("[REDACTED]" if sensitive_input else typed)
+                    if sensitive_input and any(char in typed for char in ("\n", "\r")):
+                        sensitive_input = False
+                elif message_type == "resize":
+                    width = max(20, min(500, int(message.get("cols", cols))))
+                    height = max(5, min(200, int(message.get("rows", rows))))
+                    process.change_terminal_size(width, height)
+                    recording.event("r", f"{width}x{height}")
+                elif message_type == "close":
+                    break
+
         output_task = asyncio.create_task(pump_output())
-        while not output_task.done():
-            message = await websocket.receive_json()
-            message_type = message.get("type")
-            if message_type == "data":
-                typed = str(message.get("data", ""))
-                process.stdin.write(typed)
-                if len(input_archive.encode("utf-8")) < 4096:
-                    input_archive += ("[REDACTED]" if sensitive_input else typed)
-                if sensitive_input and any(char in typed for char in ("\n", "\r")):
-                    sensitive_input = False
-            elif message_type == "resize":
-                width = max(20, min(500, int(message.get("cols", cols))))
-                height = max(5, min(200, int(message.get("rows", rows))))
-                process.change_terminal_size(width, height)
-            elif message_type == "close":
-                break
+        input_task = asyncio.create_task(pump_input())
+        done, _ = await asyncio.wait({output_task, input_task, recording.task}, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
     except WebSocketDisconnect:
         pass
     except Exception as exc:
@@ -536,10 +551,11 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
                 {"type": "state", "state": "error", "message": str(exc)}
             )
     finally:
-        if output_task:
-            output_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await output_task
+        for task in (output_task, input_task):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
         if process:
             process.close()
         if connection:
@@ -548,6 +564,9 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
                 await connection.wait_closed()
         with contextlib.suppress(Exception):
             await websocket.close()
+        if recording:
+            with contextlib.suppress(Exception):
+                await recording.close(session_error)
         _archive_remote_session(websocket, user, "ssh", profile_id, profile, started, session_status,
                                 input_archive, output_archive, session_error)
 
@@ -680,6 +699,7 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
     client_task: asyncio.Task[Any] | None = None
     keepalive_task: asyncio.Task[Any] | None = None
     send_lock = asyncio.Lock()
+    recording: SessionRecorder | None = None
 
     async def send_text(message: str) -> None:
         nonlocal output_archive
@@ -689,6 +709,7 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
             await websocket.send_text(message)
 
     try:
+        recording = await SessionRecorder.start(app.state.recordings, "rdp", user, profile)
         width = max(320, min(7680, int(websocket.query_params.get("width", "1280"))))
         height = max(240, min(4320, int(websocket.query_params.get("height", "720"))))
         dpi = max(72, min(300, int(websocket.query_params.get("dpi", "96"))))
@@ -698,6 +719,7 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
         async def relay_server() -> None:
             while True:
                 opcode, arguments, raw = await read_instruction(tunnel.reader)
+                recording.screen(opcode, arguments, raw)
                 if opcode == "error" and arguments:
                     raw = encode_instruction("error", rdp_error_message(arguments[0]), *arguments[1:])
                 await send_text(raw.decode("utf-8"))
@@ -724,10 +746,11 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
         client_task = asyncio.create_task(relay_client())
         keepalive_task = asyncio.create_task(keepalive())
         done, pending = await asyncio.wait(
-            {server_task, client_task, keepalive_task}, return_when=asyncio.FIRST_COMPLETED
+            {server_task, client_task, keepalive_task, recording.task}, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
-            task.cancel()
+            if task is not recording.task:
+                task.cancel()
         for task in done:
             task.result()
     except (WebSocketDisconnect, asyncio.IncompleteReadError):
@@ -748,6 +771,9 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
             await tunnel.close()
         with contextlib.suppress(Exception):
             await websocket.close()
+        if recording:
+            with contextlib.suppress(Exception):
+                await recording.close(session_error)
         _archive_remote_session(websocket, user, "rdp", profile_id, profile, started, session_status,
                                 input_archive, output_archive, session_error)
 

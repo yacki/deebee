@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="view remote-session ssh-session">
     <header class="remote-toolbar">
-      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span>{{ message }}</span></div>
+      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
         <button @click="copySelection"><Icon icon="lucide:copy" />复制</button>
         <button @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</button>

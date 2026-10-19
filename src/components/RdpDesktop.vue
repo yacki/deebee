@@ -215,7 +215,7 @@ onBeforeUnmount(() => { disposed = true; resizeObserver?.disconnect(); disconnec
 <template>
   <section class="view remote-session rdp-session">
     <header class="remote-toolbar">
-      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span>{{ message }}</span></div>
+      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
         <button @click="toggleFullscreen"><Icon icon="lucide:maximize-2" />全屏</button>
         <button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button>

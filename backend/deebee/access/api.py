@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
-from fastapi import APIRouter, Depends, FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Query
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -131,6 +131,46 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
         return ctx
 
     management = APIRouter(prefix="/api/admin/v1", dependencies=[Depends(admin)])
+
+    from ..recordings import RecordingStore
+    from ..mysql import DeeBeeError
+    app.state.recordings = RecordingStore(
+        Path(os.getenv('DEEBEE_RECORDINGS_DIR', str(settings.connections_file.parent / 'recordings'))),
+        quota=int(os.getenv('DEEBEE_RECORDINGS_QUOTA_MB', '5120')) * 1024**2,
+        session_limit=int(os.getenv('DEEBEE_RECORDINGS_SESSION_MB', '128')) * 1024**2,
+        retention_days=int(os.getenv('DEEBEE_RECORDINGS_RETENTION_DAYS', '30')),
+    )
+
+    @management.get('/session-recordings')
+    async def session_recordings(protocol: str = '', q: str = Query(default='', max_length=200),
+                                 status: str = '', after: float = 0, before: float = 0,
+                                 offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):
+        return await asyncio.to_thread(app.state.recordings.list, protocol=protocol, q=q, status=status,
+                                       after=after, before=before, offset=offset, limit=limit)
+
+    def saved_recording(recording_id: str):
+        try:
+            row = app.state.recordings.get(recording_id)
+        except DeeBeeError:
+            raise AccessError('NOT_FOUND', '录像不存在或已过期', 404)
+        if row['status'] == 'recording':
+            raise AccessError('RECORDING_ACTIVE', '会话仍在录制，请结束会话后回放', 409)
+        if not row['stored_bytes']:
+            raise AccessError('RECORDING_EMPTY', '此会话未产生可回放内容', 409)
+        return row
+
+    @management.get('/session-recordings/{recording_id}/content')
+    async def recording_content(recording_id: str):
+        saved_recording(recording_id)
+        return StreamingResponse(app.state.recordings.content(recording_id), media_type='application/octet-stream',
+                                 headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+    @management.get('/session-recordings/{recording_id}/download')
+    async def recording_download(recording_id: str):
+        row = saved_recording(recording_id)
+        extension = 'cast' if row['protocol'] == 'ssh' else 'guac'
+        return FileResponse(app.state.recordings.path(recording_id), media_type='application/gzip',
+                            filename=f"{recording_id}.{extension}.gz", headers={'Cache-Control': 'no-store'})
 
     @management.get("/legacy-connections/preview")
     async def legacy_preview():
@@ -586,6 +626,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
                 await asyncio.to_thread(app.state.connection_pool.sync)
                 pool_task = asyncio.create_task(reconcile_connections())
             store.recover_executions()
+            await asyncio.to_thread(app.state.recordings.recover)
             store.cleanup()
             await executions.start()
             async with manager.run():
