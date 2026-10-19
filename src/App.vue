@@ -112,7 +112,11 @@ function draftKey(profileId: string) { return `deebee_query_drafts:${profileId}`
 function workspaceKey(profileId: string) { return `deebee_workspace:${profileId}`; }
 function isQueryTab(tab: WorkTab): tab is QueryTab { return tab.type === "query"; }
 function isDatabaseTab(tab: WorkTab): tab is Exclude<WorkTab,RemoteTab> { return tab.type !== "ssh" && tab.type !== "rdp" && tab.type !== "k8s"; }
-function markBackendOnline() { const tab = active.value; connectionState.value = tab && !isDatabaseTab(tab) ? (tab.state || "checking") : "online"; }
+function markBackendOnline() {
+  const tab = active.value;
+  connectionState.value = tab && !isDatabaseTab(tab) ? (tab.state || "checking")
+    : profile.value && isRemoteDriver(profile.value.driver) ? "offline" : "online";
+}
 function queryDirty(tab: WorkTab) { return tab.type === "query" && tab.sql !== tab.savedSql; }
 function profileForTab(tab: WorkTab) { return profiles.value.find(item => item.id === tab.profileId); }
 function profileNameForTab(tab: WorkTab) { return profileForTab(tab)?.name || "连接已删除"; }
@@ -198,9 +202,9 @@ async function checkConnection(showFeedback: boolean) {
     const rebuilt = states.filter(state => state !== "ok").length;
     const lostTransactions = states.filter(state => state === "transaction-lost").length;
     const remoteTab = active.value && !isDatabaseTab(active.value) ? active.value : undefined;
-    connectionState.value = remoteTab ? (remoteTab.state || "checking") : "online";
-    if (remoteTab && !rebuilt) {
-      if (showFeedback) flash(connectionState.value === "online" ? "远程会话连接正常" : "远程会话未连接，请在会话中重新连接", connectionState.value !== "online");
+    markBackendOnline();
+    if (profile.value && isRemoteDriver(profile.value.driver) && !rebuilt) {
+      if (showFeedback) flash(connectionState.value === "online" ? "远程会话连接正常" : remoteTab ? "远程会话未连接，请在会话中重新连接" : "远程会话未连接，请先打开会话", connectionState.value !== "online");
       return connectionState.value === "online";
     }
     if (previous === "offline" || rebuilt) {
@@ -279,7 +283,9 @@ async function initializeProfile(nextProfile: Profile, preferredTab?: WorkTab, o
       const remoteTab=preferred&&(preferred.type==="ssh"||preferred.type==="rdp"||preferred.type==="k8s")?preferred:tabs.value.find((item):item is RemoteTab=>item.profileId===nextProfile.id&&item.type===nextProfile.driver);
       if(remoteTab)activateTab(remoteTab);
       else {
-        await api(`/connections/${nextProfile.id}/test`, { method:"POST" });
+        // RDP authenticates in the real desktop session. An automatic probe
+        // would log in a second time and could count against account limits.
+        if (nextProfile.driver !== "rdp") await api(`/connections/${nextProfile.id}/test`, { method:"POST" });
         if(openRemote)openRemoteSession(nextProfile.driver,nextProfile.id);
       }
       return;

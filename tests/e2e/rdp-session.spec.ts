@@ -68,6 +68,21 @@ test("RDP waits for a new desktop frame after the initial placeholder", async ({
   await expect(page.locator(".connection-state.online")).toBeVisible();
 });
 
+test("RDP opens once and never authenticates automatically on page reload or health checks", async ({ page }) => {
+  let tests = 0;
+  page.on("request", request => { if (new URL(request.url()).pathname.endsWith("/connections/rdp-test/test")) tests += 1; });
+  const attempts = await mockRdp(page, socket => socket.send(instruction("sync", "123")));
+  await expect(page.locator(".rdp-session .remote-dot.connected")).toBeVisible();
+  expect(tests).toBe(0);
+  expect(attempts()).toBe(1);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "打开会话", exact: true })).toBeVisible();
+  await page.clock.runFor(45_000);
+  expect(tests).toBe(0);
+  expect(attempts()).toBe(1);
+  await expect(page.locator(".connection-state.offline")).toBeVisible();
+});
+
 test("RDP automatically reconnects transient failures and confirms a new desktop frame", async ({ page }) => {
   const attempts = await mockRdp(page, (socket, attempt) => {
     socket.send(attempt === 1 ? instruction("error", "Server unavailable", "520") : instruction("sync", "123"));
