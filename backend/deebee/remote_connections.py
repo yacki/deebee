@@ -277,6 +277,7 @@ async def test_rdp(profile: RemoteProfile) -> dict[str, Any]:
     tunnel = await GuacdTunnel.connect(profile, width=800, height=600)
     try:
         desktop_sized = False
+        first_sync: int | None = None
         async with asyncio.timeout(30):
             while True:
                 opcode, arguments, _ = await read_instruction(tunnel.reader)
@@ -286,12 +287,16 @@ async def test_rdp(profile: RemoteProfile) -> dict[str, Any]:
                     raise DeeBeeError("RDP 会话在登录完成前断开")
                 if opcode == "size" and len(arguments) >= 3 and arguments[0] == "0":
                     desktop_sized = int(arguments[1]) > 0 and int(arguments[2]) > 0
-                # guacd sends a blank display size before authenticating. Only a
-                # completed display frame confirms the remote desktop is usable.
+                # guacd may synchronize its blank display before authenticating.
+                # A later frame with a new timestamp comes from the RDP render
+                # loop, which only runs after freerdp_connect() succeeds.
                 if opcode == "sync" and arguments:
                     tunnel.writer.write(encode_instruction("sync", arguments[0]))
                     await tunnel.writer.drain()
-                    if desktop_sized:
+                    timestamp = int(arguments[0])
+                    if first_sync is None:
+                        first_sync = timestamp
+                    elif desktop_sized and timestamp > first_sync:
                         return {
                             "ok": True,
                             "latency_ms": round((time.perf_counter() - started) * 1000, 1),

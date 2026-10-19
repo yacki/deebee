@@ -25,10 +25,12 @@ async function mockRdp(page: Page, connect: (socket: WebSocketRoute, attempt: nu
     socket.onMessage(() => {});
     socket.send(instruction("", `connection-${attempts}`));
     socket.send(instruction("size", "0", "800", "600"));
+    socket.send(instruction("sync", "100"));
     connect(socket, attempts);
   });
   await page.goto("/");
   await page.getByRole("button", { name: "打开会话", exact: true }).click();
+  await page.clock.runFor(100);
   return () => attempts;
 }
 
@@ -52,13 +54,28 @@ for (const failure of [
   });
 }
 
-test("RDP automatically reconnects transient failures and confirms the first desktop frame", async ({ page }) => {
+test("RDP waits for a new desktop frame after the initial placeholder", async ({ page }) => {
+  let desktop: WebSocketRoute | undefined;
+  await mockRdp(page, socket => { desktop = socket; });
+  await expect(page.locator(".rdp-session .remote-dot.connecting")).toBeVisible();
+  await expect(page.locator(".connection-state.checking")).toBeVisible();
+  desktop!.send(instruction("sync", "100"));
+  await page.clock.runFor(1000);
+  await expect(page.locator(".rdp-session .remote-dot.connecting")).toBeVisible();
+  desktop!.send(instruction("sync", "123"));
+  await page.clock.runFor(100);
+  await expect(page.locator(".rdp-session .remote-dot.connected")).toBeVisible();
+  await expect(page.locator(".connection-state.online")).toBeVisible();
+});
+
+test("RDP automatically reconnects transient failures and confirms a new desktop frame", async ({ page }) => {
   const attempts = await mockRdp(page, (socket, attempt) => {
     socket.send(attempt === 1 ? instruction("error", "Server unavailable", "520") : instruction("sync", "123"));
   });
   await expect(page.locator(".rdp-session .remote-dot.error")).toBeVisible();
   await page.clock.runFor(1500);
   await expect.poll(attempts).toBe(2);
+  await page.clock.runFor(100);
   await expect(page.locator(".rdp-session .remote-toolbar")).toContainText("远程桌面已连接");
   await expect(page.locator(".connection-state.online")).toBeVisible();
 });

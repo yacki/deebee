@@ -119,6 +119,7 @@ function connect() {
   if (!viewport.value || !props.active || disposed) return;
   const generation = connectionGeneration;
   let retryAllowed = true;
+  let firstSync: number | undefined;
   state.value = "connecting";
   message.value = "正在建立 RDP 会话";
   emit("state", "checking");
@@ -145,14 +146,7 @@ function connect() {
 
   sessionClient.onstatechange = next => {
     if (generation !== connectionGeneration || sessionClient !== client) return;
-    if (next === Guacamole.Client.State.CONNECTED) {
-      reconnectAttempts = 0;
-      state.value = "connected";
-      message.value = "远程桌面已连接";
-      emit("state", "online");
-      refreshViewport(true);
-    }
-    else if (next === Guacamole.Client.State.DISCONNECTED) {
+    if (next === Guacamole.Client.State.DISCONNECTED) {
       if (state.value !== "error") {
         state.value = "closed";
         message.value = "远程桌面已断开";
@@ -161,6 +155,18 @@ function connect() {
       if (retryAllowed) scheduleReconnect();
     }
   };
+  sessionClient.onsync = timestamp => display.flush(() => {
+    if (generation !== connectionGeneration || sessionClient !== client || state.value !== "connecting") return;
+    // The initial sync may contain only guacd's unauthenticated placeholder.
+    if (firstSync === undefined) firstSync = timestamp;
+    else if (timestamp > firstSync && display.getWidth() > 0 && display.getHeight() > 0) {
+      reconnectAttempts = 0;
+      state.value = "connected";
+      message.value = "远程桌面已连接";
+      emit("state", "online");
+      refreshViewport(true);
+    }
+  });
   sessionClient.onerror = status => {
     if (generation !== connectionGeneration || sessionClient !== client) return;
     state.value = "error";

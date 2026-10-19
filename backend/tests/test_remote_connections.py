@@ -122,12 +122,17 @@ def test_guacamole_reads_unicode_character_lengths_without_consuming_next_instru
     ("SSL/TLS connection failed (untrusted/self-signed certificate?)", "证书校验失败"),
     ("Authentication failure (invalid credentials?)", "请检查用户名、密码和域"),
 ])
-def test_rdp_test_rejects_placeholder_desktop_before_authentication(monkeypatch, message, expected):
+@pytest.mark.parametrize("initial_sync", [False, True])
+def test_rdp_test_rejects_placeholder_desktop_before_authentication(monkeypatch, message, expected, initial_sync):
     async def verify():
         reader = asyncio.StreamReader()
-        reader.feed_data(encode_instruction("size", "0", "800", "600") + encode_instruction("error", message, "519"))
+        reader.feed_data(encode_instruction("size", "0", "800", "600"))
+        if initial_sync:
+            reader.feed_data(encode_instruction("sync", "100"))
+        reader.feed_data(encode_instruction("error", message, "519"))
         reader.feed_eof()
-        tunnel = type("Tunnel", (), {"reader": reader, "close": AsyncMock()})()
+        writer = type("Writer", (), {"write": lambda _, data: None, "drain": AsyncMock()})()
+        tunnel = type("Tunnel", (), {"reader": reader, "writer": writer, "close": AsyncMock()})()
         monkeypatch.setattr(remote_connections.GuacdTunnel, "connect", AsyncMock(return_value=tunnel))
         with pytest.raises(DeeBeeError, match=expected):
             await remote_connections.test_rdp(RemoteProfile("rdp", "rdp", "RDP", "localhost", 3389, "user", "secret"))
@@ -138,7 +143,9 @@ def test_rdp_test_rejects_placeholder_desktop_before_authentication(monkeypatch,
 def test_rdp_test_waits_for_authenticated_frame_and_acknowledges_sync(monkeypatch):
     async def verify():
         reader = asyncio.StreamReader()
-        reader.feed_data(encode_instruction("size", "0", "800", "600") + encode_instruction("sync", "123"))
+        reader.feed_data(encode_instruction("size", "0", "800", "600")
+                         + encode_instruction("sync", "100") + encode_instruction("sync", "100")
+                         + encode_instruction("sync", "123"))
         reader.feed_eof()
         written = []
         writer = type("Writer", (), {"write": lambda _, data: written.append(data), "drain": AsyncMock()})()
@@ -146,7 +153,7 @@ def test_rdp_test_waits_for_authenticated_frame_and_acknowledges_sync(monkeypatc
         monkeypatch.setattr(remote_connections.GuacdTunnel, "connect", AsyncMock(return_value=tunnel))
         result = await remote_connections.test_rdp(RemoteProfile("rdp", "rdp", "RDP", "localhost", 3389, "user", "secret"))
         assert result["ok"] is True
-        assert written == [encode_instruction("sync", "123")]
+        assert written == [encode_instruction("sync", "100"), encode_instruction("sync", "100"), encode_instruction("sync", "123")]
         tunnel.close.assert_awaited_once()
     asyncio.run(verify())
 
