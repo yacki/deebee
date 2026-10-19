@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 import pymysql
-from pymysql.constants import CLIENT, FIELD_TYPE
+from pymysql.constants import CLIENT, ER, FIELD_TYPE
 from pymysql.cursors import DictCursor
 
 from .config import settings
@@ -743,15 +743,23 @@ class MySQLWorkbench:
                     )
                     item["columns"].append(row["column_name"])
                     item["referenced_columns"].append(row["referenced_column"])
-                cursor.execute(
-                    "SELECT c.CHECK_CLAUSE AS clause, c.CONSTRAINT_NAME AS name "
-                    "FROM information_schema.CHECK_CONSTRAINTS c "
-                    "JOIN information_schema.TABLE_CONSTRAINTS t "
-                    "ON t.CONSTRAINT_SCHEMA=c.CONSTRAINT_SCHEMA AND t.CONSTRAINT_NAME=c.CONSTRAINT_NAME "
-                    "WHERE t.TABLE_SCHEMA=%s AND t.TABLE_NAME=%s AND t.CONSTRAINT_TYPE='CHECK'",
-                    (database, table),
-                )
-                checks = [clean_row(row) for row in cursor.fetchall()]
+                checks: list[dict[str, Any]] = []
+                try:
+                    cursor.execute(
+                        "SELECT c.CHECK_CLAUSE AS clause, c.CONSTRAINT_NAME AS name "
+                        "FROM information_schema.CHECK_CONSTRAINTS c "
+                        "JOIN information_schema.TABLE_CONSTRAINTS t "
+                        "ON t.CONSTRAINT_SCHEMA=c.CONSTRAINT_SCHEMA AND t.CONSTRAINT_NAME=c.CONSTRAINT_NAME "
+                        "WHERE t.TABLE_SCHEMA=%s AND t.TABLE_NAME=%s AND t.CONSTRAINT_TYPE='CHECK'",
+                        (database, table),
+                    )
+                except pymysql.MySQLError as exc:
+                    # Older servers, including MySQL 5.7, have no CHECK metadata
+                    # table. Other metadata and table browsing still work.
+                    if not exc.args or exc.args[0] not in (ER.UNKNOWN_TABLE, ER.NO_SUCH_TABLE):
+                        raise
+                else:
+                    checks = [clean_row(row) for row in cursor.fetchall()]
                 cursor.execute(f"SHOW CREATE TABLE {quote_ident(database)}.{quote_ident(table)}")
                 create_row = cursor.fetchone() or {}
                 cursor.execute(
