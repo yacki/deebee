@@ -14,6 +14,9 @@ from .mysql import DeeBeeError
 from .kubernetes import test_kubernetes
 
 
+RDP_KEEPALIVE_INTERVAL = 5.0
+
+
 @dataclass
 class RemoteProfile:
     id: str
@@ -275,6 +278,16 @@ def rdp_error_message(message: str) -> str:
 async def test_rdp(profile: RemoteProfile) -> dict[str, Any]:
     started = time.perf_counter()
     tunnel = await GuacdTunnel.connect(profile, width=800, height=600)
+
+    async def keepalive() -> None:
+        # Match Guacamole.Client: guacd also expects input while Windows is
+        # still signing in and has not produced a frame to acknowledge yet.
+        while True:
+            await asyncio.sleep(RDP_KEEPALIVE_INTERVAL)
+            tunnel.writer.write(encode_instruction("nop"))
+            await tunnel.writer.drain()
+
+    keepalive_task = asyncio.create_task(keepalive())
     try:
         desktop_sized = False
         first_sync: int | None = None
@@ -307,6 +320,9 @@ async def test_rdp(profile: RemoteProfile) -> dict[str, Any]:
     except asyncio.IncompleteReadError as exc:
         raise DeeBeeError("RDP 会话在登录完成前断开") from exc
     finally:
+        keepalive_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await keepalive_task
         await tunnel.close()
 
 

@@ -171,6 +171,32 @@ def test_rdp_test_reports_disconnect_before_first_frame(monkeypatch):
     asyncio.run(verify())
 
 
+def test_rdp_test_keeps_gateway_alive_while_windows_signs_in(monkeypatch):
+    async def verify():
+        reader = asyncio.StreamReader()
+        written = []
+
+        def write(_, data):
+            written.append(data)
+            if data == encode_instruction("nop"):
+                reader.feed_data(encode_instruction("size", "0", "800", "600")
+                                 + encode_instruction("sync", "100") + encode_instruction("sync", "123"))
+
+        writer = type("Writer", (), {"write": write, "drain": AsyncMock()})()
+        tunnel = type("Tunnel", (), {"reader": reader, "writer": writer, "close": AsyncMock()})()
+        monkeypatch.setattr(remote_connections, "RDP_KEEPALIVE_INTERVAL", 0.01)
+        monkeypatch.setattr(remote_connections.GuacdTunnel, "connect", AsyncMock(return_value=tunnel))
+        profile = RemoteProfile("rdp", "rdp", "RDP", "localhost", 3389, "user", "secret")
+        result = await asyncio.wait_for(remote_connections.test_rdp(profile), timeout=1)
+        assert result["ok"] is True
+        assert encode_instruction("nop") in written
+        tunnel.close.assert_awaited_once()
+        count = len(written)
+        await asyncio.sleep(0.03)
+        assert len(written) == count
+    asyncio.run(verify())
+
+
 def test_remote_profile_public_shape_never_exposes_secrets() -> None:
     profile = RemoteProfile(
         id="ssh-test",
