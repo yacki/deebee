@@ -23,12 +23,12 @@ function sourceNotice(r:Row){return String(r.connection_sync?.reason||'').replac
   <div class="catalog">
     <div class="catalog-stats"><a-card><span>资源总数</span><b>{{ resources.length }}</b></a-card><a-card><span>已启用</span><b>{{ resources.filter(r=>r.enabled).length }}</b></a-card><a-card><span>环境</span><b>{{ values('environment').length }}</b></a-card><a-card><span>项目组</span><b>{{ values('project_groups').length }}</b></a-card></div>
     <a-card class="catalog-filter">
-      <a-input-search v-model="search" aria-label="搜索资源" placeholder="资源名称 / 地址 / 标签" allow-clear />
-      <a-select v-model="environment" aria-label="环境筛选" placeholder="全部环境" allow-clear :options="values('environment')" />
-      <a-select v-model="project" aria-label="项目组筛选" placeholder="全部项目组" allow-clear :options="values('project_groups')" />
-      <a-select v-model="tag" aria-label="标签筛选" placeholder="全部标签" allow-clear :options="values('tags')" />
-      <a-select v-model="type" aria-label="资源类型筛选" placeholder="全部类型" allow-clear :options="values('type')" />
-      <a-select v-model="state" aria-label="资源状态筛选" placeholder="全部状态" allow-clear :options="[{value:'true',label:'已启用'},{value:'false',label:'未启用'}]" />
+      <a-input-search v-model="search" :input-attrs="{'aria-label':'搜索资源'}" placeholder="资源名称 / 地址 / 标签" allow-clear />
+      <a-select v-model="environment" role="combobox" aria-label="环境筛选" placeholder="全部环境" allow-clear :options="values('environment')" />
+      <a-select v-model="project" role="combobox" aria-label="项目组筛选" placeholder="全部项目组" allow-clear :options="values('project_groups')" />
+      <a-select v-model="tag" role="combobox" aria-label="标签筛选" placeholder="全部标签" allow-clear :options="values('tags')" />
+      <a-select v-model="type" role="combobox" aria-label="资源类型筛选" placeholder="全部类型" allow-clear :options="values('type')" />
+      <a-select v-model="state" role="combobox" aria-label="资源状态筛选" placeholder="全部状态" allow-clear :options="[{value:'true',label:'已启用'},{value:'false',label:'未启用'}]" />
       <a-button @click="reset">重置筛选</a-button>
     </a-card>
     <div class="catalog-bar"><span>资源清单 <small>共 {{ filtered.length }} 项</small></span><a-radio-group v-model="view" type="button" size="small"><a-radio value="cards">卡片</a-radio><a-radio value="table">列表</a-radio></a-radio-group></div>

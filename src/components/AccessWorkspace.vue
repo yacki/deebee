@@ -80,6 +80,7 @@ const previewPrincipal = ref(""); const previewScopes = ref("resources:read, ssh
 const sshCheck = ref("overview"); const kubeNamespace = ref(""); const kubeKind = ref("pods"); const kubeName = ref(""); const kubeOperation = ref("list");
 const userResources = ref<Row[]>([]); const selectedResource = ref(""); const mode = ref("normal"); const operation = ref("db.query"); const command = ref("SELECT 1"); const userExecution = ref<Row | null>(null);
 const configText = ref(""); const importPreview = ref<Row | null>(null);
+watch(configText,()=>{importPreview.value=null;});
 const userSchema = ref<Row | null>(null);
 const legacyItems = ref<Row[] | null>(null);
 const auditActor = ref(""); const auditOperation = ref(""); const auditSurface = ref("");
@@ -159,7 +160,8 @@ const visibleFields = computed(()=>(section.value.fields||[]).filter(field=>{
   }
   return true;
 }));
-function fieldOptions(field:Field){if(field.key==="validation_mode")return form.value?.type==="oidc"?["jwt","introspection"]:["managed","external_http"];return field.options;}
+function fieldOptions(field:Field){if(field.key==="validation_mode")return form.value?.type==="oidc"?["jwt","introspection"]:["managed","external_http"];if(current.value==="accounts"&&field.key==="auth_method"&&resourceDetail.value?.type!=="ssh")return ["password"];return field.options;}
+function lockedField(field:Field){return Boolean(editing.value&&current.value==="identity-sources"&&["type","issuer","validation_mode"].includes(field.key));}
 watch(()=>form.value?.type,(value,previous)=>{if(!form.value||!previous||value===previous)return;if(current.value==="identity-sources")form.value.validation_mode=value==="oidc"?"jwt":"managed";if(current.value==="resources")form.value.port=value==="ssh"?22:value==="mysql"?3306:value==="k8s"?6443:5432;});
 
 async function request(path: string, method="GET", body?: unknown, admin=true): Promise<Row> {
@@ -214,7 +216,8 @@ function start(item?:Row){
   if(current.value==="api-keys"){credentialActions.value=["resources:read"];credentialResources.value=[];}
 }
 async function save(){await act(async()=>{if(!form.value)return;const body:Row={};for(const f of visibleFields.value){if(f.required&&!String(form.value[f.key]??"").trim())throw new Error("请填写"+f.label);}
-for(const f of section.value.fields||[]){const value=form.value[f.key];body[f.key]=f.type==="json"?JSON.parse(String(value)||"{}"):f.type==="list"?String(value).split(",").map(v=>v.trim()).filter(Boolean):f.type==="number"?(value===""?null:Number(value)):value;}
+// A newly selected identity protocol must not submit fields left hidden by the previous protocol.
+for(const f of current.value==="identity-sources"?visibleFields.value:section.value.fields||[]){const value=form.value[f.key];body[f.key]=f.type==="json"?JSON.parse(String(value)||"{}"):f.type==="list"?String(value).split(",").map(v=>v.trim()).filter(Boolean):f.type==="number"?(value===""?null:Number(value)):value;}
   if(current.value==="access-grants"){
     Object.assign(body,grantAccountFields(grantIds.value,(records.value.accounts||[]).map(a=>({id:a.id,resource_id:a.resource_id,tier:a.tier,enabled:a.enabled})),String(body.resource_id),Boolean(body.enabled)));
     body.actions=[...grantActions.value];body.expires_at=editing.value&&grantExpiry.value===localDateTime(editing.value.expires_at)?editing.value.expires_at:expiryTimestamp(grantExpiry.value);body.limits={...grantLimits.value};
@@ -276,8 +279,8 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
       <h1>{{ isUser ? "系统账号登录" : "管理员登录" }}</h1>
       <p>{{ isUser ? "使用系统账号密码或企业登录，查看已授权的资源。" : "使用工作台管理员账号进入管理后台。" }}</p>
       <form @submit.prevent="login">
-        <label>用户名<a-input v-model="loginName" autocomplete="username" required /></label>
-        <label>密码<a-input v-model="loginPassword" type="password" autocomplete="current-password" required /></label>
+        <div class="access-field">用户名<a-input v-model="loginName" :input-attrs="{'aria-label':'用户名'}" autocomplete="username" required /></div>
+        <div class="access-field">密码<a-input v-model="loginPassword" :input-attrs="{'aria-label':'密码'}" type="password" autocomplete="current-password" required /></div>
         <a-button type="primary" html-type="submit" :disabled="busy">{{ busy?"正在验证…":"登录" }}</a-button>
       </form>
       <a v-for="source in isUser?loginSources:[]" :key="source.id" :href="API_BASE+'/auth/oidc/'+source.id+'/start'">使用 {{ source.name }} 登录</a>
@@ -312,48 +315,50 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <span :class="['access-badge',resourceDetail?.enabled?'good':'muted']">{{ resourceDetail?.enabled?'资源已启用':'资源未启用' }}</span>
           <p v-if="resourceDetail?.connection_sync">来自工作台连接。{{ connectionNotice(resourceDetail) || '资源账号启用后，还需要在“资源授权”中分配给系统账号。' }}</p>
         </section>
-        <section v-if="newKey" class="access-secret" role="status"><h2>API Key 仅显示一次</h2><p>请安全保存，不要发到聊天或写入日志。</p><a-input aria-label="新 API Key" :model-value="newKey" readonly /><a-button @click="newKey=''">已保存，隐藏原文</a-button></section>
+        <section v-if="newKey" class="access-secret" role="status"><h2>API Key 仅显示一次</h2><p>请安全保存，不要发到聊天或写入日志。</p><a-input :input-attrs="{'aria-label':'新 API Key'}" :model-value="newKey" readonly /><a-button @click="newKey=''">已保存，隐藏原文</a-button></section>
         <SessionRecordings v-if="current==='session-recordings'" ref="recordingsPanel" />
         <form v-else-if="form" class="access-form" @submit.prevent="save">
           <h2>{{ editing?'编辑':'新增' }}{{ section.name }}</h2>
           <p v-if="editing?.connection_sync">来自工作台连接，地址和登录凭证请在工作台修改。{{ connectionNotice(editing) }}</p>
           <div class="access-fields">
-            <label v-for="field in visibleFields" :key="field.key" :class="{'check-field':field.type==='check','wide-field':field.type==='textarea'||field.type==='json'}">
-              <template v-if="field.type==='check'"><a-checkbox v-model="form[field.key]" />{{ field.label }}</template>
+            <div v-for="field in visibleFields" :key="field.key" class="access-field" :class="{'check-field':field.type==='check','wide-field':field.type==='textarea'||field.type==='json'}">
+              <template v-if="field.type==='check'"><a-checkbox v-model="form[field.key]">{{ field.label }}</a-checkbox></template>
               <template v-else>
                 <span>{{ field.label }}</span>
-                <a-select v-if="field.type==='environment'" v-model="form[field.key]" allow-create allow-search allow-clear :options="['prod','uat','staging','test','dev']" :aria-label="field.label" />
-                <a-select v-else-if="field.type==='tags'" v-model="form[field.key]" multiple allow-create allow-search allow-clear :options="classificationOptions(field.key)" :aria-label="field.label" />
-                <a-select v-else-if="field.type==='select'" v-model="form[field.key]" :required="field.required" @change="current==='access-grants'&&field.key==='resource_id'&&changedGrantResource()">
+                <a-select v-if="field.type==='environment'" v-model="form[field.key]" role="combobox" allow-create allow-search allow-clear :options="['prod','uat','staging','test','dev']" :aria-label="field.label" />
+                <a-select v-else-if="field.type==='tags'" v-model="form[field.key]" role="combobox" multiple allow-create allow-search allow-clear :options="classificationOptions(field.key)" :aria-label="field.label" />
+                <a-select v-else-if="field.type==='select'" v-model="form[field.key]" role="combobox" :disabled="lockedField(field)" :required="field.required" :aria-label="field.label" @change="current==='access-grants'&&field.key==='resource_id'&&changedGrantResource()">
                   <a-option value="">请选择</a-option>
                   <a-option v-for="value in fieldOptions(field)" :key="value" :value="value">{{ optionLabel(value) }}</a-option>
                   <a-option v-for="item in options(field)" :key="item.id" :value="item.id">{{ item.name||item.subject||item.id }}{{ item.username?' · '+item.username:'' }}</a-option>
                 </a-select>
-                <JsonPanel v-else-if="field.type==='json'" v-model="form[field.key]" editable :label="field.label" /><a-textarea v-else-if="field.type==='textarea'" v-model="form[field.key]" :auto-size="{minRows:3,maxRows:12}" :autocomplete="field.key==='private_key'?'off':undefined" />
-                <a-input-number v-else-if="field.type==='number'" v-model="form[field.key]" :aria-label="field.label" /><a-input v-else v-model="form[field.key]" :aria-label="field.label" :type="field.type==='password'?'password':'text'" :required="field.required" :autocomplete="field.type==='password'?'new-password':'off'" />
+                <JsonPanel v-else-if="field.type==='json'" v-model="form[field.key]" editable :label="field.label" /><a-textarea v-else-if="field.type==='textarea'" v-model="form[field.key]" :textarea-attrs="{'aria-label':field.label}" :auto-size="{minRows:3,maxRows:12}" :autocomplete="field.key==='private_key'?'off':undefined" />
+                <a-input-number v-else-if="field.type==='number'" v-model="form[field.key]" :input-attrs="{'aria-label':field.label}" /><a-input v-else v-model="form[field.key]" :disabled="lockedField(field)" :input-attrs="{'aria-label':field.label}" :type="field.type==='password'?'password':'text'" :required="field.required" :autocomplete="field.type==='password'?'new-password':'off'" />
               </template>
               <small v-if="field.hint">{{ field.hint }}</small>
-            </label>
+              <small v-if="lockedField(field)">身份命名空间保存后不可更改；更换类型、验证方式或 Issuer 请新增服务。</small>
+            </div>
           </div>
           <template v-if="current==='access-grants'">
             <fieldset class="access-selection">
               <legend>资源账号</legend>
               <p v-if="!form.resource_id">先选择资源，再选择它下面的资源账号。</p>
               <p v-else-if="!grantChoices.length">该资源还没有资源账号，请先到资源管理中添加。</p>
-              <label v-for="account in grantChoices" :key="account.id" class="check-field">
-                <a-checkbox :model-value="grantIds.includes(account.id)" :disabled="!account.enabled&&!grantIds.includes(account.id)" @change="checkArray(grantIds,account.id,$event)" />
-                <span>{{ account.username }}</span> · {{ account.name }} · {{ accountPermissionLabel(account) }} · {{ account.enabled?'已启用':'未启用' }}
-              </label>
+              <div v-for="account in grantChoices" :key="account.id" class="access-field check-field">
+                <a-checkbox :model-value="grantIds.includes(account.id)" :disabled="!account.enabled&&!grantIds.includes(account.id)" @change="checkArray(grantIds,account.id,$event)">
+                  <span>{{ account.username }}</span> · {{ account.name }} · {{ accountPermissionLabel(account) }} · {{ account.enabled?'已启用':'未启用' }}
+                </a-checkbox>
+              </div>
               <small>每种权限类别最多选择一个资源账号。未启用的账号需先在资源管理中检查并启用。</small>
             </fieldset>
             <fieldset class="access-selection"><legend>允许操作</legend><AccessActions v-model="grantActions" :resource-type="grantResource?.type" /></fieldset>
             <p v-if="grantChoices.some(a=>grantIds.includes(a.id)&&a.tier==='privileged')" class="access-warning">选择了高权限资源账号。授权后可能修改数据或服务器文件；本次授权不会逐次询问管理员。</p>
-            <label>授权到期时间（留空为长期有效）<a-date-picker v-model="grantExpiry" show-time value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" allow-clear /></label>
+            <div class="access-field">授权到期时间（留空为长期有效）<input v-model="grantExpiry" aria-label="授权到期时间" type="datetime-local" /></div>
             <details class="access-advanced">
               <summary>执行限制</summary><div class="access-fields">
-                <label>执行超时（秒）<a-input-number v-model="grantLimits.timeout_seconds" :min="1" :max="300" required /></label>
-                <label>最多返回行数<a-input-number v-model="grantLimits.max_rows" :min="1" :max="10000" required /></label>
-                <label>最多返回字节数<a-input-number v-model="grantLimits.max_output_bytes" :min="1024" :max="2097152" required /></label>
+                <div class="access-field">执行超时（秒）<a-input-number v-model="grantLimits.timeout_seconds" :input-attrs="{'aria-label':'执行超时（秒）'}" :min="1" :max="300" required /></div>
+                <div class="access-field">最多返回行数<a-input-number v-model="grantLimits.max_rows" :input-attrs="{'aria-label':'最多返回行数'}" :min="1" :max="10000" required /></div>
+                <div class="access-field">最多返回字节数<a-input-number v-model="grantLimits.max_output_bytes" :input-attrs="{'aria-label':'最多返回字节数'}" :min="1024" :max="2097152" required /></div>
               </div>
             </details>
           </template>
@@ -361,7 +366,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
             <fieldset class="access-selection"><legend>允许操作</legend><AccessActions v-model="credentialActions" /></fieldset>
             <fieldset class="access-selection">
               <legend>限定可用资源（不选表示沿用系统账号的资源授权）</legend>
-              <label v-for="resource in records.resources" :key="resource.id" class="check-field"><a-checkbox :model-value="credentialResources.includes(resource.id)" @change="checkArray(credentialResources,resource.id,$event)" />{{ resource.name }}</label>
+              <div v-for="resource in records.resources" :key="resource.id" class="access-field check-field"><a-checkbox :model-value="credentialResources.includes(resource.id)" @change="checkArray(credentialResources,resource.id,$event)">{{ resource.name }}</a-checkbox></div>
             </fieldset>
           </template>
           <div class="access-actions"><a-button type="primary" html-type="submit" :disabled="busy">{{ busy?'保存中…':'保存' }}</a-button><a-button html-type="button" @click="form=null">取消</a-button></div>
@@ -395,13 +400,13 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         </div>
 
         <section v-else-if="current==='preview'" class="access-panel">
-          <label>系统账号<a-select v-model="previewPrincipal"><a-option value="">选择系统账号</a-option><a-option v-for="p in records.principals" :key="p.id" :value="p.id">{{ p.name }}</a-option></a-select></label>
-          <details class="access-advanced"><summary>模拟访问凭证的权限范围</summary><p>用于排查凭证限制，填写协议权限名称；不会修改任何授权。</p><a-input v-model="previewScopes" aria-label="模拟凭证权限" /></details>
+          <div class="access-field">系统账号<a-select v-model="previewPrincipal" role="combobox" aria-label="系统账号"><a-option value="">选择系统账号</a-option><a-option v-for="p in records.principals" :key="p.id" :value="p.id">{{ p.name }}</a-option></a-select></div>
+          <details class="access-advanced"><summary>模拟访问凭证的权限范围</summary><p>用于排查凭证限制，填写协议权限名称；不会修改任何授权。</p><a-input v-model="previewScopes" :input-attrs="{'aria-label':'模拟凭证权限'}" /></details>
           <a-button type="primary" :disabled="busy||!previewPrincipal" @click="preview">查看可用资源账号</a-button>
         </section>
 
         <section v-else-if="current==='integration'" class="access-panel">
-          <h2>程序接入地址</h2><label>MCP 地址<a-input :model-value="status.mcp_url" readonly /></label><label>REST API 地址<a-input :model-value="status.api_url" readonly /></label>
+          <h2>程序接入地址</h2><div class="access-field">MCP 地址<a-input :model-value="status.mcp_url" :input-attrs="{'aria-label':'MCP 地址'}" readonly /></div><div class="access-field">REST API 地址<a-input :model-value="status.api_url" :input-attrs="{'aria-label':'REST API 地址'}" readonly /></div>
           <p>外部身份先绑定系统账号，系统账号再通过资源授权使用资源账号。</p>
           <details class="access-advanced"><summary>开发者接入说明</summary><p>API Key 使用 X-DeeBee-API-Key；外部验证服务另传 X-DeeBee-Identity-Source。企业登录使用 Authorization: Bearer &lt;Access Token&gt;，不能同时提交两种凭证。</p><p>高权限资源账号必须明确请求 mode: privileged，且凭证与资源授权均允许 privilege:use。默认请求不会自动升级权限。</p><p>远程桌面及其他暂不支持的资源仅用于登记，不开放 MCP 操作。</p></details>
           <hr><h2>配置备份与导入</h2><p>导出不含密码、私钥或 API Key 原文。导入不会自动启用新资源账号。</p>
@@ -411,7 +416,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         </section>
 
         <template v-else>
-          <section v-if="current==='audit-events'" class="access-filters"><label>账号 / 外部身份<a-input v-model="auditActor" placeholder="名称或标识" /></label><label>操作<a-input v-model="auditOperation" placeholder="操作名称" /></label><label>入口<a-select v-model="auditSurface"><a-option value="">全部入口</a-option><a-option value="mcp">MCP</a-option><a-option value="access_ui">系统账号入口</a-option><a-option value="admin">管理后台</a-option><a-option value="workbench">工作台</a-option><a-option value="execution_worker">执行服务</a-option><a-option value="control_plane">配置变更</a-option><a-option value="legacy_audit">历史记录</a-option></a-select></label><a-button :disabled="busy" @click="act(refresh)">查询</a-button></section>
+          <section v-if="current==='audit-events'" class="access-filters"><div class="access-field">账号 / 外部身份<a-input v-model="auditActor" :input-attrs="{'aria-label':'账号 / 外部身份'}" placeholder="名称或标识" /></div><div class="access-field">操作<a-input v-model="auditOperation" :input-attrs="{'aria-label':'操作名称'}" placeholder="操作名称" /></div><div class="access-field">入口<a-select v-model="auditSurface" role="combobox" aria-label="入口"><a-option value="">全部入口</a-option><a-option value="mcp">MCP</a-option><a-option value="access_ui">系统账号入口</a-option><a-option value="admin">管理后台</a-option><a-option value="workbench">工作台</a-option><a-option value="execution_worker">执行服务</a-option><a-option value="control_plane">配置变更</a-option><a-option value="legacy_audit">历史记录</a-option></a-select></div><a-button :disabled="busy" @click="act(refresh)">查询</a-button></section>
           <div class="access-table-wrap">
             <a-table :key="current" :data="rows" row-key="id" :pagination="{pageSize:20,showTotal:true}" :scroll="{x:1000}" :loading="busy">
               <template #columns>
@@ -444,7 +449,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
             </a-table>
           </div>
         </template>
-        <section v-if="testingSource" class="access-panel"><h2>检查 {{ testingSource.name }}</h2><label>测试凭证（可选，不保存）<a-input v-model="sourceCredential" type="password" autocomplete="off" /></label><p>企业登录服务留空可检查服务配置；验证外部身份绑定需提供访问令牌。</p><a-button :disabled="busy" @click="testSource">检查</a-button><a-button @click="testingSource=null;sourceCredential=''">取消</a-button></section>
+        <section v-if="testingSource" class="access-panel"><h2>检查 {{ testingSource.name }}</h2><div class="access-field">测试凭证（可选，不保存）<a-input v-model="sourceCredential" :input-attrs="{'aria-label':'测试凭证'}" type="password" autocomplete="off" /></div><p>企业登录服务留空可检查服务配置；验证外部身份绑定需提供访问令牌。</p><a-button :disabled="busy" @click="testSource">检查</a-button><a-button @click="testingSource=null;sourceCredential=''">取消</a-button></section>
       </main>
     </div>
     <main v-else class="access-user-main">
@@ -452,16 +457,16 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
       <div class="access-resource-cards"><a-button v-for="r in userResources" :key="r.id" :class="{selected:selectedResource===r.id}" @click="selectedResource=r.id;chooseResource()"><Icon :icon="r.type==='ssh'?'lucide:terminal':'lucide:database'" width="24" /><span>{{ r.name }}</span><span>{{ r.type }} {{ r.database }}</span><small v-for="m in r.access_modes" :key="m.mode">{{ m.username }} · {{ optionLabel(m.mode) }}</small></a-button></div>
       <p v-if="!userResources.length" class="access-empty">暂无可用资源账号，请联系管理员配置资源授权。</p>
       <section v-if="activeResource" class="access-panel">
-        <h2>{{ activeResource.name }}</h2><label>资源账号<a-select v-model="mode"><a-option v-for="m in activeResource.access_modes" :key="m.mode" :value="m.mode">{{ m.username }} · {{ optionLabel(m.mode) }}</a-option></a-select></label>
+        <h2>{{ activeResource.name }}</h2><div class="access-field">资源账号<a-select v-model="mode" role="combobox" aria-label="资源账号"><a-option v-for="m in activeResource.access_modes" :key="m.mode" :value="m.mode">{{ m.username }} · {{ optionLabel(m.mode) }}</a-option></a-select></div>
         <a-button v-if="['mysql','postgresql'].includes(activeResource.type)" :disabled="busy" @click="loadSchema()">查看数据库结构</a-button><JsonPanel v-if="userSchema" :value="userSchema" /><a-button v-if="userSchema?.next_cursor" :disabled="busy" @click="loadSchema(userSchema.next_cursor)">下一页</a-button>
-        <label>操作<a-select v-model="operation"><a-option v-for="action in activeResource.access_modes.find((m:Row)=>m.mode===mode)?.actions.filter((a:string)=>a!=='db.schema')" :key="action" :value="action">{{ optionLabel(action) }}</a-option></a-select></label>
-        <label v-if="operation==='ssh.inspect'">检查项目<a-select v-model="sshCheck"><a-option v-for="c in ['overview','disk','memory','processes','network']" :key="c" :value="c">{{ ({overview:'概览',disk:'磁盘与 inode',memory:'内存',processes:'进程',network:'网络'})[c] }}</a-option></a-select></label>
+        <div class="access-field">操作<a-select v-model="operation" role="combobox" aria-label="操作"><a-option v-for="action in activeResource.access_modes.find((m:Row)=>m.mode===mode)?.actions.filter((a:string)=>a!=='db.schema')" :key="action" :value="action">{{ optionLabel(action) }}</a-option></a-select></div>
+        <div v-if="operation==='ssh.inspect'" class="access-field">检查项目<a-select v-model="sshCheck" role="combobox" aria-label="检查项目"><a-option v-for="c in ['overview','disk','memory','processes','network']" :key="c" :value="c">{{ ({overview:'概览',disk:'磁盘与 inode',memory:'内存',processes:'进程',network:'网络'})[c] }}</a-option></a-select></div>
         <template v-else-if="activeResource.type==='k8s'">
-          <label>Namespace<a-select v-model="kubeNamespace"><a-option v-for="n in activeResource.namespaces" :key="n" :value="n">{{ n }}</a-option></a-select></label>
-          <template v-if="operation==='k8s.read'"><label>查询类型<a-select v-model="kubeOperation"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></label><label>资源类型<a-select v-model="kubeKind"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></label></template>
-          <label v-if="operation==='k8s.restart'||kubeOperation!=='list'">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></label>
+          <div class="access-field">Namespace<a-select v-model="kubeNamespace" role="combobox" aria-label="Namespace"><a-option v-for="n in activeResource.namespaces" :key="n" :value="n">{{ n }}</a-option></a-select></div>
+          <template v-if="operation==='k8s.read'"><div class="access-field">查询类型<a-select v-model="kubeOperation" role="combobox" aria-label="查询类型"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></div><div class="access-field">资源类型<a-select v-model="kubeKind" role="combobox" aria-label="资源类型"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></div></template>
+          <div v-if="operation==='k8s.restart'||kubeOperation!=='list'" class="access-field">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></div>
         </template>
-        <label v-else>{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></label>
+        <div v-else class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></div>
         <p v-if="mode==='privileged'" class="access-warning">正在使用已授权的高权限资源账号，操作可能修改数据或服务器文件。</p>
         <a-button type="primary" :disabled="busy" @click="executeUser">提交执行</a-button>
         <div v-if="userExecution" class="access-panel"><span>{{ optionLabel(userExecution.status) }}</span><a-button :disabled="busy" @click="pollUser">刷新结果</a-button><a-button v-if="userExecution.result?.next_cursor" :disabled="busy" @click="pollUser(userExecution.result.next_cursor)">下一页结果</a-button><a-button :disabled="busy" @click="cancelUser">请求取消</a-button><JsonPanel :value="userExecution" /></div>
@@ -477,7 +482,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
       </div>
     </a-modal>
     <a-modal :visible="!!deleting" title="删除资源" :ok-loading="busy" :ok-button-props="{status:'danger',disabled:deleteName!==deleting?.name}" ok-text="确认删除" @ok="removeResource" @cancel="deleting=null">
-      <template v-if="deleting"><a-alert type="warning">从资源管理删除，并撤销关联资源账号及授权。工作台连接和远端数据不删除，历史审计保留；此连接不会再自动入池。</a-alert><p>请输入资源名称确认：{{ deleting.name }}</p><a-input v-model="deleteName" aria-label="确认删除的资源名称" /><a-alert v-if="error" type="error">{{ error }}</a-alert></template>
+      <template v-if="deleting"><a-alert type="warning">从资源管理删除，并撤销关联资源账号及授权。工作台连接和远端数据不删除，历史审计保留；此连接不会再自动入池。</a-alert><p>请输入资源名称确认：{{ deleting.name }}</p><a-input v-model="deleteName" :input-attrs="{'aria-label':'确认删除的资源名称'}" /><a-alert v-if="error" type="error">{{ error }}</a-alert></template>
     </a-modal>
   </div>
 </template>
@@ -487,6 +492,6 @@ html,body,#app{margin:0;width:100%;height:100%;font-family:Inter,"PingFang SC","
 *{box-sizing:border-box}.arco-modal-title,.arco-table-th,.arco-card-header-title,.arco-menu-item{font-weight:400!important}.arco-modal{max-width:calc(100vw - 32px)}.arco-modal-body{max-height:75vh;overflow:auto}
 </style>
 <style scoped>
-.access-workspace{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:var(--color-fill-2);font-size:14px}.access-header{height:56px;flex-shrink:0;display:flex;align-items:center;gap:24px;padding:0 24px;background:white;border-bottom:1px solid var(--color-border-2)}.access-header a{text-decoration:none;color:var(--color-text-2)}.access-brand{display:flex;gap:10px;align-items:center;font-size:18px}.access-brand>span{display:grid;place-items:center;width:30px;height:30px;background:rgb(var(--primary-6));color:white;border-radius:6px}.access-subtitle{flex:1;font-size:12px;color:var(--color-text-3)}.access-layout{display:grid;grid-template-columns:208px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}.access-layout nav{overflow:auto;background:var(--color-bg-1);border-right:1px solid var(--color-border-2);padding:14px 8px;display:flex;flex-direction:column}.access-layout nav p{margin-top:auto;padding:20px 14px;font-size:12px;color:var(--color-text-3)}.access-main{min-width:0;overflow:auto;padding:24px 28px;scrollbar-gutter:stable}.access-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px}.access-heading>div{flex:1}.access-heading p{margin-bottom:0}.access-workspace h1{font-size:18px;font-weight:500;margin:0 0 8px}.access-workspace h2{font-size:16px;font-weight:500;margin:0 0 14px}.access-workspace h3{font-size:14px;font-weight:400;margin:20px 0 12px}.access-workspace p,.report-content p{line-height:1.7;color:var(--color-text-3)}.access-workspace small{font-size:12px;color:var(--color-text-3)}.access-panel,.access-form{padding:22px;background:white;border:1px solid var(--color-border-2);border-radius:4px;margin:16px 0}.access-panel>label{margin:12px 0}.access-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.access-workspace label{display:flex;flex-direction:column;gap:8px;font-weight:400}.access-workspace .check-field{flex-direction:row;align-items:center;flex-wrap:wrap}.check-field small{flex-basis:100%}.wide-field{grid-column:1/-1}.access-actions,.access-row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.access-actions{margin-top:22px;padding-top:16px;border-top:1px solid var(--color-border-2)}.access-row-actions :deep(.arco-btn){font-size:12px}.access-tabs,.access-breadcrumb{display:flex;gap:8px;align-items:center;margin-bottom:18px}.access-tabs .selected{color:rgb(var(--primary-6));background:var(--color-primary-light-1)}.access-alert{margin:8px 24px;flex-shrink:0;width:auto}.access-selection{border:1px solid var(--color-border-2);border-radius:4px;margin:22px 0;padding:18px}.access-selection legend{font-weight:400;padding:0 6px}.access-selection label{margin:10px 0}.access-advanced{margin:20px 0}.access-advanced .access-fields{margin-top:16px}.access-workspace summary{cursor:pointer;color:rgb(var(--primary-6));font-size:12px}.access-table-wrap{min-width:0;overflow:hidden}.access-table-wrap :deep(td){overflow-wrap:anywhere}.access-table-wrap small{display:block;margin-top:6px}.access-table-wrap details{margin-top:8px}.access-filters{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:12px;align-items:end}.access-badge{display:inline-block;font-size:12px;padding:3px 8px;background:var(--color-fill-2);color:var(--color-text-3);border-radius:3px;white-space:nowrap}.access-badge.good{background:rgb(var(--green-1));color:rgb(var(--green-6))}.access-login{width:420px;max-width:calc(100% - 32px);margin:70px auto;padding:28px;background:white;border:1px solid var(--color-border-2)}.access-login form{display:grid;gap:18px}.access-login h1{margin-top:18px}.access-login>a{display:block;margin-top:18px}.access-user-main{overflow:auto;padding:28px;width:100%;max-width:1200px;margin:auto}.access-resource-cards{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.access-resource-cards :deep(.arco-btn){height:auto;padding:16px;display:flex;flex-direction:column;gap:8px}.access-secret,.access-warning{background:rgb(var(--orange-1));padding:16px;border-radius:4px}.access-secret{margin:16px 0}.access-secret .arco-input-wrapper{margin:12px 0}.access-empty{text-align:center;padding:30px}.access-audit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--color-border-2);border:1px solid var(--color-border-2)}.access-audit-grid>div{padding:12px;background:var(--color-fill-1)}.access-audit-grid dt{font-size:12px;color:var(--color-text-3);margin-bottom:8px}.access-audit-grid dd{margin:0;overflow-wrap:anywhere}.report-content h3{font-size:14px;font-weight:400}.resource-context{font-size:12px}.access-workspace input[type=datetime-local]{font:inherit;border:1px solid var(--color-border-2);padding:8px;background:var(--color-fill-2)}
+.access-workspace{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:var(--color-fill-2);font-size:14px}.access-header{height:56px;flex-shrink:0;display:flex;align-items:center;gap:24px;padding:0 24px;background:white;border-bottom:1px solid var(--color-border-2)}.access-header a{text-decoration:none;color:var(--color-text-2)}.access-brand{display:flex;gap:10px;align-items:center;font-size:18px}.access-brand>span{display:grid;place-items:center;width:30px;height:30px;background:rgb(var(--primary-6));color:white;border-radius:6px}.access-subtitle{flex:1;font-size:12px;color:var(--color-text-3)}.access-layout{display:grid;grid-template-columns:208px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}.access-layout nav{overflow:auto;background:var(--color-bg-1);border-right:1px solid var(--color-border-2);padding:14px 8px;display:flex;flex-direction:column}.access-layout nav p{margin-top:auto;padding:20px 14px;font-size:12px;color:var(--color-text-3)}.access-main{min-width:0;overflow:auto;padding:24px 28px;scrollbar-gutter:stable}.access-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px}.access-heading>div{flex:1}.access-heading p{margin-bottom:0}.access-workspace h1{font-size:18px;font-weight:500;margin:0 0 8px}.access-workspace h2{font-size:16px;font-weight:500;margin:0 0 14px}.access-workspace h3{font-size:14px;font-weight:400;margin:20px 0 12px}.access-workspace p,.report-content p{line-height:1.7;color:var(--color-text-3)}.access-workspace small{font-size:12px;color:var(--color-text-3)}.access-panel,.access-form{padding:22px;background:white;border:1px solid var(--color-border-2);border-radius:4px;margin:16px 0}.access-panel>.access-field{margin:12px 0}.access-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.access-workspace .access-field{display:flex;flex-direction:column;gap:8px;font-weight:400}.access-workspace .check-field{flex-direction:row;align-items:center;flex-wrap:wrap}.check-field small{flex-basis:100%}.wide-field{grid-column:1/-1}.access-actions,.access-row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.access-actions{margin-top:22px;padding-top:16px;border-top:1px solid var(--color-border-2)}.access-row-actions :deep(.arco-btn){font-size:12px}.access-tabs,.access-breadcrumb{display:flex;gap:8px;align-items:center;margin-bottom:18px}.access-tabs .selected{color:rgb(var(--primary-6));background:var(--color-primary-light-1)}.access-alert{margin:8px 24px;flex-shrink:0;width:auto}.access-selection{border:1px solid var(--color-border-2);border-radius:4px;margin:22px 0;padding:18px}.access-selection legend{font-weight:400;padding:0 6px}.access-selection>.access-field{margin:10px 0}.access-advanced{margin:20px 0}.access-advanced .access-fields{margin-top:16px}.access-workspace summary{cursor:pointer;color:rgb(var(--primary-6));font-size:12px}.access-table-wrap{min-width:0;overflow:hidden}.access-table-wrap :deep(td){overflow-wrap:anywhere}.access-table-wrap small{display:block;margin-top:6px}.access-table-wrap details{margin-top:8px}.access-filters{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:12px;align-items:end}.access-badge{display:inline-block;font-size:12px;padding:3px 8px;background:var(--color-fill-2);color:var(--color-text-3);border-radius:3px;white-space:nowrap}.access-badge.good{background:rgb(var(--green-1));color:rgb(var(--green-6))}.access-login{width:420px;max-width:calc(100% - 32px);margin:70px auto;padding:28px;background:white;border:1px solid var(--color-border-2)}.access-login form{display:grid;gap:18px}.access-login h1{margin-top:18px}.access-login>a{display:block;margin-top:18px}.access-user-main{overflow:auto;padding:28px;width:100%;max-width:1200px;margin:auto}.access-resource-cards{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.access-resource-cards :deep(.arco-btn){height:auto;padding:16px;display:flex;flex-direction:column;gap:8px}.access-secret,.access-warning{background:rgb(var(--orange-1));padding:16px;border-radius:4px}.access-secret{margin:16px 0}.access-secret .arco-input-wrapper{margin:12px 0}.access-empty{text-align:center;padding:30px}.access-audit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--color-border-2);border:1px solid var(--color-border-2)}.access-audit-grid>div{padding:12px;background:var(--color-fill-1)}.access-audit-grid dt{font-size:12px;color:var(--color-text-3);margin-bottom:8px}.access-audit-grid dd{margin:0;overflow-wrap:anywhere}.report-content h3{font-size:14px;font-weight:400}.resource-context{font-size:12px}.access-workspace input[type=datetime-local]{font:inherit;border:1px solid var(--color-border-2);padding:8px;background:var(--color-fill-2)}
 @media(max-width:900px){.access-layout{grid-template-columns:176px minmax(0,1fr)}.access-main{padding:20px}.access-subtitle{display:none}.access-header{gap:14px}.access-fields,.access-filters{grid-template-columns:1fr 1fr}}@media(max-width:600px){.access-layout{grid-template-columns:136px minmax(0,1fr)}.access-main{padding:12px}.access-header{padding:0 12px;gap:10px}.access-header>a:not(.access-brand){font-size:12px}.access-header>span{display:none}.access-heading{flex-wrap:wrap}.access-fields,.access-filters{grid-template-columns:1fr}.access-panel,.access-form{padding:14px}.access-audit-grid{grid-template-columns:1fr}}
 </style>
