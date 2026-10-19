@@ -150,3 +150,77 @@ def test_partial_disk_write_preserves_the_last_playable_batch(tmp_path,monkeypat
         assert storage.get(recorder.id)['status']=='failed'
         assert b''.join(storage.content(recorder.id))==b'complete frame\n'
     asyncio.run(session())
+
+
+def test_prefixed_ssh_websocket_records_on_the_inner_application(tmp_path,monkeypatch):
+    from deebee import main
+    from deebee.remote_connections import RemoteProfile
+    storage=store(tmp_path)
+    monkeypatch.setattr(main.api_app.state,'recordings',storage)
+    target=RemoteProfile('ssh-real','ssh','Linux','localhost',22,'operator','secret')
+    monkeypatch.setattr(main.workbench,'remote_profile',lambda *args:target)
+    class Output:
+        sent=False
+        async def read(self,size):
+            if not self.sent:self.sent=True;return 'Recorded actual SSH stream\r\n'
+            await asyncio.Event().wait()
+    class Process:
+        stdout=Output()
+        stdin=SimpleNamespace(write=lambda value:None)
+        def change_terminal_size(self,*args):pass
+        def close(self):pass
+    class Connection:
+        async def create_process(self,**kwargs):return Process()
+        def get_extra_info(self,*args):return 'SSH-Test'
+        def close(self):pass
+        async def wait_closed(self):pass
+    async def connect(*args):return Connection()
+    monkeypatch.setattr(main,'open_ssh',connect)
+    client=TestClient(main.app)
+    path=settings.base_path+'/api/connections/ssh-real/ssh?token='+issue_token(settings.admin_user)
+    with client.websocket_connect(path) as ws:
+        assert ws.receive_json()['state']=='connecting'
+        assert ws.receive_json()['state']=='connected'
+        assert 'Recorded actual SSH stream' in ws.receive_json()['data']
+        ws.send_json({'type':'resize','cols':100,'rows':30})
+        ws.send_json({'type':'close'})
+        assert ws.receive()['type']=='websocket.close'
+        # The recorder flushes after the transport is closed.
+        for _ in range(100):
+            if storage.list()['items'][0]['status']!='recording':break
+            time.sleep(.01)
+    item=storage.list()['items'][0]
+    assert item['status']=='completed'
+    assert b'Recorded actual SSH stream' in b''.join(storage.content(item['id']))
+
+
+def test_prefixed_rdp_websocket_records_gateway_graphics(tmp_path,monkeypatch):
+    from deebee import main
+    from deebee.remote_connections import RemoteProfile
+    storage=store(tmp_path);monkeypatch.setattr(main.api_app.state,'recordings',storage)
+    monkeypatch.setattr(main.workbench,'remote_profile',lambda *args:RemoteProfile('rdp-real','rdp','Windows','localhost',3389,'operator','secret'))
+    payload=[('size',['0','320','200']),('sync',['100']),('rect',['0','0','0','320','200']),('cfill',['14','0','30','110','210','255']),('sync',['200'])]
+    class Writer:
+        def write(self,data):pass
+        async def drain(self):pass
+    class Tunnel:
+        connection_id='test-recording'
+        writer=Writer()
+        async def close(self):pass
+    async def connect(*args,**kwargs):
+        tunnel=Tunnel();tunnel.reader=asyncio.StreamReader()
+        tunnel.reader.feed_data(b''.join(encode_instruction(op,*args) for op,args in payload))
+        return tunnel
+    monkeypatch.setattr(main.GuacdTunnel,'connect',connect)
+    client=TestClient(main.app)
+    path=settings.base_path+'/api/connections/rdp-real/rdp?token='+issue_token(settings.admin_user)
+    with client.websocket_connect(path) as ws:
+        assert 'test-recording' in ws.receive_text()
+        for _ in payload:ws.receive_text()
+        ws.close()
+        for _ in range(100):
+            if storage.list()['items'][0]['status']!='recording':break
+            time.sleep(.01)
+    row=storage.list()['items'][0]
+    assert row['status']=='completed'
+    assert b''.join(storage.content(row['id']))==b''.join(encode_instruction(op,*args) for op,args in payload)

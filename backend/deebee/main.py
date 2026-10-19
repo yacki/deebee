@@ -479,7 +479,7 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
     input_task: asyncio.Task[Any] | None = None
     recording: SessionRecorder | None = None
     try:
-        recording = await SessionRecorder.start(app.state.recordings, "ssh", user, profile)
+        recording = await SessionRecorder.start(websocket.scope["app"].state.recordings, "ssh", user, profile)
         await websocket.send_json({"type": "state", "state": "connecting"})
         connection = await open_ssh(profile)
         cols = max(20, min(500, int(websocket.query_params.get("cols", "120"))))
@@ -709,7 +709,7 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
             await websocket.send_text(message)
 
     try:
-        recording = await SessionRecorder.start(app.state.recordings, "rdp", user, profile)
+        recording = await SessionRecorder.start(websocket.scope["app"].state.recordings, "rdp", user, profile)
         width = max(320, min(7680, int(websocket.query_params.get("width", "1280"))))
         height = max(240, min(4320, int(websocket.query_params.get("height", "720"))))
         dpi = max(72, min(300, int(websocket.query_params.get("dpi", "96"))))
