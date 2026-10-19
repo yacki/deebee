@@ -186,9 +186,10 @@ def _rdp_parameter(profile: RemoteProfile, name: str, width: int, height: int, d
         "dpi": str(dpi),
         "color-depth": str(options.get("color_depth", 24)),
         "resize-method": "display-update",
-        "enable-wallpaper": "true",
-        "enable-font-smoothing": "true",
-        "enable-desktop-composition": "true",
+        # Keep Guacamole's bandwidth-saving defaults for remote sessions.
+        "enable-wallpaper": "false",
+        "enable-font-smoothing": "false",
+        "enable-desktop-composition": "false",
         "disable-audio": "false",
         "enable-audio-input": "false",
         "read-only": "false",
