@@ -112,6 +112,7 @@ function draftKey(profileId: string) { return `deebee_query_drafts:${profileId}`
 function workspaceKey(profileId: string) { return `deebee_workspace:${profileId}`; }
 function isQueryTab(tab: WorkTab): tab is QueryTab { return tab.type === "query"; }
 function isDatabaseTab(tab: WorkTab): tab is Exclude<WorkTab,RemoteTab> { return tab.type !== "ssh" && tab.type !== "rdp" && tab.type !== "k8s"; }
+function markBackendOnline() { const tab = active.value; connectionState.value = tab && !isDatabaseTab(tab) ? (tab.state || "checking") : "online"; }
 function queryDirty(tab: WorkTab) { return tab.type === "query" && tab.sql !== tab.savedSql; }
 function profileForTab(tab: WorkTab) { return profiles.value.find(item => item.id === tab.profileId); }
 function profileNameForTab(tab: WorkTab) { return profileForTab(tab)?.name || "连接已删除"; }
@@ -196,7 +197,12 @@ async function checkConnection(showFeedback: boolean) {
     const states = await Promise.all(tabs.value.filter(isQueryTab).filter(tab => !tab.loading).map(ensureQuerySession));
     const rebuilt = states.filter(state => state !== "ok").length;
     const lostTransactions = states.filter(state => state === "transaction-lost").length;
-    connectionState.value = "online";
+    const remoteTab = active.value && !isDatabaseTab(active.value) ? active.value : undefined;
+    connectionState.value = remoteTab ? (remoteTab.state || "checking") : "online";
+    if (remoteTab && !rebuilt) {
+      if (showFeedback) flash(connectionState.value === "online" ? "远程会话连接正常" : "远程会话未连接，请在会话中重新连接", connectionState.value !== "online");
+      return connectionState.value === "online";
+    }
     if (previous === "offline" || rebuilt) {
       for (const tab of tabs.value) if (tab.type === "query" && tab.error?.includes("连接中断")) tab.error = "连接已恢复，本条 SQL 未自动重放，请重新执行。";
       flash(lostTransactions ? `连接已恢复，但 ${lostTransactions} 个手动事务已丢失` : rebuilt ? `连接已恢复，已重建 ${rebuilt} 个查询会话` : "后台连接已恢复", lostTransactions > 0);
@@ -221,10 +227,10 @@ function startEditorResize(event: PointerEvent) {
   const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); document.body.classList.remove("resizing-query"); stopEditorResize = undefined; editorRef.value?.focus(); };
   stopEditorResize?.(); stopEditorResize = stop; document.body.classList.add("resizing-query"); window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop, { once: true });
 }
-function activateTab(tab: WorkTab) { activeId.value = tab.id; lastActiveTabIds.set(tab.profileId,tab.id); database.value = tab.database; schema.value = tab.schema; if (tab.type === "query") resultPane.value = tab.response?.results.some(result => result.kind === "rows") ? `result-${tab.response.results.findIndex(result => result.kind === "rows")}` : "message"; }
+function activateTab(tab: WorkTab) { activeId.value = tab.id; lastActiveTabIds.set(tab.profileId,tab.id); database.value = tab.database; schema.value = tab.schema; if (!isDatabaseTab(tab)) connectionState.value = tab.state || "checking"; if (tab.type === "query") resultPane.value = tab.response?.results.some(result => result.kind === "rows") ? `result-${tab.response.results.findIndex(result => result.kind === "rows")}` : "message"; }
 async function selectTab(tab: WorkTab) {
   const targetProfile=profileForTab(tab);if(!targetProfile)return flash("该标签所属连接已不存在",true);
-  if(targetProfile.id!==profile.value?.id){try{await initializeProfile(targetProfile,tab);connectionState.value="online";}catch(reason){connectionState.value="offline";flashError(reason);}return;}
+  if(targetProfile.id!==profile.value?.id){try{await initializeProfile(targetProfile,tab);markBackendOnline();}catch(reason){connectionState.value="offline";flashError(reason);}return;}
   activateTab(tab);
   try { await prepareDatabaseTab(tab); } catch(reason) { flashError(reason); }
 }
@@ -247,7 +253,7 @@ async function bootstrap() {
     profiles.value = await api<Profile[]>("/connections"); await api("/sessions/cleanup", { method: "POST", body: jsonBody({ workspace_id: workspaceId() }) });
     const savedProfile = localStorage.getItem("deebee_profile_id"); const initial = profiles.value.find(item => item.id === savedProfile) || profiles.value[0];
     if (!initial) { resetConnectionWorkspace(); openCreateConnection(); return; }
-    try { await initializeProfile(initial,undefined,false); connectionState.value = "online"; }
+    try { await initializeProfile(initial,undefined,false); markBackendOnline(); }
     catch (reason) { connectionState.value = "offline"; flash(`连接 ${initial.name} 暂不可用：${errorText(reason)}`, true); }
     restoreInactiveWorkspaces(initial.id);
   } catch (reason) { if (errorText(reason).includes("登录")) await logout(true); else fatal.value = errorText(reason); }
@@ -366,7 +372,7 @@ async function restoreWorkspaceTabs(nextProfile: Profile, workspace: ProfileWork
 }
 async function switchProfile(profileId: string) {
   const next = profiles.value.find(item => item.id === profileId); if (!next || next.id === profile.value?.id) return;
-  try { await initializeProfile(next); connectionState.value = "online"; flash(`已切换到 ${next.name}`); }
+  try { await initializeProfile(next); markBackendOnline(); flash(`已切换到 ${next.name}`); }
   catch (reason) { flashError(reason); }
 }
 function selectProfileNode(item: Profile) {
@@ -448,15 +454,16 @@ async function saveConnection() {
     profiles.value = await api<Profile[]>("/connections"); connectionDialog.value = undefined;
     const next = profiles.value.find(item => item.id === saved.id)!;
     try {
-      await initializeProfile(next, undefined, next.driver !== "ssh");
-      if (next.driver === "ssh") openRemoteSession("ssh", next.id);
-      connectionState.value = "online";
+      const freshRemote = next.driver === "ssh" || next.driver === "rdp";
+      await initializeProfile(next, undefined, !freshRemote);
+      if (freshRemote) openRemoteSession(next.driver, next.id);
+      if (!freshRemote) markBackendOnline();
       flash(saved.resource_sync?.state === "pending" ? (saved.resource_sync.message || "连接已保存，资源池同步待重试") : `连接 ${saved.name} 已保存并加入资源管理`, saved.resource_sync?.state === "pending");
     } catch (reason) { connectionState.value = "offline"; flash(`连接已保存，但当前无法连接：${errorText(reason)}`, true); }
   } catch (reason) { dialog.error = errorText(reason); }
   finally { dialog.saving = false; }
 }
-async function deleteConnection(target=profile.value){if(!target||!confirm(`确定删除连接“${target.name}”吗？已打开的查询会话会同时关闭。`))return;try{const currentId=profile.value?.id;await api(`/connections/${target.id}`,{method:"DELETE"});tabs.value=tabs.value.filter(tab=>tab.profileId!==target.id);hydratedProfileIds.delete(target.id);lastActiveTabIds.delete(target.id);localStorage.removeItem(draftKey(target.id));localStorage.removeItem(workspaceKey(target.id));profiles.value=await api<Profile[]>("/connections");const next=profiles.value.find(item=>item.id===currentId)||profiles.value[0];if(next&&next.id!==profile.value?.id){try{await initializeProfile(next);connectionState.value="online";}catch(reason){connectionState.value="offline";flash(`连接 ${next.name} 暂不可用：${errorText(reason)}`,true);}}else if(!next){resetConnectionWorkspace();openCreateConnection();}flash(`连接 ${target.name} 已删除`);}catch(reason){flashError(reason);}}
+async function deleteConnection(target=profile.value){if(!target||!confirm(`确定删除连接“${target.name}”吗？已打开的查询会话会同时关闭。`))return;try{const currentId=profile.value?.id;await api(`/connections/${target.id}`,{method:"DELETE"});tabs.value=tabs.value.filter(tab=>tab.profileId!==target.id);hydratedProfileIds.delete(target.id);lastActiveTabIds.delete(target.id);localStorage.removeItem(draftKey(target.id));localStorage.removeItem(workspaceKey(target.id));profiles.value=await api<Profile[]>("/connections");const next=profiles.value.find(item=>item.id===currentId)||profiles.value[0];if(next&&next.id!==profile.value?.id){try{await initializeProfile(next);markBackendOnline();}catch(reason){connectionState.value="offline";flash(`连接 ${next.name} 暂不可用：${errorText(reason)}`,true);}}else if(!next){resetConnectionWorkspace();openCreateConnection();}flash(`连接 ${target.name} 已删除`);}catch(reason){flashError(reason);}}
 async function loadSchemas(db: string) {
   if (!profile.value || !usesSchemas(profile.value.driver)) return [];
   const payload = await api<DatabaseSchema[]>(`/connections/${profile.value.id}/databases/${encodeURIComponent(db)}/schemas`);
@@ -542,7 +549,7 @@ function attachQueryResultSources(tab: QueryTab, sql: string, response: QueryRes
 }
 function acceptQueryResponse(tab: QueryTab, sql: string, response: QueryResponse) {
   attachQueryResultSources(tab, sql, response);
-  updateTab(tab.id, { response, loading: false, autocommit: response.autocommit }); const firstRows = response.results.findIndex(result => result.kind === "rows"); resultPane.value = firstRows >= 0 ? `result-${firstRows}` : "message"; history.value = [sql, ...history.value.filter(item => item !== sql)].slice(0, 100); localStorage.setItem("deebee_history", JSON.stringify(history.value)); connectionState.value = "online";
+  updateTab(tab.id, { response, loading: false, autocommit: response.autocommit }); const firstRows = response.results.findIndex(result => result.kind === "rows"); resultPane.value = firstRows >= 0 ? `result-${firstRows}` : "message"; history.value = [sql, ...history.value.filter(item => item !== sql)].slice(0, 100); localStorage.setItem("deebee_history", JSON.stringify(history.value)); markBackendOnline();
 }
 async function runQuery(tab: QueryTab, sql = tab.sql) {
   if (!sql.trim()) return; updateTab(tab.id, { loading: true, error: undefined }); resultPane.value = "message";
@@ -757,9 +764,23 @@ async function finishWizard(){if(!profile.value||!wizard.value)return;const targ
   await loadObjects(target.database,target.schema);const dataTab=tabs.value.find(item=>item.type==="data"&&item.profileId===profile.value?.id&&item.database===target.database&&item.schema===target.schema&&item.table===target.table);if(dataTab?.type==="data")await loadData(dataTab);if(wizard.value===target)wizard.value=undefined;flash(success)
 }catch(reason){if(errorText(reason)==="任务已取消")flash("任务已取消");else flashError(reason)}finally{if(wizard.value===target||!activeJobId.value){wizardRunning.value=false;jobCancelling.value=false}}}
 
-async function testCurrentConnection() { if (!profile.value) return;if(needsSshHostKey(profile.value)){openEditConnection(profile.value);await testConnectionDialog();return;} try { connectionState.value="checking"; const result=await api<{latency_ms:number}>(`/connections/${profile.value.id}/test`, { method:"POST" }); connectionState.value="online"; flash(`${driverLabel(profile.value.driver)} 连接正常 · ${result.latency_ms} ms`); } catch (reason) { connectionState.value="offline"; flashError(reason); } }
+async function testCurrentConnection() {
+  const current = profile.value;
+  if (!current) return;
+  if (needsSshHostKey(current)) { openEditConnection(current); await testConnectionDialog(); return; }
+  try {
+    connectionState.value = "checking";
+    const result = await api<{latency_ms:number}>(`/connections/${current.id}/test`, { method:"POST" });
+    if (profile.value?.id !== current.id) return;
+    markBackendOnline();
+    const disconnected = active.value && !isDatabaseTab(active.value) && active.value.state !== "online";
+    flash(`${driverLabel(current.driver)} 测试连接成功 · ${result.latency_ms} ms${disconnected ? '；当前会话已断开，请点击“重新连接”' : ''}`);
+  } catch (reason) {
+    if (profile.value?.id === current.id) { connectionState.value = "offline"; flashError(reason); }
+  }
+}
 function openRemoteSession(driver: ConnectionDriver = profile.value?.driver || "ssh",profileId=profile.value?.id) { if(!isRemoteDriver(driver)||!profileId)return;const target=profiles.value.find(item=>item.id===profileId);if(target&&needsSshHostKey(target)){openEditConnection(target);void testConnectionDialog(true);return;}const count=tabs.value.filter(item=>item.type===driver&&item.profileId===profileId).length+1;const title=driver==="ssh"?`SSH 终端 ${count}`:driver==="k8s"?`K8s 工作区 ${count}`:`远程桌面 ${count}`;const tab:RemoteTab={id:uid(),profileId,type:driver,title,database:"",schema:""};tabs.value.push(tab);activateTab(tab); }
-function acceptRemoteState(tab:RemoteTab,value:"online"|"checking"|"offline"){if(tab.profileId===profile.value?.id&&tab.id===activeId.value)connectionState.value=value;}
+function acceptRemoteState(tab:RemoteTab,value:"online"|"checking"|"offline"){tab.state=value;if(tab.profileId===profile.value?.id&&tab.id===activeId.value)connectionState.value=value;}
 function toolbarItems(): ToolbarItem[] {
   const create: ToolbarItem = { label:"新建连接", icon:"lucide:server-crash", action:()=>openCreateConnection() };
   const current = profile.value;

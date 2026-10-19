@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from deebee import remote_connections
+from deebee.mysql import DeeBeeError
 from deebee.remote_connections import RemoteProfile, encode_instruction, read_instruction
 from deebee.workbench import DatabaseWorkbenches
 
@@ -88,6 +91,7 @@ def test_remote_profile_rejects_invalid_options(
 
 def test_guacamole_instruction_codec_handles_utf8_and_multiple_values() -> None:
     raw = encode_instruction("error", "认证失败", "512")
+    assert raw == "5.error,4.认证失败,3.512;".encode("utf-8")
 
     async def decode() -> tuple[str, list[str], bytes]:
         reader = asyncio.StreamReader()
@@ -99,6 +103,65 @@ def test_guacamole_instruction_codec_handles_utf8_and_multiple_values() -> None:
     assert opcode == "error"
     assert values == ["认证失败", "512"]
     assert original == raw
+
+
+def test_guacamole_reads_unicode_character_lengths_without_consuming_next_instruction() -> None:
+    async def decode():
+        reader = asyncio.StreamReader()
+        raw = "4.name,5.桌面😀你好;4.sync,3.123;".encode("utf-8")
+        reader.feed_data(raw)
+        reader.feed_eof()
+        first = await read_instruction(reader)
+        second = await read_instruction(reader)
+        assert first[:2] == ("name", ["桌面😀你好"])
+        assert second[:2] == ("sync", ["123"])
+    asyncio.run(decode())
+
+
+@pytest.mark.parametrize(("message", "expected"), [
+    ("SSL/TLS connection failed (untrusted/self-signed certificate?)", "证书校验失败"),
+    ("Authentication failure (invalid credentials?)", "请检查用户名、密码和域"),
+])
+def test_rdp_test_rejects_placeholder_desktop_before_authentication(monkeypatch, message, expected):
+    async def verify():
+        reader = asyncio.StreamReader()
+        reader.feed_data(encode_instruction("size", "0", "800", "600") + encode_instruction("error", message, "519"))
+        reader.feed_eof()
+        tunnel = type("Tunnel", (), {"reader": reader, "close": AsyncMock()})()
+        monkeypatch.setattr(remote_connections.GuacdTunnel, "connect", AsyncMock(return_value=tunnel))
+        with pytest.raises(DeeBeeError, match=expected):
+            await remote_connections.test_rdp(RemoteProfile("rdp", "rdp", "RDP", "localhost", 3389, "user", "secret"))
+        tunnel.close.assert_awaited_once()
+    asyncio.run(verify())
+
+
+def test_rdp_test_waits_for_authenticated_frame_and_acknowledges_sync(monkeypatch):
+    async def verify():
+        reader = asyncio.StreamReader()
+        reader.feed_data(encode_instruction("size", "0", "800", "600") + encode_instruction("sync", "123"))
+        reader.feed_eof()
+        written = []
+        writer = type("Writer", (), {"write": lambda _, data: written.append(data), "drain": AsyncMock()})()
+        tunnel = type("Tunnel", (), {"reader": reader, "writer": writer, "close": AsyncMock()})()
+        monkeypatch.setattr(remote_connections.GuacdTunnel, "connect", AsyncMock(return_value=tunnel))
+        result = await remote_connections.test_rdp(RemoteProfile("rdp", "rdp", "RDP", "localhost", 3389, "user", "secret"))
+        assert result["ok"] is True
+        assert written == [encode_instruction("sync", "123")]
+        tunnel.close.assert_awaited_once()
+    asyncio.run(verify())
+
+
+def test_rdp_test_reports_disconnect_before_first_frame(monkeypatch):
+    async def verify():
+        reader = asyncio.StreamReader()
+        reader.feed_data(encode_instruction("size", "0", "800", "600"))
+        reader.feed_eof()
+        tunnel = type("Tunnel", (), {"reader": reader, "close": AsyncMock()})()
+        monkeypatch.setattr(remote_connections.GuacdTunnel, "connect", AsyncMock(return_value=tunnel))
+        with pytest.raises(DeeBeeError, match="登录完成前断开"):
+            await remote_connections.test_rdp(RemoteProfile("rdp", "rdp", "RDP", "localhost", 3389, "user", "secret"))
+        tunnel.close.assert_awaited_once()
+    asyncio.run(verify())
 
 
 def test_remote_profile_public_shape_never_exposes_secrets() -> None:

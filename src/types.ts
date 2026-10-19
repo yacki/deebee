@@ -34,7 +34,7 @@ export type QueryTab = TabConnection & { id: string; type: "query"; title: strin
 export type DataTab = TabConnection & { id: string; type: "data"; title: string; database: string; schema: string; table: string; loading: boolean; data?: TableData; error?: string; page: number; filterColumn: string; filterValue: string; sort?: { column: string; direction: "asc" | "desc" }; selected: number | null };
 export type DesignerTab = TabConnection & { id: string; type: "designer"; title: string; database: string; schema: string; table: string; currentTable: string | null; loading: boolean; spec?: TableSpec; source?: TableSchema; error?: string; pane: "columns" | "indexes" | "foreign" | "checks" | "ddl"; statements: string[]; dangerous: string[] };
 export type ObjectsTab = TabConnection & { id: string; type: "objects"; title: string; database: string; schema: string; kind: "tables" | "views" | "routines" | "triggers" | "events" };
-export type RemoteTab = TabConnection & { id: string; type: "ssh" | "rdp" | "k8s"; title: string; database: ""; schema: "" };
+export type RemoteTab = TabConnection & { id: string; type: "ssh" | "rdp" | "k8s"; title: string; database: ""; schema: ""; state?: "online" | "checking" | "offline" };
 export type WorkTab = QueryTab | DataTab | DesignerTab | ObjectsTab | RemoteTab;
 
 export type MenuItem = { id: string; label?: string; icon?: string; shortcut?: string; danger?: boolean; disabled?: boolean; separator?: boolean; children?: MenuItem[]; action?: () => void | Promise<void> };

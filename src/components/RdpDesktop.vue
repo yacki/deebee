@@ -118,6 +118,7 @@ function connect() {
   disconnect();
   if (!viewport.value || !props.active || disposed) return;
   const generation = connectionGeneration;
+  let retryAllowed = true;
   state.value = "connecting";
   message.value = "正在建立 RDP 会话";
   emit("state", "checking");
@@ -152,18 +153,26 @@ function connect() {
       refreshViewport(true);
     }
     else if (next === Guacamole.Client.State.DISCONNECTED) {
-      state.value = "closed";
-      message.value = "远程桌面已断开";
+      if (state.value !== "error") {
+        state.value = "closed";
+        message.value = "远程桌面已断开";
+      }
       emit("state", "offline");
-      scheduleReconnect();
+      if (retryAllowed) scheduleReconnect();
     }
   };
   sessionClient.onerror = status => {
     if (generation !== connectionGeneration || sessionClient !== client) return;
     state.value = "error";
     message.value = status.message || "RDP 连接失败";
+    retryAllowed = [
+      Guacamole.Status.Code.SERVER_BUSY,
+      Guacamole.Status.Code.UPSTREAM_TIMEOUT,
+      Guacamole.Status.Code.UPSTREAM_UNAVAILABLE,
+      Guacamole.Status.Code.CLIENT_TIMEOUT,
+    ].some(code => code === status.code);
     emit("state", "offline");
-    scheduleReconnect();
+    if (retryAllowed) scheduleReconnect();
   };
   const { width, height } = dimensions() ?? lastVisibleSize;
   sessionClient.connect(new URLSearchParams({ token: authToken(), width: String(width), height: String(height), dpi: "96" }).toString());

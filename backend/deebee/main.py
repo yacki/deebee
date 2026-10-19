@@ -23,7 +23,7 @@ from .config import settings
 from .jobs import jobs
 from .mysql import DeeBeeError
 from .security import issue_token, verify_token
-from .remote_connections import GuacdTunnel, encode_instruction, open_ssh, read_instruction
+from .remote_connections import GuacdTunnel, encode_instruction, open_ssh, rdp_error_message, read_instruction
 from .kubernetes import KubernetesTerminalProcess, kubernetes_tree, temporary_kubeconfig
 from .workbench import workbench
 from .access.audit import preview_value, redact_text
@@ -697,7 +697,9 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
 
         async def relay_server() -> None:
             while True:
-                _, _, raw = await read_instruction(tunnel.reader)
+                opcode, arguments, raw = await read_instruction(tunnel.reader)
+                if opcode == "error" and arguments:
+                    raw = encode_instruction("error", rdp_error_message(arguments[0]), *arguments[1:])
                 await send_text(raw.decode("utf-8"))
 
         async def relay_client() -> None:
