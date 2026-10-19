@@ -41,6 +41,7 @@ test('SSH recording plays terminal output and supports seeking and resizing',asy
 });
 
 test('RDP protocol recording renders its actual screen and seeking works',async({page})=>{
+  await page.clock.install();
   const stream=instruction('size','0','320','200')+instruction('sync','1000')+
     instruction('rect','0','0','0','320','200')+instruction('cfill','14','0','30','110','210','255')+instruction('sync','2000')+
     instruction('rect','0','0','0','80','80')+instruction('cfill','14','0','220','40','30','255')+instruction('sync','3000');
@@ -50,6 +51,8 @@ test('RDP protocol recording renders its actual screen and seeking works',async(
   await expect(page.getByText('正在加载录像…',{exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'跳至结尾',exact:true}).click();
   await expect.poll(()=>page.locator('.recording-viewport canvas').first().evaluate((canvas:HTMLCanvasElement)=>Array.from(canvas.getContext('2d')!.getImageData(10,10,1,1).data))).toEqual([220,40,30,255]);
+  await page.clock.runFor(500);
   await expect(page.getByLabel('回放进度')).toHaveValue('2000');
+  await expect(page.getByRole('button',{name:'播放',exact:true})).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
