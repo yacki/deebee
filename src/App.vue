@@ -17,7 +17,8 @@ import type { Catalog, ConnectionDraft, ConnectionDriver, DataTab, Database, Dat
 
 const TABLE_DATA_LIMIT = 1000;
 
-type ConnectionDialogState = ConnectionDraft & { mode: "create" | "edit"; id?: string; saving: boolean; testing: boolean; testMessage: string; error: string; nameFollowsHost: boolean; section: "general" | "options" | "ssh" | "proxy" };
+type ConnectionTestResult = { latency_ms:number; version?:string; database?:string; host_key_fingerprint?:string; host_key_new?:boolean };
+type ConnectionDialogState = ConnectionDraft & { mode: "create" | "edit"; id?: string; saving: boolean; testing: boolean; testMessage: string; error: string; nameFollowsHost: boolean; section: "general" | "options" | "ssh" | "proxy"; hostKey?: { fingerprint:string; host:string; port:number; signature:string; saveAfterConfirm:boolean } };
 type QueryDraft = Pick<QueryTab, "title" | "database" | "schema" | "sql" | "savedSql">;
 type QueryViewDraft = QueryDraft & Pick<QueryTab, "id" | "type">;
 type DataViewDraft = Pick<DataTab, "id" | "type" | "title" | "database" | "schema" | "table" | "page" | "filterColumn" | "filterValue" | "sort">;
@@ -264,6 +265,11 @@ async function initializeProfile(nextProfile: Profile, preferredTab?: WorkTab, o
     const savedPreferred = savedWorkspace?.tabs.find(item=>item.id===savedWorkspace.activeTabId);
     const preferred=preferredTab?.profileId===nextProfile.id?preferredTab:tabs.value.find(item=>item.id===lastActiveTabIds.get(nextProfile.id)&&item.profileId===nextProfile.id)||tabs.value.find(item=>item.profileId===nextProfile.id);
     if (isRemoteDriver(nextProfile.driver)) {
+      if (needsSshHostKey(nextProfile)) {
+        openEditConnection(nextProfile);
+        await testConnectionDialog(true);
+        return;
+      }
       const remoteTab=preferred&&(preferred.type==="ssh"||preferred.type==="rdp"||preferred.type==="k8s")?preferred:tabs.value.find((item):item is RemoteTab=>item.profileId===nextProfile.id&&item.type===nextProfile.driver);
       if(remoteTab)activateTab(remoteTab);
       else {
@@ -378,8 +384,78 @@ function useCustomConnectionName(){if(connectionDialog.value?.mode==="create")co
 async function loadKubeconfigFile(event:Event){const file=(event.target as HTMLInputElement).files?.[0];const dialog=connectionDialog.value;if(!file||!dialog)return;const value=await file.text();dialog.private_key=value;dialog.options.k8s_auth_method="kubeconfig";let server="";try{const parsed=JSON.parse(value) as {clusters?:Array<{cluster?:{server?:string}}>};server=parsed.clusters?.[0]?.cluster?.server||"";}catch{server=value.match(/^\s*server:\s*["']?([^\s"']+)/m)?.[1]||"";}try{const url=new URL(server);dialog.host=url.hostname;dialog.port=Number(url.port)||(url.protocol==="http:"?80:443);if(dialog.nameFollowsHost){dialog.name=url.hostname;}}catch{/* 后端在测试时给出精确的 kubeconfig 错误 */}}
 watch(()=>connectionDialog.value?.host,host=>{const dialog=connectionDialog.value;if(dialog?.mode==="create"&&(dialog.nameFollowsHost||!dialog.name.trim())){dialog.name=(host||"").trim();dialog.nameFollowsHost=true;}});
 function connectionPayload(dialog:ConnectionDialogState){let options:Partial<ConnectionDraft["options"]>={};if(isConnectionOnlyDriver(dialog.driver))options={tls:dialog.options.tls,verify_tls:dialog.options.verify_tls,...(dialog.driver==="mongodb"?{auth_database:dialog.options.auth_database,direct_connection:dialog.options.direct_connection}:{})};else if(dialog.driver==="mssql")options={encryption:dialog.options.encryption,read_only:dialog.options.read_only};else if(dialog.driver==="ssh")options={auth_method:dialog.options.auth_method,strict_host_key:dialog.options.strict_host_key,host_key_fingerprint:dialog.options.host_key_fingerprint};else if(dialog.driver==="rdp")options={domain:dialog.options.domain,security:dialog.options.security,ignore_certificate:dialog.options.ignore_certificate,color_depth:dialog.options.color_depth,timezone:dialog.options.timezone};else if(dialog.driver==="k8s")options={k8s_auth_method:dialog.options.k8s_auth_method,namespace:dialog.options.namespace,verify_tls:dialog.options.verify_tls};if(isDatabaseDriver(dialog.driver))options={...options,ssh_tunnel:dialog.options.ssh_tunnel,ssh_host:dialog.options.ssh_host,ssh_port:Number(dialog.options.ssh_port),ssh_user:dialog.options.ssh_user,ssh_auth_method:dialog.options.ssh_auth_method,ssh_host_key_mode:dialog.options.ssh_host_key_mode,ssh_host_key_fingerprint:dialog.options.ssh_host_key_fingerprint,ssh_keepalive_seconds:Number(dialog.options.ssh_keepalive_seconds),proxy_enabled:dialog.options.proxy_enabled,proxy_type:dialog.options.proxy_type,proxy_host:dialog.options.proxy_host,proxy_port:Number(dialog.options.proxy_port),proxy_user:dialog.options.proxy_user,proxy_dns:dialog.options.proxy_dns};return{driver:dialog.driver,name:dialog.name,host:dialog.host,port:Number(dialog.port),user:dialog.user,password:dialog.mode==="edit"&&!dialog.password?null:dialog.password,private_key:dialog.mode==="edit"&&!dialog.private_key?null:dialog.private_key,ssh_password:dialog.mode==="edit"&&!dialog.ssh_password?null:dialog.ssh_password,ssh_private_key:dialog.mode==="edit"&&!dialog.ssh_private_key?null:dialog.ssh_private_key,proxy_password:dialog.mode==="edit"&&!dialog.proxy_password?null:dialog.proxy_password,default_database:isRemoteDriver(dialog.driver)?"":dialog.default_database,default_schema:usesSchemas(dialog.driver)?dialog.default_schema:"",options};}
-async function testConnectionDialog(){const dialog=connectionDialog.value;if(!dialog)return;dialog.testing=true;dialog.testMessage="";dialog.error="";try{const result=await api<{latency_ms:number;version?:string;database?:string;host_key_fingerprint?:string;host_key_new?:boolean}>("/connections/test",{method:"POST",body:jsonBody({...connectionPayload(dialog),profile_id:dialog.mode==="edit"?dialog.id:""})});if(result.host_key_new&&result.host_key_fingerprint&&(dialog.driver==="ssh"||dialog.options.ssh_tunnel)){if(!confirm(`首次连接到该 SSH 主机。\n\nSHA256 指纹：\n${result.host_key_fingerprint}\n\n确认信任并保存这个主机密钥吗？`))throw new Error("已取消信任 SSH 主机密钥");if(dialog.driver==="ssh")dialog.options.host_key_fingerprint=result.host_key_fingerprint;else dialog.options.ssh_host_key_fingerprint=result.host_key_fingerprint;}dialog.testMessage=`连接成功 · ${result.latency_ms} ms${result.database?` · ${result.database}`:""}`;}catch(reason){dialog.error=errorText(reason);}finally{if(connectionDialog.value)connectionDialog.value.testing=false;}}
-async function saveConnection(){const dialog=connectionDialog.value;if(!dialog)return;if(isDatabaseDriver(dialog.driver)&&dialog.options.ssh_tunnel&&dialog.options.ssh_host_key_mode!=="insecure"&&!dialog.options.ssh_host_key_fingerprint){await testConnectionDialog();if(!dialog.options.ssh_host_key_fingerprint)return;}dialog.saving=true;dialog.error="";try{const saved=await api<Profile & {resource_sync?: {state:string;message?:string}}>(dialog.mode==="edit"?`/connections/${dialog.id}`:"/connections",{method:dialog.mode==="edit"?"PATCH":"POST",body:jsonBody(connectionPayload(dialog))});profiles.value=await api<Profile[]>("/connections");connectionDialog.value=undefined;const next=profiles.value.find(item=>item.id===saved.id)!;try{await initializeProfile(next);connectionState.value="online";flash(saved.resource_sync?.state==="pending"?(saved.resource_sync.message||"连接已保存，资源池同步待重试"):`连接 ${saved.name} 已保存并加入资源管理`,saved.resource_sync?.state==="pending");}catch(reason){connectionState.value="offline";flash(`连接已保存，但当前无法连接：${errorText(reason)}`,true);}}catch(reason){dialog.error=errorText(reason);}finally{if(connectionDialog.value)connectionDialog.value.saving=false;}}
+function needsSshHostKey(item: Pick<ConnectionDraft, "driver" | "options">) {
+  return item.driver === "ssh" && item.options.strict_host_key !== false && !item.options.host_key_fingerprint;
+}
+function needsConnectionHostKey(item: ConnectionDraft) {
+  return needsSshHostKey(item) || (isDatabaseDriver(item.driver) && item.options.ssh_tunnel && item.options.ssh_host_key_mode !== "insecure" && !item.options.ssh_host_key_fingerprint);
+}
+watch(() => {
+  const dialog = connectionDialog.value;
+  return dialog ? { dialog, host:dialog.host, port:dialog.port, sshHost:dialog.options.ssh_host, sshPort:dialog.options.ssh_port } : undefined;
+}, (next, previous) => {
+  if (!next || !previous || next.dialog !== previous.dialog) return;
+  if (next.dialog.driver === "ssh" && (next.host !== previous.host || next.port !== previous.port)) next.dialog.options.host_key_fingerprint = "";
+  if (next.sshHost !== previous.sshHost || next.sshPort !== previous.sshPort) next.dialog.options.ssh_host_key_fingerprint = "";
+}, { flush:"sync" });
+watch(() => connectionDialog.value && jsonBody(connectionPayload(connectionDialog.value)), signature => {
+  const dialog = connectionDialog.value;
+  if (dialog?.hostKey && dialog.hostKey.signature !== signature) dialog.hostKey = undefined;
+}, { flush:"sync" });
+async function testConnectionDialog(saveAfterConfirm = false) {
+  const dialog = connectionDialog.value;
+  if (!dialog || dialog.testing || dialog.saving) return false;
+  const signature = jsonBody(connectionPayload(dialog));
+  dialog.testing = true; dialog.testMessage = ""; dialog.error = ""; dialog.hostKey = undefined;
+  try {
+    const result = await api<ConnectionTestResult>("/connections/test", { method:"POST", body:jsonBody({...connectionPayload(dialog), profile_id:dialog.mode === "edit" ? dialog.id : ""}) });
+    if (connectionDialog.value !== dialog || jsonBody(connectionPayload(dialog)) !== signature) return false;
+    if (result.host_key_new && result.host_key_fingerprint && (dialog.driver === "ssh" || dialog.options.ssh_tunnel)) {
+      dialog.hostKey = { fingerprint:result.host_key_fingerprint, host:dialog.driver === "ssh" ? dialog.host : dialog.options.ssh_host, port:Number(dialog.driver === "ssh" ? dialog.port : dialog.options.ssh_port), signature, saveAfterConfirm };
+      return false;
+    }
+    if (needsConnectionHostKey(dialog)) throw new Error("SSH 测试未返回主机密钥指纹，请重新测试连接");
+    dialog.testMessage = `连接成功 · ${result.latency_ms} ms${result.database ? ` · ${result.database}` : ""}`;
+    return true;
+  } catch (reason) {
+    if (connectionDialog.value === dialog && jsonBody(connectionPayload(dialog)) === signature) dialog.error = errorText(reason);
+    return false;
+  } finally { dialog.testing = false; }
+}
+async function confirmConnectionHostKey() {
+  const dialog = connectionDialog.value; const hostKey = dialog?.hostKey;
+  if (!dialog || !hostKey || hostKey.signature !== jsonBody(connectionPayload(dialog))) return;
+  dialog.hostKey = undefined;
+  if (dialog.driver === "ssh") dialog.options.host_key_fingerprint = hostKey.fingerprint;
+  else dialog.options.ssh_host_key_fingerprint = hostKey.fingerprint;
+  dialog.error = ""; dialog.testMessage = "已确认 SSH 主机密钥，保存连接后生效";
+  if (hostKey.saveAfterConfirm) await saveConnection();
+}
+function rejectConnectionHostKey() {
+  const dialog = connectionDialog.value; if (!dialog) return;
+  dialog.hostKey = undefined; dialog.testMessage = ""; dialog.error = "已取消信任 SSH 主机密钥，未保存连接";
+}
+async function saveConnection() {
+  const dialog = connectionDialog.value;
+  if (!dialog || dialog.testing || dialog.saving || dialog.hostKey) return;
+  if (needsConnectionHostKey(dialog)) {
+    const tested = await testConnectionDialog(true);
+    if (!tested || connectionDialog.value !== dialog || needsConnectionHostKey(dialog)) return;
+  }
+  dialog.saving = true; dialog.error = "";
+  try {
+    const saved = await api<Profile & {resource_sync?: {state:string;message?:string}}>(dialog.mode === "edit" ? `/connections/${dialog.id}` : "/connections", {method:dialog.mode === "edit" ? "PATCH" : "POST", body:jsonBody(connectionPayload(dialog))});
+    profiles.value = await api<Profile[]>("/connections"); connectionDialog.value = undefined;
+    const next = profiles.value.find(item => item.id === saved.id)!;
+    try {
+      await initializeProfile(next, undefined, next.driver !== "ssh");
+      if (next.driver === "ssh") openRemoteSession("ssh", next.id);
+      connectionState.value = "online";
+      flash(saved.resource_sync?.state === "pending" ? (saved.resource_sync.message || "连接已保存，资源池同步待重试") : `连接 ${saved.name} 已保存并加入资源管理`, saved.resource_sync?.state === "pending");
+    } catch (reason) { connectionState.value = "offline"; flash(`连接已保存，但当前无法连接：${errorText(reason)}`, true); }
+  } catch (reason) { dialog.error = errorText(reason); }
+  finally { dialog.saving = false; }
+}
 async function deleteConnection(target=profile.value){if(!target||!confirm(`确定删除连接“${target.name}”吗？已打开的查询会话会同时关闭。`))return;try{const currentId=profile.value?.id;await api(`/connections/${target.id}`,{method:"DELETE"});tabs.value=tabs.value.filter(tab=>tab.profileId!==target.id);hydratedProfileIds.delete(target.id);lastActiveTabIds.delete(target.id);localStorage.removeItem(draftKey(target.id));localStorage.removeItem(workspaceKey(target.id));profiles.value=await api<Profile[]>("/connections");const next=profiles.value.find(item=>item.id===currentId)||profiles.value[0];if(next&&next.id!==profile.value?.id){try{await initializeProfile(next);connectionState.value="online";}catch(reason){connectionState.value="offline";flash(`连接 ${next.name} 暂不可用：${errorText(reason)}`,true);}}else if(!next){resetConnectionWorkspace();openCreateConnection();}flash(`连接 ${target.name} 已删除`);}catch(reason){flashError(reason);}}
 async function loadSchemas(db: string) {
   if (!profile.value || !usesSchemas(profile.value.driver)) return [];
@@ -681,8 +757,8 @@ async function finishWizard(){if(!profile.value||!wizard.value)return;const targ
   await loadObjects(target.database,target.schema);const dataTab=tabs.value.find(item=>item.type==="data"&&item.profileId===profile.value?.id&&item.database===target.database&&item.schema===target.schema&&item.table===target.table);if(dataTab?.type==="data")await loadData(dataTab);if(wizard.value===target)wizard.value=undefined;flash(success)
 }catch(reason){if(errorText(reason)==="任务已取消")flash("任务已取消");else flashError(reason)}finally{if(wizard.value===target||!activeJobId.value){wizardRunning.value=false;jobCancelling.value=false}}}
 
-async function testCurrentConnection() { if (!profile.value) return; try { connectionState.value="checking"; const result=await api<{latency_ms:number}>(`/connections/${profile.value.id}/test`, { method:"POST" }); connectionState.value="online"; flash(`${driverLabel(profile.value.driver)} 连接正常 · ${result.latency_ms} ms`); } catch (reason) { connectionState.value="offline"; flashError(reason); } }
-function openRemoteSession(driver: ConnectionDriver = profile.value?.driver || "ssh",profileId=profile.value?.id) { if(!isRemoteDriver(driver)||!profileId)return;const count=tabs.value.filter(item=>item.type===driver&&item.profileId===profileId).length+1;const title=driver==="ssh"?`SSH 终端 ${count}`:driver==="k8s"?`K8s 工作区 ${count}`:`远程桌面 ${count}`;const tab:RemoteTab={id:uid(),profileId,type:driver,title,database:"",schema:""};tabs.value.push(tab);activateTab(tab); }
+async function testCurrentConnection() { if (!profile.value) return;if(needsSshHostKey(profile.value)){openEditConnection(profile.value);await testConnectionDialog();return;} try { connectionState.value="checking"; const result=await api<{latency_ms:number}>(`/connections/${profile.value.id}/test`, { method:"POST" }); connectionState.value="online"; flash(`${driverLabel(profile.value.driver)} 连接正常 · ${result.latency_ms} ms`); } catch (reason) { connectionState.value="offline"; flashError(reason); } }
+function openRemoteSession(driver: ConnectionDriver = profile.value?.driver || "ssh",profileId=profile.value?.id) { if(!isRemoteDriver(driver)||!profileId)return;const target=profiles.value.find(item=>item.id===profileId);if(target&&needsSshHostKey(target)){openEditConnection(target);void testConnectionDialog(true);return;}const count=tabs.value.filter(item=>item.type===driver&&item.profileId===profileId).length+1;const title=driver==="ssh"?`SSH 终端 ${count}`:driver==="k8s"?`K8s 工作区 ${count}`:`远程桌面 ${count}`;const tab:RemoteTab={id:uid(),profileId,type:driver,title,database:"",schema:""};tabs.value.push(tab);activateTab(tab); }
 function acceptRemoteState(tab:RemoteTab,value:"online"|"checking"|"offline"){if(tab.profileId===profile.value?.id&&tab.id===activeId.value)connectionState.value=value;}
 function toolbarItems(): ToolbarItem[] {
   const create: ToolbarItem = { label:"新建连接", icon:"lucide:server-crash", action:()=>openCreateConnection() };
@@ -702,7 +778,7 @@ function toolbarItems(): ToolbarItem[] {
     backup: { label:"备份", icon:"lucide:archive-restore", action:()=>openWizard({kind:"dump",database:database.value,schema:schema.value}) },
     session: { label:current.driver==="ssh"?"新建终端":current.driver==="k8s"?"新建 K8s 工作区":"新建桌面", icon:current.driver==="ssh"?"lucide:square-terminal":current.driver==="k8s"?"lucide:ship-wheel":"lucide:monitor-up", action:()=>openRemoteSession(current.driver) },
     test: { label:"测试连接", icon:"lucide:plug-zap", action:testCurrentConnection },
-    settings: { label:"连接设置", icon:"lucide:settings-2", action:openEditConnection },
+    settings: { label:"连接设置", icon:"lucide:settings-2", action:()=>openEditConnection() },
   };
   return [create, ...toolbarCapabilitiesFor(current.driver).map(capability => actions[capability])];
 }
@@ -779,6 +855,14 @@ function toolbarItems(): ToolbarItem[] {
           <div class="driver-picker"><button v-for="key in driverChoices" :key="key" type="button" :class="{active:connectionDialog.driver===key}" :disabled="connectionDialog.mode==='edit'" @click="setConnectionDriver(key)"><Icon :icon="driverMetadata[key].icon" /><b>{{ driverMetadata[key].label }}</b></button></div>
           <nav class="connection-sections" :class="{database:isDatabaseDriver(connectionDialog.driver)}" aria-label="连接设置分区"><button type="button" :class="{active:connectionDialog.section==='general'}" @click="connectionDialog.section='general'">常规</button><button type="button" :class="{active:connectionDialog.section==='options'}" @click="connectionDialog.section='options'">选项</button><button v-if="isDatabaseDriver(connectionDialog.driver)" type="button" :class="{active:connectionDialog.section==='ssh'}" @click="connectionDialog.section='ssh'">SSH 隧道</button><button v-if="isDatabaseDriver(connectionDialog.driver)" type="button" :class="{active:connectionDialog.section==='proxy'}" @click="connectionDialog.section='proxy'">代理</button></nav>
           <div v-if="connectionDialog.error" class="connection-form-message error"><Icon icon="lucide:circle-x" />{{ connectionDialog.error }}</div><div v-else-if="connectionDialog.testMessage" class="connection-form-message success"><Icon icon="lucide:circle-check" />{{ connectionDialog.testMessage }}</div>
+          <div v-if="connectionDialog.hostKey" class="ssh-host-key-confirmation" role="group" aria-label="确认 SSH 主机密钥" aria-live="polite">
+            <strong>首次连接：确认 SSH 主机密钥</strong>
+            <p>主机：{{ connectionDialog.hostKey.host }}:{{ connectionDialog.hostKey.port }}</p>
+            <code>{{ connectionDialog.hostKey.fingerprint }}</code>
+            <p>请通过可信渠道核对 SHA256 指纹。确认后将保存该指纹，后续主机密钥变化时会阻止连接。</p>
+            <div><button type="button" @click="rejectConnectionHostKey">取消信任</button><button type="button" class="primary" @click="confirmConnectionHostKey">{{ connectionDialog.hostKey.saveAfterConfirm ? '信任并保存连接' : '信任此主机' }}</button></div>
+          </div>
+          <p v-else-if="needsSshHostKey(connectionDialog)" class="ssh-host-key-hint">首次连接需要确认 SSH 主机密钥。点击“测试连接”或“保存并连接”后，将在此处显示指纹和确认按钮。</p>
           <div v-if="connectionDialog.section==='general'" class="connection-fields">
             <label><span>连接名称</span><input v-model.trim="connectionDialog.name" aria-label="连接名称" autofocus required maxlength="100" placeholder="例如：生产库（只读）" @input="useCustomConnectionName" /></label>
             <div class="field-pair"><label><span>主机</span><input v-model.trim="connectionDialog.host" aria-label="服务器主机" required maxlength="255" placeholder="127.0.0.1" /></label><label class="port-field"><span>端口</span><input v-model.number="connectionDialog.port" aria-label="服务器端口" type="number" min="1" max="65535" required /></label></div>
@@ -820,7 +904,7 @@ function toolbarItems(): ToolbarItem[] {
             </template>
           </div>
         </section>
-        <footer><button type="button" :disabled="connectionDialog.testing||connectionDialog.saving" @click="testConnectionDialog"><Icon v-if="connectionDialog.testing" icon="lucide:loader-circle" class="spin" />{{ connectionDialog.testing?'正在测试…':'测试连接' }}</button><button type="button" @click="connectionDialog=undefined">取消</button><button class="primary" :disabled="connectionDialog.saving||connectionDialog.testing">{{ connectionDialog.saving?'正在保存…':'保存并连接' }}</button></footer>
+        <footer><button type="button" :disabled="connectionDialog.testing||connectionDialog.saving" @click="testConnectionDialog()"><Icon v-if="connectionDialog.testing" icon="lucide:loader-circle" class="spin" />{{ connectionDialog.testing?'正在测试…':'测试连接' }}</button><button type="button" @click="connectionDialog=undefined">取消</button><button class="primary" :disabled="connectionDialog.saving||connectionDialog.testing||!!connectionDialog.hostKey">{{ connectionDialog.saving?'正在保存…':'保存并连接' }}</button></footer>
       </form>
     </div>
     <div v-if="createDatabaseDialog" class="modal-backdrop" @mousedown.self="createDatabaseDialog=undefined"><form class="modal create-database-modal" role="dialog" aria-label="新建数据库" @submit.prevent="createDatabase"><header><div><Icon :icon="profile?driverMetadata[profile.driver].icon:'lucide:database-backup'" /><span><strong>新建数据库</strong><small>{{ profile ? driverLabel(profile.driver) : '' }}</small></span></div><button type="button" aria-label="关闭新建数据库" @click="createDatabaseDialog=undefined"><Icon icon="lucide:x" /></button></header><section><label><span>数据库名称</span><input v-model.trim="createDatabaseDialog.name" aria-label="数据库名称" autofocus autocomplete="off" placeholder="例如 app_data" pattern="[A-Za-z_][A-Za-z0-9_$]*" required /></label><template v-if="isMssql"><label><span>排序规则</span><select v-model="createDatabaseDialog.collation" aria-label="SQL Server 排序规则"><option value="">服务器默认</option><option value="Chinese_PRC_CI_AS">Chinese_PRC_CI_AS</option><option value="Latin1_General_100_CI_AS_SC_UTF8">Latin1_General_100_CI_AS_SC_UTF8</option><option value="SQL_Latin1_General_CP1_CI_AS">SQL_Latin1_General_CP1_CI_AS</option></select></label><label><span>恢复模式</span><select v-model="createDatabaseDialog.recovery_model" aria-label="SQL Server 恢复模式"><option value="SIMPLE">简单</option><option value="FULL">完整</option><option value="BULK_LOGGED">大容量日志</option></select></label><div class="database-size-fields"><label><span>数据文件</span><div><input v-model.number="createDatabaseDialog.data_size_mb" type="number" min="1" max="1048576" aria-label="数据文件初始大小" required /><b>MB</b></div></label><label><span>日志文件</span><div><input v-model.number="createDatabaseDialog.log_size_mb" type="number" min="1" max="1048576" aria-label="日志文件初始大小" required /><b>MB</b></div></label><label><span>自动增长</span><div><input v-model.number="createDatabaseDialog.filegrowth_mb" type="number" min="1" max="1048576" aria-label="数据库文件自动增长量" required /><b>MB</b></div></label></div></template><template v-else><label><span>字符集</span><select v-model="createDatabaseDialog.charset" aria-label="数据库字符集" :disabled="isPostgres"><option v-if="isPostgres" value="UTF8">UTF8</option><template v-else><option value="utf8mb4">utf8mb4</option><option value="utf8">utf8</option><option value="latin1">latin1</option><option value="ascii">ascii</option></template></select></label><label v-if="!isPostgres"><span>排序规则</span><select v-model="createDatabaseDialog.collation" aria-label="数据库排序规则"><option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option><option value="utf8mb4_general_ci">utf8mb4_general_ci</option><option value="utf8mb4_bin">utf8mb4_bin</option></select></label></template></section><footer><button type="button" @click="createDatabaseDialog=undefined">取消</button><button class="primary" :disabled="createDatabaseDialog.saving || !createDatabaseDialog.name">{{ createDatabaseDialog.saving ? '正在创建…' : '创建' }}</button></footer></form></div>

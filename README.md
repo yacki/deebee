@@ -74,6 +74,8 @@ Docker 会自动从 GitHub Container Registry 拉取包含前端和后端的完�
 
 登录后点击左侧“连接”标题旁的 `+`，可添加 MySQL、PostgreSQL、Redis、ClickHouse、MongoDB、SSH、Kubernetes 或 Remote Desktop。目标服务运行在 Docker 宿主机上时，连接主机名使用 `host.docker.internal`。SSH 支持密码和加密私钥认证，并在首次连接时确认主机密钥指纹；Kubernetes 支持 Bearer Token 和完整 Kubeconfig（包括客户端证书）；RDP 支持域、NLA/TLS/RDP 安全模式、动态分辨率和全屏。Kubernetes 的设计与安全边界见 [Kubernetes 功能说明](docs/KUBERNETES.md)。
 
+SSH 首次点击“保存并连接”会自动测试，并在连接设置窗口显示主机地址和 SHA256 指纹；通过可信渠道核对后，点击“信任并保存连接”即可自动保存并打开终端，无需再点测试或重连。单独点击“测试连接”也可确认指纹，取消信任不会保存连接。已有连接缺少指纹时，打开会话会自动进入这一流程；修改 SSH 主机或端口后需要重新确认。数据库 SSH 隧道也使用同一确认面板。
+
 ### 路径与反向代理
 
 默认访问前缀是 `/deebee`。可以通过 `-e DEEBEE_BASE_PATH=/其他路径` 修改；设为 `/` 则部署在域名根路径。前端资源和 API 会自动跟随这个路径，无需重新构建镜像。
