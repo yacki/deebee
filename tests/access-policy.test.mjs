@@ -10,7 +10,7 @@ const accounts = [
   { id:'second',resource_id:'db1',tier:'normal',enabled:true },
 ];
 test('navigation uses one vocabulary and nests resource accounts, credentials and settings',()=>{
-  assert.deepEqual(accessNavigation.map(s=>s.name),['外部身份','系统账号','资源管理','资源授权','执行记录','会话录像','审计日志','系统设置']);
+  assert.deepEqual(accessNavigation.map(s=>s.name),['外部身份','系统账号','用户组管理','资源管理','资源授权','执行记录','会话录像','审计日志','系统设置']);
   assert.equal(accessNavigation.some(s=>['accounts','api-keys','preview','identity-sources'].includes(s.id)),false);
   assert.equal(optionLabel('privileged'),'高权限账号');
 });
@@ -36,6 +36,11 @@ test('expiry is entered in local time, not Unix seconds',()=>{
 test('operation scopes stay within the selected resource protocol', async()=>{
   const {actionsForResource}=await import('../src/accessPolicy.ts');
   assert.deepEqual(actionsForResource('k8s').map(a=>a.value),['resources:read','k8s:read','k8s:write','privilege:use']);
-  assert.deepEqual(actionsForResource('ssh').map(a=>a.value),['resources:read','ssh:inspect','ssh:exec','privilege:use']);
+  assert.deepEqual(actionsForResource('ssh').map(a=>a.value),['resources:read','ssh:inspect','ssh:exec','ssh:connect','privilege:use']);
   assert.deepEqual(actionsForResource('mysql').map(a=>a.value),['resources:read','db:query','db:write','privilege:use']);
+});
+
+test('RDP authorization exposes only connection and explicit privilege controls', async()=>{
+  const {actionsForResource}=await import('../src/accessPolicy.ts');
+  assert.deepEqual(actionsForResource('rdp').map(a=>a.value),['resources:read','rdp:connect','privilege:use']);
 });

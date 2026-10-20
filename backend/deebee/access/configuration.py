@@ -7,7 +7,7 @@ from .models import AccessError, ENTITY_MODELS
 from .service import SECRET_FIELDS, INTERNAL_FIELDS, META_FIELDS, public_entity
 
 
-NAMES = {"identity-sources": "sources", "principals": "principals", "resources": "resources",
+NAMES = {"identity-sources": "sources", "principals": "principals", "roles": "roles", "role-memberships": "memberships", "resources": "resources",
          "accounts": "accounts", "identity-bindings": "bindings", "access-grants": "grants"}
 
 
@@ -16,7 +16,7 @@ class PreviewRollback(Exception):
 
 
 async def import_configuration(service, config: dict, actor: str, *, preview: bool):
-    if config.get("version") != 1 or set(config) - {"version", *NAMES}:
+    if config.get("version") not in {1, 2} or set(config) - {"version", *NAMES}:
         raise AccessError("INVALID_ARGUMENT", "配置版本或分组无效")
     items, seen = [], set()
     for name, kind in NAMES.items():

@@ -47,7 +47,7 @@ class ExecutionManager:
         last_cleanup = 0
         while True:
             with suppress(TimeoutError):
-                await asyncio.wait_for(self.changed.wait(), timeout=30)
+                await asyncio.wait_for(self.changed.wait(), timeout=1)
             self.changed.clear()
             if time.time() - last_cleanup > 3600:
                 self.store.cleanup()
@@ -56,8 +56,8 @@ class ExecutionManager:
                 try:
                     fresh = await self.service.auth.revalidate(ctx)
                     body = self.get_body(execution_id)
-                    _, account, grant = self.service.authorize(fresh, body["resource_id"], body["mode"], ACTION_SCOPES[body["tool"]])
-                    if account["version"] != body["account_version"] or grant["version"] != body["grant_version"]:
+                    resource, account, grant = self.service.authorize(fresh, body["resource_id"], body["mode"], ACTION_SCOPES[body["tool"]], body.get("access_option_id", ""))
+                    if resource["version"] != body["resource_version"] or account["version"] != body["account_version"] or grant["version"] != body["grant_version"]:
                         raise AccessError("AUTHORIZATION_CHANGED", "执行授权版本已变化", 403)
                 except Exception:
                     await self.cancel_internal(execution_id, "AUTHORIZATION_REVOKED")
@@ -84,7 +84,7 @@ class ExecutionManager:
             principal = self.store.get("principals", body["owner"], required=False) or {}
             self.store.audit(
                 body["owner"], "execution." + body["status"], execution_id,
-                {k: body[k] for k in ("resource_id", "account_id", "username", "mode", "source_id", "binding_id", "subject", "tool")},
+                {k: body[k] for k in ("resource_id", "account_id", "username", "mode", "source_id", "binding_id", "subject", "tool", "grant_id", "role_id", "role_name", "membership_id")},
                 surface="execution_worker", actor_name=principal.get("name", body["subject"]),
                 actor_kind=principal.get("kind", "service"), auth_method="delegated_execution",
                 source_id=body["source_id"], subject=body["subject"], credential_id=body.get("credential_id", ""),
@@ -101,7 +101,8 @@ class ExecutionManager:
         model = KubernetesInput if tool.startswith("k8s.") else SSHInspectInput if tool == "ssh.inspect" else ExecutionInput
         body = model.model_validate(values).model_dump()
         action = ACTION_SCOPES[tool]
-        resource, account, grant = self.service.authorize(ctx, body["resource_id"], body["mode"], action)
+        resource, account, grant = self.service.authorize(ctx, body["resource_id"], body["mode"], action, body.get("access_option_id", ""))
+        body["access_option_id"] = grant["access_option_id"]
         if tool.startswith("k8s."):
             if resource["type"] != "k8s":
                 raise AccessError("INVALID_ARGUMENT", "此操作需要 Kubernetes 资源")
@@ -143,7 +144,9 @@ class ExecutionManager:
                       "source_id": ctx.source_id, "subject": ctx.subject, "credential_id": ctx.credential_id, "client_id": ctx.client_id,
                       "tool": tool, "resource_id": resource["id"], "mode": body["mode"], "account_id": account["id"],
                       "username": account["username"], "account_alias": account["name"], "resource_version": resource["version"],
-                      "account_version": account["version"], "grant_version": grant["version"], "status": "queued", "created_at": time.time(),
+                      "account_version": account["version"], "grant_version": grant["version"],
+                      "access_option_id": grant["access_option_id"], "grant_id": grant["id"], "role_id": grant["role_id"],
+                      "role_name": grant["role_name"], "membership_id": grant["membership_id"], "status": "queued", "created_at": time.time(),
                       "request_hash": request_hash, "auth_expires_at": ctx.expires_at}
             self.store.db.execute("INSERT INTO executions VALUES(?,?,?,?,?,?,?,?,?,?)",
                                   (execution_id, ctx.principal_id, ctx.binding_id, idem, request_hash, encode(record), self.store.encrypt(body), None, time.time(), time.time()))
@@ -171,13 +174,13 @@ class ExecutionManager:
         try:
             fresh = await self.service.auth.revalidate(ctx)
             record = self.get_body(execution_id)
-            resource, account, grant = self.service.authorize(fresh, body["resource_id"], body["mode"], ACTION_SCOPES[record["tool"]])
+            resource, account, grant = self.service.authorize(fresh, body["resource_id"], body["mode"], ACTION_SCOPES[record["tool"]], record.get("access_option_id", ""))
             if (resource["version"], account["version"], grant["version"]) != (record["resource_version"], record["account_version"], record["grant_version"]):
                 raise AccessError("AUTHORIZATION_CHANGED", "排队期间配置已变化", 403)
             if handle.cancelled.is_set():
                 raise AccessError("CANCELLED", "尚未执行，已取消", 409)
             secret = self.service.account_secret(account)
-            timeout = min(body["timeout_seconds"], resource["timeout_seconds"], grant["limits"]["timeout_seconds"], max(0, fresh.expires_at - time.time()))
+            timeout = min(body["timeout_seconds"], resource["timeout_seconds"], grant["limits"]["timeout_seconds"], max(0, grant["authorization_expires_at"] - time.time()))
             max_bytes = min(resource["max_output_bytes"], grant["limits"]["max_output_bytes"])
             self.update(execution_id, {"status": "running", "started_at": time.time()})
             if record["tool"].startswith("k8s."):
@@ -221,7 +224,7 @@ class ExecutionManager:
 
     @staticmethod
     def public(body: dict) -> dict:
-        return {k: v for k, v in body.items() if k in {"id", "execution_id", "resource_id", "mode", "tool", "status", "created_at", "started_at", "ended_at", "error"}} | {
+        return {k: v for k, v in body.items() if k in {"id", "execution_id", "resource_id", "mode", "tool", "status", "grant_id", "role_id", "role_name", "membership_id", "created_at", "started_at", "ended_at", "error"}} | {
             "account": {"alias": body["account_alias"], "username": body["username"]}
         }
 
@@ -229,7 +232,7 @@ class ExecutionManager:
         body = self.get_body(execution_id)
         if body["owner"] != ctx.principal_id or body["binding_id"] != ctx.binding_id:
             raise AccessError("EXECUTION_NOT_FOUND", "执行记录不存在或无权限", 404)
-        self.service.authorize(ctx, body["resource_id"], body["mode"], ACTION_SCOPES[body["tool"]])
+        self.service.authorize(ctx, body["resource_id"], body["mode"], ACTION_SCOPES[body["tool"]], body.get("access_option_id", ""))
         result = self.public(body)
         with self.store.lock:
             row = self.store.db.execute("SELECT result_cipher FROM executions WHERE id=?", (execution_id,)).fetchone()
@@ -267,7 +270,7 @@ class ExecutionManager:
         try:
             if resource.get("connection_sync", {}).get("state", "synced") != "synced":
                 raise AccessError("CONNECTION_NOT_READY", resource["connection_sync"]["reason"], 409)
-            if resource["type"] not in {"ssh", "mysql", "postgresql", "k8s"} or (resource["type"] in {"mysql", "postgresql"} and not resource["database"]):
+            if resource["type"] not in {"ssh", "mysql", "postgresql", "k8s", "rdp"} or (resource["type"] in {"mysql", "postgresql"} and not resource["database"]):
                 raise AccessError("CONNECTION_NOT_READY", "资源类型或数据库配置尚未就绪", 409)
             result = await asyncio.wait_for(inspect_account(resource, account, self.service.account_secret(account)), 20)
         except Exception:
@@ -282,17 +285,31 @@ class ExecutionManager:
         self.changed.set()
         return public_entity(updated)
 
-    async def schema(self, ctx: AuthContext, resource_id: str, mode: str = "normal", cursor: str = "", table: str = ""):
-        resource, account, grant = self.service.authorize(ctx, resource_id, mode, "db:query")
+    async def schema(self, ctx: AuthContext, resource_id: str, mode: str = "normal", cursor: str = "", table: str = "", access_option_id: str = ""):
+        resource, account, grant = self.service.authorize(ctx, resource_id, mode, "db:query", access_option_id)
         if resource["type"] not in {"mysql", "postgresql"}:
             raise AccessError("INVALID_ARGUMENT", "此资源不是数据库")
-        rows = await asyncio.wait_for(asyncio.to_thread(database_schema, resource, account, self.service.account_secret(account)), 30)
-        fresh = self.service.authorize(await self.service.auth.revalidate(ctx), resource_id, mode, "db:query")
+        timeout = min(30, resource["timeout_seconds"], grant["limits"]["timeout_seconds"], grant["authorization_expires_at"] - time.time())
+        rows = await asyncio.wait_for(asyncio.to_thread(database_schema, resource, account, self.service.account_secret(account)), max(.001, timeout))
+        fresh = self.service.authorize(await self.service.auth.revalidate(ctx), resource_id, mode, "db:query", grant["access_option_id"])
         if any(old["version"] != new["version"] or old["id"] != new["id"] for old, new in zip((resource, account, grant), fresh)):
             raise AccessError("AUTHORIZATION_CHANGED", "读取期间授权已变化，请重新发起", 403)
-        purpose = "schema:" + resource_id + ":" + mode + ":" + table
+        purpose = "schema:" + resource_id + ":" + mode + ":" + table + ":" + grant["access_option_id"]
         if table:
             rows = [r for r in rows if r["table"] == table]
         offset = self.service.offset(ctx, purpose, cursor)
-        return {"columns": rows[offset:offset + 200], "next_cursor": self.service.cursor(ctx, purpose, offset + 200) if offset + 200 < min(len(rows), 10000) else None,
-                "truncated": len(rows) > 10000}
+        row_limit = min(10000, resource["max_rows"], grant["limits"]["max_rows"])
+        byte_limit = min(resource["max_output_bytes"], grant["limits"]["max_output_bytes"])
+        bounded = rows[:row_limit]
+        page = bounded[offset:offset + 200]
+        while True:
+            next_offset = offset + len(page)
+            result = {"columns": page, "next_cursor": self.service.cursor(ctx, purpose, next_offset) if next_offset < len(bounded) else None,
+                      "truncated": len(rows) > row_limit}
+            if len(encode(result).encode("utf-8")) <= byte_limit:
+                return result
+            if not page:
+                raise AccessError("OUTPUT_LIMIT", "结构信息超过输出限制，请缩小查询范围", 413)
+            page.pop()
+            if not page and offset < len(bounded):
+                raise AccessError("OUTPUT_LIMIT", "单项结构信息超过输出限制", 413)

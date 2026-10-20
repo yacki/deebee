@@ -463,9 +463,14 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
     session_status = 101
     session_error = ""
     sensitive_input = False
+    access_session = getattr(websocket.state, "access_session", None)
+    authorization_task = None
     try:
-        user = _websocket_user(websocket)
-        profile = workbench.remote_profile(profile_id, "ssh")
+        if access_session:
+            user, profile = access_session.ctx.principal_id, access_session.profile
+        else:
+            user = _websocket_user(websocket)
+            profile = workbench.remote_profile(profile_id, "ssh")
     except DeeBeeError:
         session_status = 401
         await websocket.close(code=4401)
@@ -479,9 +484,13 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
     input_task: asyncio.Task[Any] | None = None
     recording: SessionRecorder | None = None
     try:
+        if access_session:
+            authorization_task = asyncio.create_task(access_session.watch())
         recording = await SessionRecorder.start(websocket.scope["app"].state.recordings, "ssh", user, profile)
         await websocket.send_json({"type": "state", "state": "connecting"})
-        connection = await open_ssh(profile)
+        connection = await access_session.ssh_connection() if access_session else await open_ssh(profile)
+        if access_session:
+            await access_session.check()
         cols = max(20, min(500, int(websocket.query_params.get("cols", "120"))))
         rows = max(5, min(200, int(websocket.query_params.get("rows", "32"))))
         recording.append((json.dumps({"version": 2, "width": cols, "height": rows, "timestamp": int(time.time()), "title": profile.name}, ensure_ascii=False) + "\n").encode())
@@ -520,6 +529,8 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
             nonlocal input_archive, sensitive_input
             while True:
                 message = await websocket.receive_json()
+                if access_session:
+                    await access_session.check()
                 message_type = message.get("type")
                 if message_type == "data":
                     typed = str(message.get("data", ""))
@@ -538,20 +549,20 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
 
         output_task = asyncio.create_task(pump_output())
         input_task = asyncio.create_task(pump_input())
-        done, _ = await asyncio.wait({output_task, input_task, recording.task}, return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait({output_task, input_task, recording.task} | ({authorization_task} if authorization_task else set()), return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
     except WebSocketDisconnect:
         pass
     except Exception as exc:
         session_status = 500
-        session_error = type(exc).__name__
+        session_error = getattr(exc, "code", type(exc).__name__)
         with contextlib.suppress(Exception):
             await websocket.send_json(
                 {"type": "state", "state": "error", "message": str(exc)}
             )
     finally:
-        for task in (output_task, input_task):
+        for task in (output_task, input_task, authorization_task):
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -567,7 +578,10 @@ async def ssh_terminal(websocket: WebSocket, profile_id: str) -> None:
         if recording:
             with contextlib.suppress(Exception):
                 await recording.close(session_error)
-        _archive_remote_session(websocket, user, "ssh", profile_id, profile, started, session_status,
+        if access_session:
+            access_session.audit("ssh.session.close", session_error)
+        else:
+            _archive_remote_session(websocket, user, "ssh", profile_id, profile, started, session_status,
                                 input_archive, output_archive, session_error)
 
 
@@ -683,9 +697,14 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
     output_archive = ""
     session_status = 101
     session_error = ""
+    access_session = getattr(websocket.state, "access_session", None)
+    authorization_task = None
     try:
-        user = _websocket_user(websocket)
-        profile = workbench.remote_profile(profile_id, "rdp")
+        if access_session:
+            user, profile = access_session.ctx.principal_id, access_session.profile
+        else:
+            user = _websocket_user(websocket)
+            profile = workbench.remote_profile(profile_id, "rdp")
     except DeeBeeError:
         session_status = 401
         await websocket.close(code=4401)
@@ -709,11 +728,15 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
             await websocket.send_text(message)
 
     try:
+        if access_session:
+            authorization_task = asyncio.create_task(access_session.watch())
         recording = await SessionRecorder.start(websocket.scope["app"].state.recordings, "rdp", user, profile)
         width = max(320, min(7680, int(websocket.query_params.get("width", "1280"))))
         height = max(240, min(4320, int(websocket.query_params.get("height", "720"))))
         dpi = max(72, min(300, int(websocket.query_params.get("dpi", "96"))))
         tunnel = await GuacdTunnel.connect(profile, width=width, height=height, dpi=dpi)
+        if access_session:
+            await access_session.check()
         await send_text(encode_instruction("", tunnel.connection_id).decode("utf-8"))
 
         async def relay_server() -> None:
@@ -728,6 +751,8 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
             nonlocal input_archive
             while True:
                 message = await websocket.receive_text()
+                if access_session:
+                    await access_session.check()
                 if message.startswith("0.,"):
                     await send_text(message)
                     continue
@@ -746,7 +771,7 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
         client_task = asyncio.create_task(relay_client())
         keepalive_task = asyncio.create_task(keepalive())
         done, pending = await asyncio.wait(
-            {server_task, client_task, keepalive_task, recording.task}, return_when=asyncio.FIRST_COMPLETED
+            {server_task, client_task, keepalive_task, recording.task} | ({authorization_task} if authorization_task else set()), return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             if task is not recording.task:
@@ -757,12 +782,12 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
         pass
     except Exception as exc:
         session_status = 500
-        session_error = type(exc).__name__
+        session_error = getattr(exc, "code", type(exc).__name__)
         with contextlib.suppress(Exception):
             error = encode_instruction("error", str(exc), "512").decode("utf-8")
             await send_text(error)
     finally:
-        for task in (server_task, client_task, keepalive_task):
+        for task in (server_task, client_task, keepalive_task, authorization_task):
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -774,7 +799,10 @@ async def rdp_desktop(websocket: WebSocket, profile_id: str) -> None:
         if recording:
             with contextlib.suppress(Exception):
                 await recording.close(session_error)
-        _archive_remote_session(websocket, user, "rdp", profile_id, profile, started, session_status,
+        if access_session:
+            access_session.audit("rdp.session.close", session_error)
+        else:
+            _archive_remote_session(websocket, user, "rdp", profile_id, profile, started, session_status,
                                 input_archive, output_archive, session_error)
 
 
@@ -1251,7 +1279,7 @@ async def apply_ddl(body: DdlApplyBody, _: str = Depends(current_user)) -> dict[
 
 from .access.api import install_access
 
-access_lifespan = install_access(app, legacy=workbench)
+access_lifespan = install_access(app, legacy=workbench, session_handlers={"ssh": ssh_terminal, "rdp": rdp_desktop})
 
 web_directory = os.getenv("DEEBEE_WEB_DIR", "").strip()
 if web_directory:

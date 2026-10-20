@@ -12,6 +12,7 @@ const documentStartShortcut = process.platform === "darwin" ? "Meta+ArrowUp" : "
 const alignmentTables = Array.from({ length: 12 }, (_, index) => `deebee_ui_align_${String(index).padStart(2, "0")}`);
 let api: APIRequestContext;
 let sessionId = "";
+let defaultConnection: {name:string;host:string;port:number};
 
 async function query(sql: string) {
   const response = await api.post(`sessions/${sessionId}/query`, { data: { sql, limit: 1000 } });
@@ -48,6 +49,7 @@ test.beforeAll(async () => {
   await context.dispose();
   context = await request.newContext({ baseURL: apiBase, extraHTTPHeaders: { Authorization: `Bearer ${token}` } });
   api = context;
+  defaultConnection = (await (await api.get("connections")).json()).find((c:{id:string})=>c.id==="mysql-default");
   const session = await api.post("sessions", { data: { profile_id: "mysql-default", database, autocommit: true } });
   expect(session.ok(), await session.text()).toBeTruthy();
   const sessionPayload = await session.json();
@@ -82,10 +84,10 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
   test("Vue/Iconify tree has reliable arrows and aligned icons with many tables", async ({ page }) => {
     await login(page);
     const server = page.locator(".server-node.active");
-    await expect(server).toContainText("db01.dev.idmesh.cn:3306");
-    await page.getByLabel(/收起连接 db01/).click();
+    await expect(server).toContainText(`${defaultConnection.host}:${defaultConnection.port}`);
+    await page.getByLabel("收起连接 "+defaultConnection.name,{exact:true}).click();
     await expect(page.locator(".db-node")).toHaveCount(0);
-    await page.getByLabel(/打开连接 db01/).click();
+    await page.getByLabel("打开连接 "+defaultConnection.name,{exact:true}).click();
     await expect(page.locator(".db-node").filter({ hasText: database })).toBeVisible();
     await expect(page.locator(".titlebar")).toHaveCount(0);
     const databaseNode = page.locator(".db-node").filter({ hasText: database });
@@ -432,7 +434,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     const editor = await setSql(page, "SELECT 42 AS answer;");
     await editor.press(runShortcut);
     await page.locator(".query-bar").getByRole("button", { name: "历史" }).click();
-    await expect(page.getByText("SELECT 42 AS answer;", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button",{name:"SELECT 42 AS answer;",exact:true})).toBeVisible();
     await page.keyboard.press("Escape");
     await page.getByRole("tab", { selected: true }).click({ button: "right" });
     for (const label of ["关闭", "关闭其他标签", "关闭右侧标签", "复制标签", "保存查询…"]) await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();

@@ -2,9 +2,11 @@
 import { Icon } from "@iconify/vue";
 import Guacamole from "guacamole-common-js";
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import "../remoteSessions.css";
 import { API_BASE, authToken } from "../api";
+import { createAccessSocket, type AccessSession } from '../accessSession';
 
-const props = defineProps<{ profileId: string; title: string; active: boolean }>();
+const props = defineProps<{ profileId: string; title: string; active: boolean; access?: AccessSession }>();
 const emit = defineEmits<{ state: [value: "online" | "checking" | "offline"] }>();
 
 const viewport = ref<HTMLElement>();
@@ -114,7 +116,7 @@ function refreshViewport(focus = false) {
   });
 }
 
-function connect() {
+async function connect() {
   disconnect();
   if (!viewport.value || !props.active || disposed) return;
   const generation = connectionGeneration;
@@ -123,7 +125,14 @@ function connect() {
   state.value = "connecting";
   message.value = "正在建立 RDP 会话";
   emit("state", "checking");
-  const tunnel = new Guacamole.WebSocketTunnel(tunnelUrl());
+  let url: string;
+  try { url = props.access ? await createAccessSocket(props.access) : tunnelUrl(); }
+  catch (e) {
+    if (disposed || generation !== connectionGeneration) return;
+    state.value = 'error'; message.value = e instanceof Error ? e.message : '会话授权失败'; emit('state', 'offline'); return;
+  }
+  if (disposed || generation !== connectionGeneration) return;
+  const tunnel = new Guacamole.WebSocketTunnel(url);
   // Background tabs may throttle timers. The backend also sends regular
   // Guacamole keepalives, while this wider window avoids false disconnects.
   tunnel.receiveTimeout = 60_000;
@@ -181,7 +190,7 @@ function connect() {
     if (retryAllowed) scheduleReconnect();
   };
   const { width, height } = dimensions() ?? lastVisibleSize;
-  sessionClient.connect(new URLSearchParams({ token: authToken(), width: String(width), height: String(height), dpi: "96" }).toString());
+  sessionClient.connect(new URLSearchParams({ ...(props.access ? {} : { token: authToken() }), width: String(width), height: String(height), dpi: "96" }).toString());
 }
 
 async function toggleFullscreen() {

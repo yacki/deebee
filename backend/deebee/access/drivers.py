@@ -253,6 +253,14 @@ def inspect_database(resource: dict, account: dict, secret: dict) -> dict:
 
 
 async def inspect_account(resource: dict, account: dict, secret: dict) -> dict:
+    if resource["type"] == "rdp":
+        from .sessions import remote_profile
+        from ..remote_connections import test_rdp
+        class Credentials:
+            def account_secret(self, _):
+                return secret
+        await test_rdp(remote_profile(Credentials(), resource, account))
+        return {"connected": True, "normal_safe": False, "permission_summary": {"manual_review_required": True, "note": "远程桌面可执行交互操作，请使用高权限账号类别并人工核实 Windows 权限。"}}
     if resource["type"] == "k8s":
         from .operations import inspect_kubernetes
         return await inspect_kubernetes(resource, account, secret)

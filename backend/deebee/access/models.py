@@ -6,8 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-SCOPES = {"resources:read", "ssh:exec", "db:query", "db:write", "privilege:use", "ssh:inspect", "k8s:read", "k8s:write"}
-KINDS = {"principals", "sources", "bindings", "resources", "accounts", "grants", "keys"}
+SCOPES = {"resources:read", "ssh:exec", "ssh:connect", "rdp:connect", "db:query", "db:write", "privilege:use", "ssh:inspect", "k8s:read", "k8s:write"}
+KINDS = {"principals", "roles", "memberships", "sources", "bindings", "resources", "accounts", "grants", "keys"}
 
 
 class AccessError(Exception):
@@ -26,6 +26,26 @@ class Principal(Model):
     enabled: bool = True
     username: str = Field(default="", max_length=100)
     password: str = Field(default="", max_length=1024)
+
+
+class Role(Model):
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=2000)
+    enabled: bool = True
+
+
+class Membership(Model):
+    principal_id: str = Field(min_length=1)
+    role_id: str = Field(min_length=1)
+    enabled: bool = True
+    starts_at: float | None = None
+    expires_at: float | None = None
+
+    @model_validator(mode="after")
+    def dates(self):
+        if self.starts_at is not None and self.expires_at is not None and self.starts_at >= self.expires_at:
+            raise ValueError("失效时间必须晚于开始时间")
+        return self
 
 
 class Source(Model):
@@ -87,6 +107,8 @@ class Resource(Model):
     host_key_algorithm: Literal["ssh-ed25519", "ecdsa-sha2-nistp256", "rsa-sha2-512", "rsa-sha2-256"] = "ssh-ed25519"
     tls: bool = True
     ca_file: str = ""
+    domain: str = Field(default="", max_length=255)
+    rdp_security: Literal["nla", "tls", "rdp"] = "nla"
     enabled: bool = False
     timeout_seconds: int = Field(default=60, ge=1, le=300)
     max_output_bytes: int = Field(default=1048576, ge=1024, le=2097152)
@@ -106,7 +128,7 @@ class Resource(Model):
             if any(len(v) > 64 for v in values):
                 raise ValueError("项目组和标签每项不能超过 64 个字符")
             setattr(self, field, values)
-        if self.enabled and self.type not in {"ssh", "mysql", "postgresql", "k8s"}:
+        if self.enabled and self.type not in {"ssh", "mysql", "postgresql", "k8s", "rdp"}:
             raise ValueError("此连接类型可加入资源管理，但暂不支持 MCP 操作")
         if self.enabled and self.type in {"mysql", "postgresql"} and not self.database:
             raise ValueError("数据库资源必须指定一个 database")
@@ -139,18 +161,33 @@ class Limits(Model):
 
 
 class Grant(Model):
-    principal_id: str
+    principal_id: str = ""
+    role_id: str = ""
     resource_id: str
     normal_account_id: str = ""
     privileged_account_id: str = ""
     allow_privileged: bool = False
     enabled: bool = True
+    starts_at: float | None = None
     expires_at: float | None = None
-    actions: list[str] = Field(default_factory=lambda: sorted(SCOPES))
+    actions: list[str] = Field(default_factory=lambda: sorted(SCOPES - {"ssh:connect", "rdp:connect"}))
     limits: Limits = Field(default_factory=Limits)
+
+    @model_validator(mode="before")
+    @classmethod
+    def role_defaults(cls, values):
+        # Preserve V1 direct-grant defaults; newly introduced role grants
+        # require explicit selection of every executable operation.
+        if isinstance(values, dict) and values.get("role_id") and "actions" not in values:
+            return values | {"actions": ["resources:read"]}
+        return values
 
     @model_validator(mode="after")
     def scope_values(self):
+        if bool(self.principal_id) == bool(self.role_id):
+            raise ValueError("资源授权必须且只能选择一个用户组或系统账号")
+        if self.starts_at is not None and self.expires_at is not None and self.starts_at >= self.expires_at:
+            raise ValueError("失效时间必须晚于开始时间")
         if set(self.actions) - SCOPES:
             raise ValueError("不支持的授权动作")
         if self.allow_privileged and not self.privileged_account_id:
@@ -163,12 +200,13 @@ class KeyCreate(Model):
     principal_id: str
     source_id: str = "local_keys"
     expires_in_days: int = Field(default=90, ge=1, le=365)
-    scopes: list[str] = Field(default_factory=lambda: sorted(SCOPES - {"privilege:use", "db:write", "k8s:write"}))
+    scopes: list[str] = Field(default_factory=lambda: sorted(SCOPES - {"privilege:use", "db:write", "k8s:write", "ssh:connect", "rdp:connect"}))
     resource_ids: list[str] = Field(default_factory=list)
 
 
 class ExecutionInput(Model):
     resource_id: str
+    access_option_id: str = Field(default="", max_length=255)
     mode: Literal["normal", "privileged"] = "normal"
     command: str = Field(default="", max_length=16384)
     elevation: Literal["none", "sudo"] = Field(default="none", description="仅 ssh.exec：sudo 要求 mode=privileged，由服务端提供提权凭据；命令中不要包含密码")
@@ -200,5 +238,5 @@ class AuthContext:
         }
 
 
-ENTITY_MODELS = {"principals": Principal, "sources": Source, "bindings": Binding,
+ENTITY_MODELS = {"principals": Principal, "roles": Role, "memberships": Membership, "sources": Source, "bindings": Binding,
                  "resources": Resource, "accounts": Account, "grants": Grant}

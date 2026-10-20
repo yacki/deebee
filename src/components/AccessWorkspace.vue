@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { Icon } from "@iconify/vue";
+import BrandMark from "./BrandMark.vue";
 import { API_BASE, authToken } from "../api";
 import JsonPanel from "./JsonPanel.vue";
 import SessionRecordings from "./SessionRecordings.vue";
 import ResourceCatalog from "./ResourceCatalog.vue";
+import ResourceIcon from "./ResourceIcon.vue";
+import { environmentLabel, resourceProduct } from "../resourcePresentation";
 import AccessActions from "./AccessActions.vue";
+import RoleManager from "./RoleManager.vue";
+import RoleMemberships from "./RoleMemberships.vue";
+import SshTerminal from "./SshTerminal.vue";
+import RdpDesktop from "./RdpDesktop.vue";
 import { accessNavigation, actionOptions, optionLabel, selectedGrantAccounts, grantAccountFields, localDateTime, expiryTimestamp } from "../accessPolicy";
 
 // Management records are server-validated tagged JSON objects; forms use field definitions below.
@@ -15,6 +22,10 @@ type Field = { key: string; label: string; type?: "password" | "number" | "check
 type Section = { id: string; name: string; icon: string; description: string; fields?: Field[] };
 
 const sections: Section[] = [
+  { id:"roles", name:"用户组管理", icon:"lucide:users-round", description:"把人员或 Agent 分配到用户组，按资源绑定真实账号和允许操作。用户组不授予后台管理权限。", fields:[
+    {key:"name",label:"用户组名称",required:true},{key:"description",label:"用户组说明",type:"textarea"},{key:"enabled",label:"启用用户组",type:"check"}]},
+  { id:"role-memberships", name:"用户组成员", icon:"lucide:users", description:"管理系统账号所属用户组。", fields:[
+    {key:"role_id",label:"用户组",type:"select",collection:"roles",required:true},{key:"principal_id",label:"系统账号",type:"select",collection:"principals",required:true},{key:"enabled",label:"启用成员关系",type:"check"}]},
   { id:"principals", name:"系统账号", icon:"lucide:users", description:"系统内的账号，通过授权使用各个资源账号。", fields:[
     {key:"name",label:"显示名称",required:true},{key:"kind",label:"账号类型",type:"select",options:["human","service"]},
     {key:"username",label:"登录用户名",hint:"仅人员身份可选；留空表示仅通过外部身份或 API-Key 使用。"},
@@ -36,8 +47,9 @@ const sections: Section[] = [
     {key:"subject",label:"外部身份标识",required:true,hint:"OIDC 的 sub，或外部 API-Key 验证服务返回的 subject。"},
     {key:"principal_id",label:"系统账号",type:"select",collection:"principals",required:true},{key:"enabled",label:"启用外部身份",type:"check"}]},
   { id:"resources", name:"资源管理", icon:"lucide:server", description:"管理数据库、服务器及其资源账号。前台保存的连接自动出现在这里。", fields:[
-    {key:"name",label:"资源名称",required:true},{key:"environment",label:"环境",type:"environment",hint:"分类信息，不影响授权。"},{key:"project_groups",label:"项目组",type:"tags"},{key:"tags",label:"标签",type:"tags",hint:"例如 AMD64、ARM64、核心业务。"},{key:"type",label:"资源类型",type:"select",options:["ssh","mysql","postgresql","k8s"]},
+    {key:"name",label:"资源名称",required:true},{key:"environment",label:"环境",type:"environment",hint:"选择已有环境或填写自定义名称，如生产、测试、开发。"},{key:"project_groups",label:"项目组",type:"tags"},{key:"tags",label:"标签",type:"tags",hint:"例如 AMD64、ARM64、核心业务。"},{key:"type",label:"资源类型",type:"select",options:["ssh","mysql","postgresql","k8s","rdp"]},
     {key:"host",label:"主机地址",required:true},{key:"port",label:"端口",type:"number",required:true},
+    {key:"domain",label:"Windows 域（可选）"},{key:"rdp_security",label:"远程桌面安全模式",type:"select",options:["nla","tls","rdp"]},
     {key:"database",label:"数据库名称",hint:"MySQL/PostgreSQL 必填，一个资源限定一个业务数据库。"},
     {key:"namespaces",label:"获准 Namespace",type:"list",hint:"只允许在这些 Namespace 内进行查询或维护，逗号分隔。"},{key:"schemas",label:"PostgreSQL Schema",type:"list"},{key:"host_key",label:"SSH 主机 SHA256 指纹",hint:"从可信渠道核验，必须在用户认证前验证。"},
     {key:"host_key_algorithm",label:"SSH 主机密钥算法",type:"select",options:["ssh-ed25519","ecdsa-sha2-nistp256","rsa-sha2-512","rsa-sha2-256"]},
@@ -52,7 +64,7 @@ const sections: Section[] = [
     {key:"permission_confirmed",label:"已核验资源账号的真实权限",type:"check"},{key:"permission_note",label:"权限核验说明",type:"textarea",hint:"普通数据库账号必须真正只读；SSH 普通账号仍可修改它有权修改的文件。"},
     {key:"enabled",label:"启用资源账号（需先检查连接）",type:"check"}]},
   { id:"access-grants", name:"资源授权", icon:"lucide:badge-check", description:"决定每个系统账号可以使用哪些资源账号。", fields:[
-    {key:"principal_id",label:"系统账号",type:"select",collection:"principals",required:true},{key:"resource_id",label:"目标资源",type:"select",collection:"resources",required:true},
+    {key:"principal_id",label:"系统账号",type:"select",collection:"principals",required:true},{key:"role_id",label:"用户组",type:"select",collection:"roles",required:true},{key:"resource_id",label:"目标资源",type:"select",collection:"resources",required:true},
     {key:"normal_account_id",label:"普通账号",type:"select",collection:"accounts",required:true},{key:"privileged_account_id",label:"特权账号（可选）",type:"select",collection:"accounts"},
     {key:"allow_privileged",label:"允许使用特权账号",type:"check",hint:"仅在调用显式请求 privileged 且凭据具备 privilege:use 时使用。"},
     {key:"actions",label:"允许操作",type:"list"},{key:"limits",label:"执行限制",type:"json"},
@@ -98,18 +110,32 @@ async function removeResource(){await act(async()=>{if(!deleting.value)return;aw
 function classificationOptions(key:string):string[]{return [...new Set([...(key==='tags'?['AMD64','ARM64']:[]),...(records.value.resources||[]).flatMap(r=>r[key]||[])])];}
 function checkArray(values:string[],value:string,checked:unknown){const i=values.indexOf(value);if(checked&&i<0)values.push(value);else if(!checked&&i>=0)values.splice(i,1);}
 
-const principalContext = ref("");
+const principalContext = ref(""); const principalSearch = ref("");
 const resourceDetail = computed(() => records.value.resources?.find(r => r.id === resourceContext.value));
 const principalDetail = computed(() => records.value.principals?.find(r => r.id === principalContext.value));
 const navigationId = computed(() => current.value === "accounts" ? "resources" : current.value === "api-keys" ? "identity-bindings" : current.value === "identity-sources" ? "integration" : current.value === "preview" ? "access-grants" : current.value);
 const rows = computed(() => (records.value[current.value] || []).filter(item =>
   (current.value !== "accounts" || item.resource_id === resourceContext.value) &&
+  (current.value !== "principals" || String(item.name+" "+(item.username||"")).toLowerCase().includes(principalSearch.value.toLowerCase())) &&
   (!principalContext.value || !["identity-bindings","api-keys","access-grants"].includes(current.value) || item.principal_id === principalContext.value)));
 const grantIds = ref<string[]>([]);
 const grantActions = ref<string[]>([]);
 const credentialActions = ref<string[]>([]);
 const credentialResources = ref<string[]>([]);
-const grantExpiry = ref("");
+const grantExpiry = ref(""); const grantStart = ref(""); const grantSubjectType = ref("role");
+const batchResources = ref<string[]>([]), batchAccounts = ref<Record<string,string[]>>({}), batchActions = ref<Record<string,string[]>>({});
+const accessOption = ref(""); const sessionOpen = ref(false);
+const activeAccess = computed(()=>activeResource.value?.access_modes.find((m:Row)=>m.access_option_id===accessOption.value));
+const sessionAccess = computed(()=>({resourceId:selectedResource.value,mode:mode.value,optionId:accessOption.value,csrf:csrf.value}));
+watch(accessOption,()=>{mode.value=activeAccess.value?.mode||"normal";operation.value=defaultOperation();sessionOpen.value=false;userSchema.value=null;userExecution.value=null;});
+watch(batchResources,ids=>{for(const id of ids){batchAccounts.value[id]??=[];batchActions.value[id]??=["resources:read"];}});
+function subjectName(g:Row){return g.role_id?label('roles',g.role_id)+'（用户组）':label('principals',g.principal_id)+'（直接授权）';}
+function effective(item:Row){const now=Date.now()/1000;return item.enabled&&!item.deleted_at&&(!item.starts_at||item.starts_at<=now)&&(!item.expires_at||item.expires_at>now);}
+function inheritedGrants(id:string):Row[]{const roleIds=(records.value['role-memberships']||[]).filter(m=>m.principal_id===id&&effective(m)&&records.value.roles?.some(r=>r.id===m.role_id&&effective(r))).map(m=>m.role_id);return (records.value['access-grants']||[]).filter(g=>roleIds.includes(g.role_id)&&effective(g));}
+function grantedPeople(g:Row):string{if(!g.role_id)return label('principals',g.principal_id);if(!records.value.roles?.some(r=>r.id===g.role_id&&effective(r)))return '用户组已停用';return (records.value['role-memberships']||[]).filter(m=>m.role_id===g.role_id&&effective(m)&&records.value.principals?.some(p=>p.id===m.principal_id&&p.enabled)).map(m=>label('principals',m.principal_id)).join('、')||'暂无生效成员';}
+async function addRoleGrant(role:Row){await navigate('access-grants');start();grantSubjectType.value='role';form.value!.role_id=role.id;}
+async function editRoleGrant(grant:Row){await navigate('access-grants');start(grant);}
+
 const grantLimits = ref({ timeout_seconds: 60, max_rows: 1000, max_output_bytes: 1048576 });
 const grantChoices = computed(() => (records.value.accounts || []).filter(a => a.resource_id === form.value?.resource_id));
 const grantResource = computed(() => records.value.resources?.find(r => r.id === form.value?.resource_id));
@@ -131,7 +157,7 @@ const activeResource = computed(()=>userResources.value.find(r=>r.id===selectedR
 const visibleFields = computed(()=>(section.value.fields||[]).filter(field=>{
   const f=form.value;if(!f)return true;
   if(current.value==="accounts"&&field.key==="resource_id")return false;
-  if(current.value==="access-grants")return ["principal_id","resource_id","enabled"].includes(field.key);
+  if(current.value==="access-grants")return [grantSubjectType.value==='role'?"role_id":"principal_id","resource_id","enabled"].includes(field.key);
   if(current.value==="api-keys"&&["scopes","resource_ids"].includes(field.key))return false;
   if(editing.value?.connection_sync){
     const sourceFields=current.value==='resources'?["name","type","host","port","database","schemas","host_key"]:current.value==='accounts'?["resource_id","username","auth_method","password","private_key","passphrase"]:[];
@@ -148,6 +174,8 @@ const visibleFields = computed(()=>(section.value.fields||[]).filter(field=>{
     if(["client_id","client_secret"].includes(field.key))return f.browser_login;
   }
   if(current.value==="resources"){
+    if(["domain","rdp_security"].includes(field.key))return f.type==="rdp";
+    if(f.type==="rdp")return !["database","schemas","host_key","host_key_algorithm","namespaces","tls","ca_file","max_rows"].includes(field.key);
     if(field.key==="namespaces")return f.type==="k8s";
     if(f.type==="k8s"&&field.key==="database")return false;
     if(f.type==="ssh")return !["database","schemas","tls","ca_file","max_rows"].includes(field.key);
@@ -162,7 +190,7 @@ const visibleFields = computed(()=>(section.value.fields||[]).filter(field=>{
 }));
 function fieldOptions(field:Field){if(field.key==="validation_mode")return form.value?.type==="oidc"?["jwt","introspection"]:["managed","external_http"];if(current.value==="accounts"&&field.key==="auth_method"&&resourceDetail.value?.type!=="ssh")return ["password"];return field.options;}
 function lockedField(field:Field){return Boolean(editing.value&&current.value==="identity-sources"&&["type","issuer","validation_mode"].includes(field.key));}
-watch(()=>form.value?.type,(value,previous)=>{if(!form.value||!previous||value===previous)return;if(current.value==="identity-sources")form.value.validation_mode=value==="oidc"?"jwt":"managed";if(current.value==="resources")form.value.port=value==="ssh"?22:value==="mysql"?3306:value==="k8s"?6443:5432;});
+watch(()=>form.value?.type,(value,previous)=>{if(!form.value||!previous||value===previous)return;if(current.value==="identity-sources")form.value.validation_mode=value==="oidc"?"jwt":"managed";if(current.value==="resources")form.value.port=value==="ssh"?22:value==="mysql"?3306:value==="k8s"?6443:value==="rdp"?3389:5432;});
 
 async function request(path: string, method="GET", body?: unknown, admin=true): Promise<Row> {
   const headers: Record<string,string> = {};
@@ -176,7 +204,7 @@ async function request(path: string, method="GET", body?: unknown, admin=true): 
 }
 async function act(action: ()=>Promise<void>) { busy.value=true; error.value=""; message.value=""; try{await action();}catch(e){error.value=e instanceof Error?e.message:"操作失败";}finally{busy.value=false;} }
 async function load() {
-  if(isUser.value){ const result=await request("/v1/me","GET",undefined,false); me.value=result;csrf.value=result.csrf || "";userResources.value=(await request("/v1/resources","GET",undefined,false)).resources;loggedIn.value=true;return; }
+  if(isUser.value){ const result=await request("/v1/me","GET",undefined,false); me.value=result;csrf.value=result.csrf || "";const resources:Row[]=[];let cursor="";do{const page=await request("/v1/resources"+(cursor?"?cursor="+encodeURIComponent(cursor):""),"GET",undefined,false);resources.push(...page.resources);cursor=page.next_cursor||"";}while(cursor);userResources.value=resources;if(selectedResource.value&&!resources.some(r=>r.id===selectedResource.value)){sessionOpen.value=false;selectedResource.value="";accessOption.value="";}else if(accessOption.value&&!activeResource.value?.access_modes.some((m:Row)=>m.access_option_id===accessOption.value)){sessionOpen.value=false;accessOption.value="";}loggedIn.value=true;return; }
   status.value=await request("/admin/v1/status");
   for(const s of sections.filter(s=>s.fields)) records.value[s.id]=(await request(`/admin/v1/${s.id}`)).items;
   loggedIn.value=true;
@@ -202,12 +230,15 @@ function options(field:Field):Row[]{let items=records.value[field.collection || 
 function start(item?:Row){
   if(current.value==="accounts"&&!resourceContext.value){error.value="请先选择资源。";return;}
   editing.value=item||null;error.value="";report.value=null;newKey.value="";
-  const defaults:Record<string,Row>={principals:{kind:"human",enabled:true},"identity-sources":{type:"api_key",validation_mode:"managed",enabled:false},"identity-bindings":{enabled:true},resources:{type:"ssh",port:22,namespaces:["default"],schemas:["public"],tls:true,enabled:false,timeout_seconds:60,max_rows:1000},accounts:{tier:"normal",auth_method:"password",enabled:false,permission_confirmed:false},"access-grants":{enabled:true,allow_privileged:false,actions:["resources:read"],limits:{timeout_seconds:60,max_rows:1000,max_output_bytes:1048576}},"api-keys":{source_id:"local_keys",expires_in_days:90,scopes:["resources:read","ssh:exec","db:query"]}};
+  const defaults:Record<string,Row>={roles:{enabled:true},principals:{kind:"human",enabled:true},"identity-sources":{type:"api_key",validation_mode:"managed",enabled:false},"identity-bindings":{enabled:true},resources:{type:"ssh",port:22,namespaces:["default"],schemas:["public"],tls:true,rdp_security:"nla",enabled:false,timeout_seconds:60,max_rows:1000},accounts:{tier:"normal",auth_method:"password",enabled:false,permission_confirmed:false},"access-grants":{enabled:true,allow_privileged:false,actions:["resources:read"],limits:{timeout_seconds:60,max_rows:1000,max_output_bytes:1048576}},"api-keys":{source_id:"local_keys",expires_in_days:90,scopes:["resources:read","ssh:exec","db:query"]}};
   form.value={...defaults[current.value]};
   for(const f of section.value.fields||[]){let v=item?.[f.key]??form.value[f.key]??(f.key==="allowed_algorithms"?["RS256"]:f.key==="host_key_algorithm"?"ssh-ed25519":f.type==="check"?false:"");if(f.type==="tags")v=Array.isArray(v)?v:[];if(f.type==="password"||f.key==="private_key")v="";if(f.type==="list")v=Array.isArray(v)?v.join(", "):v;if(f.type==="json")v=JSON.stringify(v||{},null,2);form.value[f.key]=v;}
   if(current.value==="accounts")form.value.resource_id=resourceContext.value;
   if(principalContext.value&&["identity-bindings","api-keys","access-grants"].includes(current.value))form.value.principal_id=principalContext.value;
   if(current.value==="access-grants"){
+    grantSubjectType.value=item?(item.role_id?"role":"principal"):principalContext.value?"principal":"role";
+    batchResources.value=[];batchAccounts.value={};batchActions.value={};
+    grantStart.value=localDateTime(item?.starts_at);
     grantIds.value=selectedGrantAccounts(item||{});
     grantActions.value=[...(item?.actions||["resources:read"])];
     grantExpiry.value=localDateTime(item?.expires_at);
@@ -217,8 +248,10 @@ function start(item?:Row){
 }
 async function save(){await act(async()=>{if(!form.value)return;const body:Row={};for(const f of visibleFields.value){if(f.required&&!String(form.value[f.key]??"").trim())throw new Error("请填写"+f.label);}
 // A newly selected identity protocol must not submit fields left hidden by the previous protocol.
-for(const f of current.value==="identity-sources"?visibleFields.value:section.value.fields||[]){const value=form.value[f.key];body[f.key]=f.type==="json"?JSON.parse(String(value)||"{}"):f.type==="list"?String(value).split(",").map(v=>v.trim()).filter(Boolean):f.type==="number"?(value===""?null:Number(value)):value;}
+for(const f of current.value==="identity-sources"?visibleFields.value:section.value.fields||[]){const value=form.value[f.key];body[f.key]=f.type==="json"?JSON.parse(String(value)||"{}"):f.type==="list"?String(value).split(",").map(v=>v.trim()).filter(Boolean):f.type==="number"?(value===""?null:Number(value)):f.type==="environment"?(value||""):value;}
   if(current.value==="access-grants"){
+    body.principal_id=grantSubjectType.value==="principal"?body.principal_id:"";body.role_id=grantSubjectType.value==="role"?body.role_id:"";
+    body.starts_at=editing.value&&grantStart.value===localDateTime(editing.value.starts_at)?editing.value.starts_at:expiryTimestamp(grantStart.value);
     Object.assign(body,grantAccountFields(grantIds.value,(records.value.accounts||[]).map(a=>({id:a.id,resource_id:a.resource_id,tier:a.tier,enabled:a.enabled})),String(body.resource_id),Boolean(body.enabled)));
     body.actions=[...grantActions.value];body.expires_at=editing.value&&grantExpiry.value===localDateTime(editing.value.expires_at)?editing.value.expires_at:expiryTimestamp(grantExpiry.value);body.limits={...grantLimits.value};
     if(body.allow_privileged&&!body.actions.includes("privilege:use"))throw new Error("已选择高权限资源账号，请明确勾选允许使用高权限资源账号，或取消选择该账号。");
@@ -229,6 +262,11 @@ for(const f of current.value==="identity-sources"?visibleFields.value:section.va
   if(editing.value?.connection_sync){for(const key of (current.value==='resources'?["name","type","host","port","database","schemas","host_key"]:["resource_id","username","auth_method","password","private_key","passphrase"]))delete body[key];}
   if(current.value==="principals"&&body.kind==="service"){body.username="";body.password="";}
   if(current.value==="api-keys"){const result=await request("/admin/v1/api-keys","POST",body);newKey.value=result.key;}
+  else if(current.value==="access-grants"&&!editing.value&&batchResources.value.length){
+    const grants=[body,...batchResources.value.filter(id=>id!==body.resource_id).map(id=>({...body,resource_id:id,...grantAccountFields(batchAccounts.value[id]||[],(records.value.accounts||[]).map(a=>({id:a.id,resource_id:a.resource_id,tier:a.tier,enabled:a.enabled})),id,Boolean(body.enabled)),actions:batchActions.value[id]||["resources:read"]}))];
+    if(grants.some(g=>g.allow_privileged&&!g.actions.includes("privilege:use")))throw new Error("每个高权限账号均须明确勾选使用高权限资源账号。");
+    await request('/admin/v1/access-grants/batch','POST',{grants});
+  }
   else{if(editing.value)body.expected_version=editing.value.version;await request(`/admin/v1/${current.value}${editing.value?`/${editing.value.id}`:""}`,editing.value?"PATCH":"POST",body);}
   form.value=null;await load();message.value="已保存。授权变化会立即拒绝后续不再获准的操作。";
 });}
@@ -242,19 +280,20 @@ async function cancelAdmin(item:Row){await act(async()=>{reportType.value="execu
 async function exportConfig(){await act(async()=>{configText.value=JSON.stringify(await request("/admin/v1/access-config/export"),null,2);message.value="配置已导出到下方，不含密码、私钥或 Key。";});}
 async function checkImport(){await act(async()=>{importPreview.value=await request("/admin/v1/access-config/import-preview","POST",JSON.parse(configText.value));});}
 async function applyImport(){await act(async()=>{await request("/admin/v1/access-config/import","POST",JSON.parse(configText.value));importPreview.value=null;await load();message.value="配置已更新";});}
-function defaultOperation(){return activeResource.value?.access_modes.find((m:Row)=>m.mode===mode.value)?.actions.find((a:string)=>a!=="db.schema")||"";}
-function chooseResource(){mode.value=activeResource.value?.default_mode||"normal";operation.value=defaultOperation();command.value=activeResource.value?.type==="ssh"?"id":"SELECT 1";kubeNamespace.value=activeResource.value?.namespaces?.[0]||"";kubeName.value="";userExecution.value=null;}
+function defaultOperation(){return activeAccess.value?.actions.find((a:string)=>a!=="db.schema")||"";}
+function chooseResource(){sessionOpen.value=false;accessOption.value=activeResource.value?.access_modes[0]?.access_option_id||"";mode.value=activeResource.value?.default_mode||"normal";operation.value=defaultOperation();command.value=activeResource.value?.type==="ssh"?"id":"SELECT 1";kubeNamespace.value=activeResource.value?.namespaces?.[0]||"";kubeName.value="";userExecution.value=null;}
 async function executeUser(){await act(async()=>{
+  if(["ssh.connect","rdp.connect"].includes(operation.value)){sessionOpen.value=true;return;}
   const paths:Record<string,string>={"ssh.exec":"/v1/ssh/executions","ssh.inspect":"/v1/ssh/inspections","db.query":"/v1/db/queries","db.execute":"/v1/db/executions","k8s.read":"/v1/k8s/queries","k8s.restart":"/v1/k8s/restarts"};
   const path=paths[operation.value]; if(!path)throw new Error("请选择获准操作");
-  const body:Row={resource_id:selectedResource.value,mode:mode.value,idempotency_key:crypto.randomUUID()};
+  const body:Row={resource_id:selectedResource.value,mode:mode.value,access_option_id:accessOption.value,idempotency_key:crypto.randomUUID()};
   if(operation.value==="ssh.inspect")body.check=sshCheck.value;
   else if(operation.value.startsWith("k8s."))Object.assign(body,{namespace:kubeNamespace.value,kind:operation.value==="k8s.restart"?"deployments":kubeOperation.value==="logs"?"pods":kubeOperation.value==="rollout"?"deployments":kubeKind.value,name:operation.value==="k8s.read"&&kubeOperation.value==="list"?"":kubeName.value,operation:operation.value==="k8s.restart"?"restart":kubeOperation.value});
   else body[operation.value==="ssh.exec"?"command":"sql"]=command.value;
   userExecution.value=await request(path,"POST",body,false);
 });}
 async function pollUser(cursor:unknown=""){await act(async()=>{if(userExecution.value)userExecution.value=await request(`/v1/executions/${userExecution.value.execution_id}${typeof cursor==='string'&&cursor?'?cursor='+encodeURIComponent(cursor):''}`,"GET",undefined,false);});}
-async function loadSchema(cursor=""){await act(async()=>{userSchema.value=await request(`/v1/resources/${selectedResource.value}/schema?mode=${mode.value}&cursor=${encodeURIComponent(cursor)}`,"GET",undefined,false);});}
+async function loadSchema(cursor=""){await act(async()=>{userSchema.value=await request(`/v1/resources/${selectedResource.value}/schema?mode=${mode.value}&access_option_id=${encodeURIComponent(accessOption.value)}&cursor=${encodeURIComponent(cursor)}`,"GET",undefined,false);});}
 async function cancelUser(){await act(async()=>{if(userExecution.value)userExecution.value=await request(`/v1/executions/${userExecution.value.execution_id}/cancel`,"POST",{},false);});}
 async function logout(){await act(async()=>{if(isUser.value)await request("/v1/logout","POST",{},false);else sessionStorage.removeItem("deebee_token");loggedIn.value=false;newKey.value="";});}
 function label(collection:string,id:string){const row=records.value[collection]?.find(r=>r.id===id);return row?.name||row?.username||id;}
@@ -266,9 +305,9 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
 <template>
   <div class="access-workspace">
     <header class="access-header">
-      <a href="#" class="access-brand" @click.prevent="location.href=location.pathname"><span>D</span> DeeBee</a>
+      <a href="#" class="access-brand" @click.prevent="location.href=location.pathname"><BrandMark /> DeeBee</a>
       <span>{{ isUser ? "我的资源" : "管理后台" }}</span>
-      <span class="access-subtitle">外部身份 → 系统账号 → 资源账号</span>
+      <span class="access-subtitle">外部身份 → 系统账号 → 用户组 → 资源账号</span>
       <a :href="isUser?'#access':'#access-user'" @click.prevent="location.href=location.pathname+(isUser?'#access':'#access-user');location.reload()">{{ isUser ? "管理后台" : "系统账号入口" }}</a>
       <a href="./">返回工作台</a><a-button v-if="loggedIn" @click="logout">退出</a-button>
     </header>
@@ -288,13 +327,13 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
     <div v-else-if="!isUser" class="access-layout">
       <nav aria-label="管理后台导航">
         <a-menu :selected-keys="[navigationId]" @menu-item-click="navigate"><a-menu-item v-for="s in accessNavigation" :key="s.id" :disabled="busy"><template #icon><Icon :icon="s.icon" width="18" /></template>{{ s.name }}</a-menu-item></a-menu>
-        <p>外部身份绑定系统账号<br>系统账号获授权后使用资源账号</p>
+        <p>外部身份绑定系统账号<br>系统账号加入用户组后使用资源账号</p>
       </nav>
       <main ref="mainElement" class="access-main">
-        <div v-if="current==='accounts'" class="access-breadcrumb"><a-button @click="navigate('resources')">资源管理</a-button><span> / {{ resourceDetail?.name }} / 资源账号</span></div>
+        <div v-if="current==='accounts'" class="access-breadcrumb"><a-button @click="navigate('resources')">资源管理</a-button><span> / {{ resourceDetail?.name }} / 资源详情</span></div>
         <div v-if="principalContext" class="access-breadcrumb"><a-button @click="navigate('principals')">系统账号</a-button><span> / {{ principalDetail?.name }}</span></div>
         <div class="access-heading">
-          <div><h1>{{ current==='accounts' ? resourceDetail?.name+' · 资源账号' : section.name }}</h1><p>{{ section.description }}</p></div>
+          <div><h1>{{ current==='accounts' ? resourceDetail?.name+' · 资源详情' : section.name }}</h1><p>{{ section.description }}</p></div>
           <a-button v-if="section.fields&&!form&&!(current==='principals'&&principalContext)" type="primary" :disabled="busy" @click="start()">{{ current==='api-keys'?'添加 API Key':current==='accounts'?'添加资源账号':current==='identity-bindings'?'绑定外部身份':'新增' }}</a-button>
           <a-button :disabled="busy" @click="act(load)">刷新</a-button>
         </div>
@@ -311,7 +350,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <a-button :class="{selected:current==='preview'}" @click="select('preview')">查看可用权限</a-button>
         </div>
         <section v-if="current==='accounts'" class="access-panel resource-context">
-          <span>{{ resourceDetail?.host }}:{{ resourceDetail?.port }} <template v-if="resourceDetail?.database"> / {{ resourceDetail.database }}</template></span>
+          <ResourceIcon :type="resourceDetail?.type||''" :size="36" /><span>{{ resourceProduct(resourceDetail?.type).name }} · {{ environmentLabel(resourceDetail?.environment) }}</span><span>{{ resourceDetail?.host }}:{{ resourceDetail?.port }} <template v-if="resourceDetail?.database"> / {{ resourceDetail.database }}</template></span>
           <span :class="['access-badge',resourceDetail?.enabled?'good':'muted']">{{ resourceDetail?.enabled?'资源已启用':'资源未启用' }}</span>
           <p v-if="resourceDetail?.connection_sync">来自工作台连接。{{ connectionNotice(resourceDetail) || '资源账号启用后，还需要在“资源授权”中分配给系统账号。' }}</p>
         </section>
@@ -320,12 +359,13 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         <form v-else-if="form" class="access-form" @submit.prevent="save">
           <h2>{{ editing?'编辑':'新增' }}{{ section.name }}</h2>
           <p v-if="editing?.connection_sync">来自工作台连接，地址和登录凭证请在工作台修改。{{ connectionNotice(editing) }}</p>
+          <div v-if="current==='access-grants'" class="access-field">被授权对象<a-radio-group v-model="grantSubjectType" aria-label="被授权对象"><a-radio value="role">用户组</a-radio><a-radio value="principal">系统账号（直接授权）</a-radio></a-radio-group></div>
           <div class="access-fields">
             <div v-for="field in visibleFields" :key="field.key" class="access-field" :class="{'check-field':field.type==='check','wide-field':field.type==='textarea'||field.type==='json'}">
               <template v-if="field.type==='check'"><a-checkbox v-model="form[field.key]">{{ field.label }}</a-checkbox></template>
               <template v-else>
                 <span>{{ field.label }}</span>
-                <a-select v-if="field.type==='environment'" v-model="form[field.key]" role="combobox" allow-create allow-search allow-clear :options="['prod','uat','staging','test','dev']" :aria-label="field.label" />
+                <a-select v-if="field.type==='environment'" v-model="form[field.key]" role="combobox" allow-create allow-search allow-clear :options="[...new Set(['prod','uat','staging','test','dev',...(records.resources||[]).map(r=>r.environment).filter(Boolean)])]" :aria-label="field.label" />
                 <a-select v-else-if="field.type==='tags'" v-model="form[field.key]" role="combobox" multiple allow-create allow-search allow-clear :options="classificationOptions(field.key)" :aria-label="field.label" />
                 <a-select v-else-if="field.type==='select'" v-model="form[field.key]" role="combobox" :disabled="lockedField(field)" :required="field.required" :aria-label="field.label" @change="current==='access-grants'&&field.key==='resource_id'&&changedGrantResource()">
                   <a-option value="">请选择</a-option>
@@ -353,6 +393,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
             </fieldset>
             <fieldset class="access-selection"><legend>允许操作</legend><AccessActions v-model="grantActions" :resource-type="grantResource?.type" /></fieldset>
             <p v-if="grantChoices.some(a=>grantIds.includes(a.id)&&a.tier==='privileged')" class="access-warning">选择了高权限资源账号。授权后可能修改数据或服务器文件；本次授权不会逐次询问管理员。</p>
+            <div class="access-field">授权开始时间（留空为立即生效）<input v-model="grantStart" aria-label="授权开始时间" type="datetime-local" /></div>
             <div class="access-field">授权到期时间（留空为长期有效）<input v-model="grantExpiry" aria-label="授权到期时间" type="datetime-local" /></div>
             <details class="access-advanced">
               <summary>执行限制</summary><div class="access-fields">
@@ -361,6 +402,14 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
                 <div class="access-field">最多返回字节数<a-input-number v-model="grantLimits.max_output_bytes" :input-attrs="{'aria-label':'最多返回字节数'}" :min="1024" :max="2097152" required /></div>
               </div>
             </details>
+          </template>
+          <template v-if="current==='access-grants'&&!editing">
+            <div class="access-field">同时授权其他资源<a-select v-model="batchResources" role="combobox" multiple allow-search aria-label="同时授权其他资源" :options="(records.resources||[]).filter(r=>r.id!==form?.resource_id).map(r=>({value:r.id,label:r.name}))" /></div>
+            <fieldset v-for="id in batchResources.filter(id=>id!==form?.resource_id)" :key="id" class="access-selection">
+              <legend>{{ label('resources',id) }}</legend>
+              <div v-for="a in (records.accounts||[]).filter(a=>a.resource_id===id)" :key="a.id"><a-checkbox :model-value="(batchAccounts[id]||[]).includes(a.id)" :disabled="!a.enabled" @change="checkArray(batchAccounts[id]!,a.id,$event)">{{ a.username }} · {{ optionLabel(a.tier) }}</a-checkbox></div>
+              <AccessActions v-model="batchActions[id]!" :resource-type="records.resources?.find(r=>r.id===id)?.type" />
+            </fieldset><p v-if="batchResources.length">开始时间、到期时间及执行限制应用于本次所有资源。每个资源的账号与操作独立选择，整批保存。</p>
           </template>
           <template v-if="current==='api-keys'">
             <fieldset class="access-selection"><legend>允许操作</legend><AccessActions v-model="credentialActions" /></fieldset>
@@ -374,26 +423,30 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
 
         <section v-else-if="current==='principals'&&principalDetail" class="access-panel">
           <div class="access-heading"><div><h2>{{ principalDetail.name }}</h2><p>{{ optionLabel(principalDetail.kind) }} · {{ principalDetail.enabled?'已启用':'已停用' }}</p></div><a-button @click="start(principalDetail)">编辑系统账号</a-button></div>
+          <RoleMemberships :records="records" :principal-id="principalDetail.id" :request="request" :reload="load" />
           <h3>外部身份</h3><p>这些外部身份绑定到当前系统账号。</p>
           <ul><li v-for="binding in principalRows('identity-bindings')" :key="binding.id">{{ label('identity-sources',binding.source_id) }} · {{ externalName(binding) }} · {{ binding.enabled?'已启用':'已停用' }}</li></ul>
           <p v-if="!principalRows('identity-bindings').length">尚未绑定外部身份。</p>
           <a-button @click="principalSection('identity-bindings')">管理外部身份</a-button>
           <h3>访问凭证</h3><ul><li v-for="key in principalRows('api-keys')" :key="key.id">{{ key.name }} · {{ key.enabled?'已启用':'已撤销' }} · 到期 {{ formatTime(key.expires_at) }}</li></ul>
           <a-button @click="principalSection('api-keys')">管理访问凭证</a-button>
-          <h3>资源账号</h3><ul><li v-for="grant in principalRows('access-grants')" :key="grant.id">{{ label('resources',grant.resource_id) }} → {{ grantNames(grant) }} · {{ grant.enabled?'已授权':'已停用' }}</li></ul>
+          <h3>通过用户组继承的资源账号</h3><ul><li v-for="grant in inheritedGrants(principalDetail.id)" :key="grant.id">{{ subjectName(grant) }} → {{ label('resources',grant.resource_id) }} → {{ grantNames(grant) }}</li></ul><a-button @click="previewPrincipal=principalDetail.id;previewScopes=actionOptions.map(a=>a.value).join(',');preview()">查看最终可用权限</a-button>
+          <h3>直接授权的资源账号</h3><ul><li v-for="grant in principalRows('access-grants')" :key="grant.id">{{ label('resources',grant.resource_id) }} → {{ grantNames(grant) }} · {{ grant.enabled?'已授权':'已停用' }}</li></ul>
           <p v-if="!principalRows('access-grants').length">尚未授权任何资源账号。</p><a-button @click="principalSection('access-grants')">管理资源授权</a-button>
         </section>
 
-        <ResourceCatalog v-else-if="current==='resources'" :resources="rows" :accounts="records.accounts||[]" :busy="busy" @edit="start" @accounts="openAccounts" @toggle="toggle" @remove="askDelete" />
+        <RoleManager v-else-if="current==='roles'" :records="records" :request="request" :reload="load" @edit="start" @grant="addRoleGrant" @edit-grant="editRoleGrant" />
+
+        <ResourceCatalog v-else-if="current==='resources'" :resources="rows" :busy="busy" @edit="start" @detail="openAccounts" @toggle="toggle" @remove="askDelete" />
 
         <div v-else-if="current==='access-grants'" class="access-table-wrap">
           <a-table :key="current" :data="rows" row-key="id" :pagination="{pageSize:20,showTotal:true}" :scroll="{x:1000}" :loading="busy">
             <template #columns>
-              <a-table-column title="系统账号"><template #cell="{record:grant}">{{ label('principals',grant.principal_id) }}</template></a-table-column>
+              <a-table-column title="被授权对象"><template #cell="{record:grant}">{{ subjectName(grant) }}<small>{{ grantedPeople(grant) }}</small></template></a-table-column>
               <a-table-column title="资源"><template #cell="{record:grant}">{{ label('resources',grant.resource_id) }}</template></a-table-column>
               <a-table-column title="资源账号"><template #cell="{record:grant}">{{ grantNames(grant) }}</template></a-table-column>
               <a-table-column title="允许操作 / 有效期"><template #cell="{record:grant}">{{ grant.actions.map((a:string)=>actionOptions.find(o=>o.value===a)?.label||a).join('、') }}<small>{{ grant.expires_at?'到期 '+formatTime(grant.expires_at):'长期有效' }}</small></template></a-table-column>
-              <a-table-column title="状态"><template #cell="{record:grant}">{{ !grant.enabled?'已停用':grant.expires_at&&grant.expires_at*1000<Date.now()?'已到期':'已授权' }}</template></a-table-column>
+              <a-table-column title="状态"><template #cell="{record:grant}">{{ !grant.enabled?'已停用':grant.starts_at&&grant.starts_at*1000>Date.now()?'未生效':grant.expires_at&&grant.expires_at*1000<Date.now()?'已到期':'已授权' }}</template></a-table-column>
               <a-table-column title="操作"><template #cell="{record:grant}"><div class="access-row-actions"><a-button @click="start(grant)">修改授权</a-button><a-button :disabled="busy" @click="toggle(grant)">{{ grant.enabled?'停用授权':'启用授权' }}</a-button></div></template></a-table-column>
             </template>
           </a-table>
@@ -408,7 +461,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         <section v-else-if="current==='integration'" class="access-panel">
           <h2>程序接入地址</h2><div class="access-field">MCP 地址<a-input :model-value="status.mcp_url" :input-attrs="{'aria-label':'MCP 地址'}" readonly /></div><div class="access-field">REST API 地址<a-input :model-value="status.api_url" :input-attrs="{'aria-label':'REST API 地址'}" readonly /></div>
           <p>外部身份先绑定系统账号，系统账号再通过资源授权使用资源账号。</p>
-          <details class="access-advanced"><summary>开发者接入说明</summary><p>API Key 使用 X-DeeBee-API-Key；外部验证服务另传 X-DeeBee-Identity-Source。企业登录使用 Authorization: Bearer &lt;Access Token&gt;，不能同时提交两种凭证。</p><p>高权限资源账号必须明确请求 mode: privileged，且凭证与资源授权均允许 privilege:use。默认请求不会自动升级权限。</p><p>远程桌面及其他暂不支持的资源仅用于登记，不开放 MCP 操作。</p></details>
+          <details class="access-advanced"><summary>开发者接入说明</summary><p>API Key 使用 X-DeeBee-API-Key；外部验证服务另传 X-DeeBee-Identity-Source。企业登录使用 Authorization: Bearer &lt;Access Token&gt;，不能同时提交两种凭证。</p><p>高权限资源账号必须明确请求 mode: privileged，且凭证与资源授权均允许 privilege:use。默认请求不会自动升级权限。</p><p>远程桌面通过系统账号入口使用，需单独授权“连接远程桌面”；MCP 不提供桌面操作。其他尚未支持的资源类型用于登记。</p></details>
           <hr><h2>配置备份与导入</h2><p>导出不含密码、私钥或 API Key 原文。导入不会自动启用新资源账号。</p>
           <a-button :disabled="busy" @click="exportConfig">导出配置</a-button><JsonPanel v-model="configText" editable label="配置 JSON" />
           <div class="access-actions"><a-button :disabled="busy||!configText" @click="checkImport">检查导入内容</a-button><a-button v-if="importPreview" :disabled="busy" @click="applyImport">确认导入</a-button></div><JsonPanel v-if="importPreview" :value="importPreview" />
@@ -416,6 +469,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         </section>
 
         <template v-else>
+          <div v-if="current==='principals'" class="access-field">搜索系统账号<a-input v-model="principalSearch" :input-attrs="{'aria-label':'搜索系统账号'}" /></div>
           <section v-if="current==='audit-events'" class="access-filters"><div class="access-field">账号 / 外部身份<a-input v-model="auditActor" :input-attrs="{'aria-label':'账号 / 外部身份'}" placeholder="名称或标识" /></div><div class="access-field">操作<a-input v-model="auditOperation" :input-attrs="{'aria-label':'操作名称'}" placeholder="操作名称" /></div><div class="access-field">入口<a-select v-model="auditSurface" role="combobox" aria-label="入口"><a-option value="">全部入口</a-option><a-option value="mcp">MCP</a-option><a-option value="access_ui">系统账号入口</a-option><a-option value="admin">管理后台</a-option><a-option value="workbench">工作台</a-option><a-option value="execution_worker">执行服务</a-option><a-option value="control_plane">配置变更</a-option><a-option value="legacy_audit">历史记录</a-option></a-select></div><a-button :disabled="busy" @click="act(refresh)">查询</a-button></section>
           <div class="access-table-wrap">
             <a-table :key="current" :data="rows" row-key="id" :pagination="{pageSize:20,showTotal:true}" :scroll="{x:1000}" :loading="busy">
@@ -424,7 +478,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
                 <a-table-column :title="current==='identity-bindings'?'绑定的系统账号':current==='accounts'?'权限与授权关系':'说明'">
                   <template #cell="{record:item}">
                     <template v-if="current==='identity-bindings'">{{ label('principals',item.principal_id) }}<small>{{ label('identity-sources',item.source_id) }}</small></template>
-                    <template v-else-if="current==='accounts'">{{ optionLabel(item.tier) }} · {{ accountHealth(item) }}<small>已授权给：{{ accountGrants(item.id).filter(g=>g.enabled).map(g=>label('principals',g.principal_id)).join('、')||'暂无系统账号' }}</small></template>
+                    <template v-else-if="current==='accounts'">{{ optionLabel(item.tier) }} · {{ accountHealth(item) }}<small>已授权给：{{ accountGrants(item.id).filter(effective).map(g=>subjectName(g)+'：'+grantedPeople(g)).join('、')||'暂无系统账号' }}</small></template>
                     <template v-else-if="current==='api-keys'">绑定：{{ label('principals',item.principal_id) }}<small>到期：{{ formatTime(item.expires_at) }}</small><small>{{ item.scopes.map((a:string)=>actionOptions.find(o=>o.value===a)?.label||a).join('、') }}</small></template>
                     <template v-else>{{ summary(item) }}</template>
                     <small v-if="current==='audit-events'">{{ item.method }} {{ item.path }}</small>
@@ -453,31 +507,33 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
       </main>
     </div>
     <main v-else class="access-user-main">
-      <h1>{{ me.principal?.name }} 的可用资源</h1><p>仅显示当前系统账号获准使用的资源账号，不显示密码或私钥。</p>
-      <div class="access-resource-cards"><a-button v-for="r in userResources" :key="r.id" :class="{selected:selectedResource===r.id}" @click="selectedResource=r.id;chooseResource()"><Icon :icon="r.type==='ssh'?'lucide:terminal':'lucide:database'" width="24" /><span>{{ r.name }}</span><span>{{ r.type }} {{ r.database }}</span><small v-for="m in r.access_modes" :key="m.mode">{{ m.username }} · {{ optionLabel(m.mode) }}</small></a-button></div>
+      <h1>{{ me.principal?.name }} 的可用资源</h1><p>所属用户组：{{ me.roles?.map((r:Row)=>r.name).join('、')||'暂无用户组' }}</p><a-button :disabled="busy" @click="act(load)">刷新可用资源</a-button><p>选择资源查看可用操作和连接方式。</p>
+      <div class="access-resource-cards"><a-button v-for="r in userResources" :key="r.id" :class="{selected:selectedResource===r.id}" @click="selectedResource=r.id;chooseResource()"><ResourceIcon :type="r.type" :size="32" /><span>{{ r.name }}</span><span>{{ resourceProduct(r.type).name }} {{ r.database }}</span><small>{{ environmentLabel(r.environment) }}</small></a-button></div>
       <p v-if="!userResources.length" class="access-empty">暂无可用资源账号，请联系管理员配置资源授权。</p>
       <section v-if="activeResource" class="access-panel">
-        <h2>{{ activeResource.name }}</h2><div class="access-field">资源账号<a-select v-model="mode" role="combobox" aria-label="资源账号"><a-option v-for="m in activeResource.access_modes" :key="m.mode" :value="m.mode">{{ m.username }} · {{ optionLabel(m.mode) }}</a-option></a-select></div>
-        <a-button v-if="['mysql','postgresql'].includes(activeResource.type)" :disabled="busy" @click="loadSchema()">查看数据库结构</a-button><JsonPanel v-if="userSchema" :value="userSchema" /><a-button v-if="userSchema?.next_cursor" :disabled="busy" @click="loadSchema(userSchema.next_cursor)">下一页</a-button>
-        <div class="access-field">操作<a-select v-model="operation" role="combobox" aria-label="操作"><a-option v-for="action in activeResource.access_modes.find((m:Row)=>m.mode===mode)?.actions.filter((a:string)=>a!=='db.schema')" :key="action" :value="action">{{ optionLabel(action) }}</a-option></a-select></div>
+        <h2>{{ activeResource.name }}</h2><div class="access-field">资源账号<a-select v-model="accessOption" role="combobox" aria-label="资源账号"><a-option v-for="m in activeResource.access_modes" :key="m.access_option_id" :value="m.access_option_id">{{ m.username }} · {{ optionLabel(m.mode) }} · {{ m.role_name||'直接授权' }}</a-option></a-select></div>
+        <p>权限来源：{{ activeAccess?.role_name||'直接授权' }} · 到期 {{ formatTime(activeAccess?.expires_at) }}</p>
+        <a-button v-if="activeAccess?.actions.includes('db.schema')" :disabled="busy" @click="loadSchema()">查看数据库结构</a-button><JsonPanel v-if="userSchema" :value="userSchema" /><a-button v-if="userSchema?.next_cursor" :disabled="busy" @click="loadSchema(userSchema.next_cursor)">下一页</a-button>
+        <div class="access-field">操作<a-select v-model="operation" role="combobox" aria-label="操作"><a-option v-for="action in activeAccess?.actions.filter((a:string)=>a!=='db.schema')" :key="action" :value="action">{{ optionLabel(action) }}</a-option></a-select></div>
         <div v-if="operation==='ssh.inspect'" class="access-field">检查项目<a-select v-model="sshCheck" role="combobox" aria-label="检查项目"><a-option v-for="c in ['overview','disk','memory','processes','network']" :key="c" :value="c">{{ ({overview:'概览',disk:'磁盘与 inode',memory:'内存',processes:'进程',network:'网络'})[c] }}</a-option></a-select></div>
         <template v-else-if="activeResource.type==='k8s'">
           <div class="access-field">Namespace<a-select v-model="kubeNamespace" role="combobox" aria-label="Namespace"><a-option v-for="n in activeResource.namespaces" :key="n" :value="n">{{ n }}</a-option></a-select></div>
           <template v-if="operation==='k8s.read'"><div class="access-field">查询类型<a-select v-model="kubeOperation" role="combobox" aria-label="查询类型"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></div><div class="access-field">资源类型<a-select v-model="kubeKind" role="combobox" aria-label="资源类型"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></div></template>
           <div v-if="operation==='k8s.restart'||kubeOperation!=='list'" class="access-field">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></div>
         </template>
-        <div v-else class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></div>
+        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></div>
         <p v-if="mode==='privileged'" class="access-warning">正在使用已授权的高权限资源账号，操作可能修改数据或服务器文件。</p>
-        <a-button type="primary" :disabled="busy" @click="executeUser">提交执行</a-button>
+        <a-button type="primary" :disabled="busy||!operation" @click="executeUser">{{ ['ssh.connect','rdp.connect'].includes(operation)?'打开会话':'提交执行' }}</a-button>
+        <section v-if="sessionOpen" class="access-live-session"><a-button @click="sessionOpen=false">关闭会话</a-button><SshTerminal v-if="activeResource.type==='ssh'" :key="accessOption" profile-id="" :title="activeResource.name" active :access="sessionAccess" /><RdpDesktop v-else-if="activeResource.type==='rdp'" :key="accessOption" profile-id="" :title="activeResource.name" active :access="sessionAccess" /></section>
         <div v-if="userExecution" class="access-panel"><span>{{ optionLabel(userExecution.status) }}</span><a-button :disabled="busy" @click="pollUser">刷新结果</a-button><a-button v-if="userExecution.result?.next_cursor" :disabled="busy" @click="pollUser(userExecution.result.next_cursor)">下一页结果</a-button><a-button :disabled="busy" @click="cancelUser">请求取消</a-button><JsonPanel :value="userExecution" /></div>
       </section>
     </main>
     <a-modal :visible="!!report" :title="reportTitle||'详情'" :width="960" :footer="false" @cancel="report=null">
       <div v-if="report" class="report-content">
         <template v-if="reportType==='account'"><p>连接：{{ report.connected?'成功':'未通过' }}</p><p>普通账号安全检查：{{ report.normal_safe?'通过':'未通过或不适用' }}</p><p>连接成功不代表账号只有只读权限。请核实检查详情后再启用。</p></template>
-        <template v-else-if="reportType==='preview'"><p v-if="!report.resources?.length">该系统账号在所选凭证权限范围内，没有可用资源账号。</p><article v-for="resource in report.resources" :key="resource.id" class="access-panel"><h3>{{ resource.name }}</h3><p v-for="account in resource.access_modes" :key="account.mode">{{ account.username }} · {{ optionLabel(account.mode) }} · {{ account.actions.map(optionLabel).join('、') }}</p></article></template>
+        <template v-else-if="reportType==='preview'"><p v-if="!report.resources?.length">该系统账号在所选凭证权限范围内，没有可用资源账号。</p><article v-for="resource in report.resources" :key="resource.id" class="access-panel"><h3>{{ resource.name }}</h3><p v-for="account in resource.access_modes" :key="account.access_option_id">{{ account.username }} · {{ optionLabel(account.mode) }} · {{ account.role_name||'直接授权' }} · {{ account.actions.map(optionLabel).join('、') }}</p></article></template>
         <template v-else-if="reportType==='audit'"><dl class="access-audit-grid"><div><dt>操作人</dt><dd>{{ report.actor_name||report.actor }}</dd></div><div><dt>外部身份 / 登录方式</dt><dd>{{ report.source_id }} · {{ report.subject }} · {{ report.auth_method }}</dd></div><div><dt>入口与操作</dt><dd>{{ report.surface }} · {{ report.operation }}</dd></div><div><dt>资源账号</dt><dd>{{ report.account_username||'—' }} · {{ optionLabel(report.mode) }}</dd></div><div><dt>请求</dt><dd>{{ report.method }} {{ report.path }}</dd></div><div><dt>结果</dt><dd>{{ report.status_code }} · {{ report.error_code||'成功' }}</dd></div></dl><h3>请求内容（已脱敏）</h3><JsonPanel :value="report.request_preview" :truncated="report.request_truncated" label="请求 · 上限 1 KiB" /><h3>返回内容（已脱敏）</h3><JsonPanel :value="report.response_preview" :truncated="report.response_truncated" label="返回 · 上限 4 KiB" /></template>
-        <template v-else-if="reportType==='execution'"><p>执行状态：{{ optionLabel(report.status) }}</p><p>资源账号：{{ report.account?.username||report.username||'—' }}</p><JsonPanel :value="report.result" /></template>
+        <template v-else-if="reportType==='execution'"><p>执行状态：{{ optionLabel(report.status) }}</p><p>资源账号：{{ report.account?.username||report.username||'—' }}</p><p>权限来源：{{ report.role_name||'直接授权' }} · {{ report.grant_id }}</p><JsonPanel :value="report.result" /></template>
         <details :open="reportType==='generic'"><summary>技术详情</summary><JsonPanel :value="report" /></details>
       </div>
     </a-modal>
@@ -492,6 +548,6 @@ html,body,#app{margin:0;width:100%;height:100%;font-family:Inter,"PingFang SC","
 *{box-sizing:border-box}.arco-modal-title,.arco-table-th,.arco-card-header-title,.arco-menu-item{font-weight:400!important}.arco-modal{max-width:calc(100vw - 32px)}.arco-modal-body{max-height:75vh;overflow:auto}
 </style>
 <style scoped>
-.access-workspace{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:var(--color-fill-2);font-size:14px}.access-header{height:56px;flex-shrink:0;display:flex;align-items:center;gap:24px;padding:0 24px;background:white;border-bottom:1px solid var(--color-border-2)}.access-header a{text-decoration:none;color:var(--color-text-2)}.access-brand{display:flex;gap:10px;align-items:center;font-size:18px}.access-brand>span{display:grid;place-items:center;width:30px;height:30px;background:rgb(var(--primary-6));color:white;border-radius:6px}.access-subtitle{flex:1;font-size:12px;color:var(--color-text-3)}.access-layout{display:grid;grid-template-columns:208px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}.access-layout nav{overflow:auto;background:var(--color-bg-1);border-right:1px solid var(--color-border-2);padding:14px 8px;display:flex;flex-direction:column}.access-layout nav p{margin-top:auto;padding:20px 14px;font-size:12px;color:var(--color-text-3)}.access-main{min-width:0;overflow:auto;padding:24px 28px;scrollbar-gutter:stable}.access-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px}.access-heading>div{flex:1}.access-heading p{margin-bottom:0}.access-workspace h1{font-size:18px;font-weight:500;margin:0 0 8px}.access-workspace h2{font-size:16px;font-weight:500;margin:0 0 14px}.access-workspace h3{font-size:14px;font-weight:400;margin:20px 0 12px}.access-workspace p,.report-content p{line-height:1.7;color:var(--color-text-3)}.access-workspace small{font-size:12px;color:var(--color-text-3)}.access-panel,.access-form{padding:22px;background:white;border:1px solid var(--color-border-2);border-radius:4px;margin:16px 0}.access-panel>.access-field{margin:12px 0}.access-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.access-workspace .access-field{display:flex;flex-direction:column;gap:8px;font-weight:400}.access-workspace .check-field{flex-direction:row;align-items:center;flex-wrap:wrap}.check-field small{flex-basis:100%}.wide-field{grid-column:1/-1}.access-actions,.access-row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.access-actions{margin-top:22px;padding-top:16px;border-top:1px solid var(--color-border-2)}.access-row-actions :deep(.arco-btn){font-size:12px}.access-tabs,.access-breadcrumb{display:flex;gap:8px;align-items:center;margin-bottom:18px}.access-tabs .selected{color:rgb(var(--primary-6));background:var(--color-primary-light-1)}.access-alert{margin:8px 24px;flex-shrink:0;width:auto}.access-selection{border:1px solid var(--color-border-2);border-radius:4px;margin:22px 0;padding:18px}.access-selection legend{font-weight:400;padding:0 6px}.access-selection>.access-field{margin:10px 0}.access-advanced{margin:20px 0}.access-advanced .access-fields{margin-top:16px}.access-workspace summary{cursor:pointer;color:rgb(var(--primary-6));font-size:12px}.access-table-wrap{min-width:0;overflow:hidden}.access-table-wrap :deep(td){overflow-wrap:anywhere}.access-table-wrap small{display:block;margin-top:6px}.access-table-wrap details{margin-top:8px}.access-filters{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:12px;align-items:end}.access-badge{display:inline-block;font-size:12px;padding:3px 8px;background:var(--color-fill-2);color:var(--color-text-3);border-radius:3px;white-space:nowrap}.access-badge.good{background:rgb(var(--green-1));color:rgb(var(--green-6))}.access-login{width:420px;max-width:calc(100% - 32px);margin:70px auto;padding:28px;background:white;border:1px solid var(--color-border-2)}.access-login form{display:grid;gap:18px}.access-login h1{margin-top:18px}.access-login>a{display:block;margin-top:18px}.access-user-main{overflow:auto;padding:28px;width:100%;max-width:1200px;margin:auto}.access-resource-cards{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.access-resource-cards :deep(.arco-btn){height:auto;padding:16px;display:flex;flex-direction:column;gap:8px}.access-secret,.access-warning{background:rgb(var(--orange-1));padding:16px;border-radius:4px}.access-secret{margin:16px 0}.access-secret .arco-input-wrapper{margin:12px 0}.access-empty{text-align:center;padding:30px}.access-audit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--color-border-2);border:1px solid var(--color-border-2)}.access-audit-grid>div{padding:12px;background:var(--color-fill-1)}.access-audit-grid dt{font-size:12px;color:var(--color-text-3);margin-bottom:8px}.access-audit-grid dd{margin:0;overflow-wrap:anywhere}.report-content h3{font-size:14px;font-weight:400}.resource-context{font-size:12px}.access-workspace input[type=datetime-local]{font:inherit;border:1px solid var(--color-border-2);padding:8px;background:var(--color-fill-2)}
+.access-live-session{height:600px;display:flex;flex-direction:column;margin-top:16px}.access-live-session>.remote-session{flex:1;min-height:0}.access-workspace{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:var(--color-fill-2);font-size:14px}.access-header{height:56px;flex-shrink:0;display:flex;align-items:center;gap:24px;padding:0 24px;background:white;border-bottom:1px solid var(--color-border-2)}.access-header a{text-decoration:none;color:var(--color-text-2)}.access-brand{display:flex;gap:10px;align-items:center;font-size:18px}.access-brand>span{display:grid;place-items:center;width:30px;height:30px;background:rgb(var(--primary-6));color:white;border-radius:6px}.access-subtitle{flex:1;font-size:12px;color:var(--color-text-3)}.access-layout{display:grid;grid-template-columns:208px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}.access-layout nav{overflow:auto;background:var(--color-bg-1);border-right:1px solid var(--color-border-2);padding:14px 8px;display:flex;flex-direction:column}.access-layout nav p{margin-top:auto;padding:20px 14px;font-size:12px;color:var(--color-text-3)}.access-main{min-width:0;overflow:auto;padding:24px 28px;scrollbar-gutter:stable}.access-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px}.access-heading>div{flex:1}.access-heading p{margin-bottom:0}.access-workspace h1{font-size:18px;font-weight:500;margin:0 0 8px}.access-workspace h2{font-size:16px;font-weight:500;margin:0 0 14px}.access-workspace h3{font-size:14px;font-weight:400;margin:20px 0 12px}.access-workspace p,.report-content p{line-height:1.7;color:var(--color-text-3)}.access-workspace small{font-size:12px;color:var(--color-text-3)}.access-panel,.access-form{padding:22px;background:white;border:1px solid var(--color-border-2);border-radius:4px;margin:16px 0}.access-panel>.access-field{margin:12px 0}.access-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.access-workspace .access-field{display:flex;flex-direction:column;gap:8px;font-weight:400}.access-workspace .check-field{flex-direction:row;align-items:center;flex-wrap:wrap}.check-field small{flex-basis:100%}.wide-field{grid-column:1/-1}.access-actions,.access-row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.access-actions{margin-top:22px;padding-top:16px;border-top:1px solid var(--color-border-2)}.access-row-actions :deep(.arco-btn){font-size:12px}.access-tabs,.access-breadcrumb{display:flex;gap:8px;align-items:center;margin-bottom:18px}.access-tabs .selected{color:rgb(var(--primary-6));background:var(--color-primary-light-1)}.access-alert{margin:8px 24px;flex-shrink:0;width:auto}.access-selection{border:1px solid var(--color-border-2);border-radius:4px;margin:22px 0;padding:18px}.access-selection legend{font-weight:400;padding:0 6px}.access-selection>.access-field{margin:10px 0}.access-advanced{margin:20px 0}.access-advanced .access-fields{margin-top:16px}.access-workspace summary{cursor:pointer;color:rgb(var(--primary-6));font-size:12px}.access-table-wrap{min-width:0;overflow:hidden}.access-table-wrap :deep(td){overflow-wrap:anywhere}.access-table-wrap small{display:block;margin-top:6px}.access-table-wrap details{margin-top:8px}.access-filters{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:12px;align-items:end}.access-badge{display:inline-block;font-size:12px;padding:3px 8px;background:var(--color-fill-2);color:var(--color-text-3);border-radius:3px;white-space:nowrap}.access-badge.good{background:rgb(var(--green-1));color:rgb(var(--green-6))}.access-login{width:420px;max-width:calc(100% - 32px);margin:70px auto;padding:28px;background:white;border:1px solid var(--color-border-2)}.access-login form{display:grid;gap:18px}.access-login h1{margin-top:18px}.access-login>a{display:block;margin-top:18px}.access-user-main{overflow:auto;padding:28px;width:100%;max-width:1200px;margin:auto}.access-resource-cards{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.access-resource-cards :deep(.arco-btn){height:auto;padding:16px;display:flex;flex-direction:column;gap:8px}.access-secret,.access-warning{background:rgb(var(--orange-1));padding:16px;border-radius:4px}.access-secret{margin:16px 0}.access-secret .arco-input-wrapper{margin:12px 0}.access-empty{text-align:center;padding:30px}.access-audit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--color-border-2);border:1px solid var(--color-border-2)}.access-audit-grid>div{padding:12px;background:var(--color-fill-1)}.access-audit-grid dt{font-size:12px;color:var(--color-text-3);margin-bottom:8px}.access-audit-grid dd{margin:0;overflow-wrap:anywhere}.report-content h3{font-size:14px;font-weight:400}.resource-context{font-size:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}.resource-context p{flex-basis:100%;margin:0}.access-resource-cards :deep(.arco-btn.selected){border-color:rgb(var(--primary-5));background:var(--color-primary-light-1)}.access-workspace input[type=datetime-local]{font:inherit;border:1px solid var(--color-border-2);padding:8px;background:var(--color-fill-2)}
 @media(max-width:900px){.access-layout{grid-template-columns:176px minmax(0,1fr)}.access-main{padding:20px}.access-subtitle{display:none}.access-header{gap:14px}.access-fields,.access-filters{grid-template-columns:1fr 1fr}}@media(max-width:600px){.access-layout{grid-template-columns:136px minmax(0,1fr)}.access-main{padding:12px}.access-header{padding:0 12px;gap:10px}.access-header>a:not(.access-brand){font-size:12px}.access-header>span{display:none}.access-heading{flex-wrap:wrap}.access-fields,.access-filters{grid-template-columns:1fr}.access-panel,.access-form{padding:14px}.access-audit-grid{grid-template-columns:1fr}}
 </style>

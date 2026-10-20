@@ -11,7 +11,7 @@ from .models import Account, Resource
 from .store import encode
 
 
-SUPPORTED = {"ssh", "mysql", "postgresql", "k8s"}
+SUPPORTED = {"ssh", "mysql", "postgresql", "k8s", "rdp"}
 
 
 class ConnectionPool:
@@ -64,6 +64,11 @@ class ConnectionPool:
             fields["host"] = parsed.hostname or row["host"]
             fields["port"] = parsed.port or row["port"]
             fields["tls"] = parsed.scheme != "http"
+        if row["driver"] == "rdp":
+            fields["domain"] = row.get("options", {}).get("domain", "")
+            fields["rdp_security"] = row.get("options", {}).get("security", "nla")
+            if fields["rdp_security"] == "any":
+                fields["rdp_security"] = "nla"
         if row["driver"] == "ssh":
             fields["host_key"] = row.get("options", {}).get("host_key_fingerprint", "")
         if source_changed or reason:
@@ -111,6 +116,8 @@ class ConnectionPool:
         if row["driver"] not in SUPPORTED:
             return "已加入资源管理；此连接类型暂不支持 MCP 操作"
         options = row.get("options", {})
+        if row["driver"] == "rdp" and options.get("ignore_certificate"):
+            return "人员远程桌面必须验证服务器证书，请先在工作台连接中启用证书校验"
         if options.get("ssh_tunnel") or options.get("proxy_enabled"):
             return "已加入资源管理；MCP 执行端暂不支持此连接的隧道或代理"
         if row["driver"] == "k8s":

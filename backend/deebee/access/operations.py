@@ -17,6 +17,7 @@ from .models import AccessError, Model
 
 class OperationInput(Model):
     resource_id: str = Field(min_length=1)
+    access_option_id: str = Field(default="", max_length=255)
     mode: Literal["normal", "privileged"] = "normal"
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     idempotency_key: str = Field(min_length=1, max_length=128)

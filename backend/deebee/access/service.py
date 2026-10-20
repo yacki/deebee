@@ -100,6 +100,11 @@ class AccessService:
                 self.store.get("principals", body["principal_id"])
                 if not source["enabled"] and body["enabled"]:
                     raise AccessError("IDENTITY_DISABLED", "请先启用身份验证服务")
+            if kind == "memberships":
+                self.store.get("principals", body["principal_id"])
+                role = self.store.get("roles", body["role_id"])
+                if role.get("deleted_at"):
+                    raise AccessError("ROLE_DELETED", "用户组已删除", 409)
             if kind == "accounts":
                 resource = self.store.get("resources", body["resource_id"])
                 if resource.get("deleted_at"):
@@ -121,7 +126,9 @@ class AccessService:
                     body["verified_by"] = actor
                     body["verified_at"] = time.time()
             if kind == "grants":
-                self.store.get("principals", body["principal_id"])
+                subject = self.store.get("roles" if body["role_id"] else "principals", body["role_id"] or body["principal_id"])
+                if subject.get("deleted_at"):
+                    raise AccessError("ROLE_DELETED", "用户组已删除", 409)
                 resource = self.store.get("resources", body["resource_id"])
                 if resource.get("deleted_at"):
                     raise AccessError("RESOURCE_DELETED", "资源已删除", 409)
@@ -132,7 +139,7 @@ class AccessService:
                             raise AccessError("ACCOUNT_SCOPE_MISMATCH", "账号必须属于当前资源且匹配普通/特权级别")
                         if body["enabled"] and not account["enabled"]:
                             raise AccessError("ACCOUNT_DISABLED", "授权引用的账号尚未启用")
-                if body["expires_at"] is not None and body["expires_at"] <= time.time():
+                if body["enabled"] and body["expires_at"] is not None and body["expires_at"] <= time.time() and body["expires_at"] != (old or {}).get("expires_at"):
                     raise AccessError("INVALID_ARGUMENT", "授权有效期必须晚于当前时间")
             if kind in {"sources", "accounts"}:
                 current_secret = self.store.secret(old["credential_ref"]) if old and old.get("credential_ref") else {}
@@ -155,6 +162,61 @@ class AccessService:
         if self.on_change:
             self.on_change()
         return public_entity(result)
+
+    async def assign_members(self, role_id: str, values: dict, actor: str) -> dict:
+        """One atomic batch, including optimistic checks for existing assignments."""
+        from .models import Model, Membership
+        from pydantic import Field
+
+        class Batch(Model):
+            principal_ids: list[str] = Field(min_length=1, max_length=500)
+            expected_version: int
+            enabled: bool = True
+            starts_at: float | None = None
+            expires_at: float | None = None
+
+        body = Batch.model_validate(values)
+        with self.store.transaction():
+            role = self.store.get("roles", role_id)
+            if role.get("deleted_at") or role["version"] != body.expected_version:
+                raise AccessError("VERSION_CONFLICT", "用户组已变化，请刷新后重试", 409)
+            items = []
+            for principal_id in dict.fromkeys(body.principal_ids):
+                old = next((m for m in self.store.list("memberships") if m["role_id"] == role_id and m["principal_id"] == principal_id), None)
+                fields = Membership(principal_id=principal_id, role_id=role_id, enabled=body.enabled, starts_at=body.starts_at, expires_at=body.expires_at).model_dump()
+                items.append(await self.save("memberships", fields | ({"expected_version": old["version"]} if old else {}), actor, old["id"] if old else None))
+        return {"items": items}
+
+    async def clone_role(self, role_id: str, values: dict, actor: str) -> dict:
+        with self.store.transaction():
+            old = self.store.get("roles", role_id)
+            if old.get("deleted_at") or values.get("expected_version") != old["version"]:
+                raise AccessError("VERSION_CONFLICT", "用户组已变化，请刷新后重试", 409)
+            role = await self.save("roles", {"name": values.get("name", ""), "description": old["description"], "enabled": False}, actor)
+            for grant in self.store.list("grants"):
+                if grant.get("role_id") == role_id and not grant.get("deleted_at"):
+                    fields = {k: v for k, v in grant.items() if k in ENTITY_MODELS["grants"].model_fields}
+                    await self.save("grants", fields | {"role_id": role["id"], "enabled": False}, actor)
+            self.store.audit(actor, "roles.clone", role["id"], {"source_role_id": role_id})
+        return role
+
+    def delete_role(self, role_id: str, values: dict, actor: str) -> dict:
+        with self.store.transaction():
+            role = self.store.get("roles", role_id)
+            if role.get("deleted_at") or values.get("expected_version") != role["version"]:
+                raise AccessError("VERSION_CONFLICT", "用户组已变化，请刷新后重试", 409)
+            if values.get("confirm_name") != role["name"]:
+                raise AccessError("CONFIRMATION_REQUIRED", "请输入完整用户组名称确认删除")
+            changes = {"enabled": False, "deleted_at": time.time()}
+            for kind in ("memberships", "grants"):
+                for item in self.store.list(kind):
+                    if item.get("role_id") == role_id and not item.get("deleted_at"):
+                        self.store.put(kind, item["id"], item | changes, item["version"])
+            self.store.put("roles", role_id, role | changes, role["version"])
+            self.store.audit(actor, "roles.delete", role_id, {"name": role["name"]})
+        if self.on_change:
+            self.on_change()
+        return {"deleted": True}
 
     def delete_resource(self, resource_id: str, values: dict, actor: str) -> dict:
         with self.store.transaction():
@@ -212,7 +274,49 @@ class AccessService:
             self.on_change()
         return public_entity(result)
 
-    def authorize(self, ctx: AuthContext, resource_id: str, mode: str = "normal", action: str = "resources:read") -> tuple[dict, dict, dict]:
+    @staticmethod
+    def active(item: dict) -> bool:
+        now = time.time()
+        return bool(item.get("enabled") and not item.get("deleted_at")
+                    and (item.get("starts_at") is None or item["starts_at"] <= now)
+                    and (item.get("expires_at") is None or item["expires_at"] > now))
+
+    def memberships(self, principal_id: str) -> list[dict]:
+        result = []
+        for member in self.store.list("memberships"):
+            if member["principal_id"] != principal_id or not self.active(member):
+                continue
+            role = self.store.get("roles", member["role_id"], required=False)
+            if role and self.active(role):
+                result.append(member | {"role_name": role["name"], "role_version": role["version"]})
+        return result
+
+    def effective_grants(self, ctx: AuthContext, resource_id: str) -> list[dict]:
+        members = {m["role_id"]: m for m in self.memberships(ctx.principal_id)}
+        result = []
+        for grant in self.store.list("grants"):
+            if grant["resource_id"] != resource_id or not self.active(grant):
+                continue
+            role_id = grant.get("role_id", "")
+            member = members.get(role_id)
+            if role_id and not member or not role_id and grant.get("principal_id") != ctx.principal_id:
+                continue
+            result.append(grant | {"role_id": role_id, "role_name": member["role_name"] if member else "",
+                                  "role_version": member["role_version"] if member else 0,
+                                  "membership_id": member["id"] if member else "",
+                                  "membership_version": member["version"] if member else 0,
+                                  "authorization_expires_at": min(v for v in (ctx.expires_at, grant.get("expires_at"), member.get("expires_at") if member else None) if v is not None)})
+        return result
+
+    def option_id(self, ctx: AuthContext, resource: dict, account: dict, grant: dict, mode: str) -> str:
+        # The selector is bound to one complete authorization path and its versions.
+        # A revoked/edited path cannot silently switch to an overlapping role.
+        fields = [ctx.principal_id, ctx.binding_id, resource["id"], resource["version"], account["id"], account["version"],
+                  grant["id"], grant["version"], grant["role_version"], grant["membership_id"], grant["membership_version"], mode]
+        return grant["id"] + ":" + mode + ":" + self.store.digest(encode(fields))[:32]
+
+    def authorize(self, ctx: AuthContext, resource_id: str, mode: str = "normal", action: str = "resources:read",
+                  access_option_id: str = "") -> tuple[dict, dict, dict]:
         if ctx.expires_at <= time.time():
             raise AccessError("TOKEN_EXPIRED", "身份凭据已到期", 401)
         principal = self.store.get("principals", ctx.principal_id, required=False)
@@ -228,8 +332,8 @@ class AccessService:
                 if not key or not key["enabled"] or key["expires_at"] <= time.time():
                     raise AccessError("IDENTITY_DISABLED", "API-Key 已失效", 403)
         resource = self.store.get("resources", resource_id, required=False)
-        grant = next((g for g in self.store.list("grants") if g["principal_id"] == ctx.principal_id and g["resource_id"] == resource_id), None)
-        if not resource or not resource["enabled"] or not grant or not grant["enabled"] or (grant.get("expires_at") is not None and grant["expires_at"] <= time.time()) or (ctx.resource_ids and resource_id not in ctx.resource_ids):
+        grants = self.effective_grants(ctx, resource_id)
+        if not resource or not resource["enabled"] or resource.get("deleted_at") or not grants or (ctx.resource_ids and resource_id not in ctx.resource_ids):
             raise AccessError("RESOURCE_NOT_FOUND", "资源不存在或无访问权限", 404)
         if resource.get("legacy_profile_id"):
             if not self.legacy:
@@ -237,43 +341,63 @@ class AccessService:
             self.legacy.checked(resource)
         if mode not in {"normal", "privileged"}:
             raise AccessError("INVALID_ARGUMENT", "账号模式无效")
-        if action not in ctx.scopes or action not in grant["actions"]:
-            raise AccessError("INSUFFICIENT_SCOPE", "当前凭据或授权不允许该操作", 403)
-        if mode == "privileged" and (not grant["allow_privileged"] or "privilege:use" not in ctx.scopes or "privilege:use" not in grant["actions"]):
-            raise AccessError("PRIVILEGE_DENIED", "此资源未允许使用特权账号", 403)
-        account_id = grant.get("privileged_account_id" if mode == "privileged" else "normal_account_id")
-        account = self.store.get("accounts", account_id or "", required=False)
-        if not account or not account["enabled"] or account["resource_id"] != resource_id or account["tier"] != mode:
-            raise AccessError("ACCOUNT_UNAVAILABLE", f"当前资源的 {mode} 模式账号不可用；请读取资源详情核对已授权的账号模式，不会自动提升权限", 403)
-        if account.get("test_result", {}).get("resource_version") != resource["version"]:
-            raise AccessError("ACCOUNT_NOT_VERIFIED", "资源配置已变化，需要重新核验账号", 403)
-        test = account.get("test_result", {})
-        if not test.get("connected") or not account.get("permission_confirmed") or (mode == "normal" and not test.get("normal_safe")):
-            raise AccessError("ACCOUNT_NOT_VERIFIED", "账号连接或权限核验未通过", 403)
-        return resource, account, grant
-
-    def projected(self, ctx: AuthContext, resource_id: str) -> dict:
-        modes = []
-        resource = None
-        denied = None
-        for mode in ("normal", "privileged"):
+        candidates, denied = [], None
+        for grant in grants:
             try:
-                allowed_resource, account, grant = self.authorize(ctx, resource_id, mode)
+                account_id = grant.get("privileged_account_id" if mode == "privileged" else "normal_account_id")
+                account = self.store.get("accounts", account_id or "", required=False)
+                if not account or not account["enabled"] or account.get("deleted_at") or account["resource_id"] != resource_id or account["tier"] != mode:
+                    raise AccessError("ACCOUNT_UNAVAILABLE", f"当前资源的 {mode} 模式账号不可用；不会自动提升权限", 403)
+                option = self.option_id(ctx, resource, account, grant, mode)
+                if access_option_id and not secrets.compare_digest(option, access_option_id):
+                    continue
+                if action not in ctx.scopes or action not in grant["actions"]:
+                    raise AccessError("INSUFFICIENT_SCOPE", "当前凭据或授权不允许该操作", 403)
+                if mode == "privileged" and (not grant["allow_privileged"] or "privilege:use" not in ctx.scopes or "privilege:use" not in grant["actions"]):
+                    raise AccessError("PRIVILEGE_DENIED", "此资源未允许使用特权账号", 403)
+                test = account.get("test_result", {})
+                if test.get("resource_version") != resource["version"] or not test.get("connected") or not account.get("permission_confirmed") or (mode == "normal" and not test.get("normal_safe")):
+                    raise AccessError("ACCOUNT_NOT_VERIFIED", "账号连接或权限核验未通过，配置变化后需要重新核验", 403)
+                candidates.append((resource, account, grant | {"access_option_id": option}))
             except AccessError as exc:
                 denied = exc
-                continue
-            resource = allowed_resource
-            if resource["type"] == "ssh":
-                actions = ["ssh.inspect", "ssh.exec"]
-            elif resource["type"] == "k8s":
-                actions = ["k8s.read"] + (["k8s.restart"] if mode == "privileged" else [])
-            else:
-                actions = ["db.schema", "db.query"] + (["db.execute"] if mode == "privileged" else [])
-            scopes = {"ssh.exec": "ssh:exec", "db.schema": "db:query", "db.query": "db:query", "db.execute": "db:write", "ssh.inspect": "ssh:inspect", "k8s.read": "k8s:read", "k8s.restart": "k8s:write"}
-            modes.append({"mode": mode, "account_alias": account["name"], "username": account["username"],
-                          "actions": [a for a in actions if scopes[a] in ctx.scopes and scopes[a] in grant["actions"]], "limits": grant["limits"]})
+        if not candidates:
+            raise denied or AccessError("AUTHORIZATION_CHANGED", "所选访问方式已失效，请刷新资源并重新选择", 403)
+        if len(candidates) > 1:
+            raise AccessError("ACCESS_SELECTION_REQUIRED", "存在多个可用授权，请选择资源详情返回的 access_option_id", 409)
+        return candidates[0]
+
+    def projected(self, ctx: AuthContext, resource_id: str) -> dict:
+        modes, resource, denied = [], None, None
+        for grant in self.effective_grants(ctx, resource_id):
+            for mode in ("normal", "privileged"):
+                account = self.store.get("accounts", grant.get("privileged_account_id" if mode == "privileged" else "normal_account_id") or "", required=False)
+                candidate_resource = self.store.get("resources", resource_id, required=False)
+                if not account or not candidate_resource:
+                    continue
+                option = self.option_id(ctx, candidate_resource, account, grant, mode)
+                try:
+                    resource, account, grant = self.authorize(ctx, resource_id, mode, access_option_id=option)
+                except AccessError as exc:
+                    denied = exc
+                    continue
+                if resource["type"] == "ssh":
+                    actions = ["ssh.inspect", "ssh.exec", "ssh.connect"]
+                elif resource["type"] == "rdp":
+                    actions = ["rdp.connect"]
+                elif resource["type"] == "k8s":
+                    actions = ["k8s.read"] + (["k8s.restart"] if mode == "privileged" else [])
+                else:
+                    actions = ["db.schema", "db.query"] + (["db.execute"] if mode == "privileged" else [])
+                scopes = {"ssh.connect": "ssh:connect", "rdp.connect": "rdp:connect", "ssh.exec": "ssh:exec", "db.schema": "db:query", "db.query": "db:query", "db.execute": "db:write", "ssh.inspect": "ssh:inspect", "k8s.read": "k8s:read", "k8s.restart": "k8s:write"}
+                modes.append({"mode": mode, "access_option_id": option, "account_alias": account["name"], "username": account["username"],
+                              "grant_id": grant["id"], "role_id": grant["role_id"], "role_name": grant["role_name"],
+                              "source": "role" if grant["role_id"] else "direct", "expires_at": grant["authorization_expires_at"],
+                              "actions": [a for a in actions if scopes[a] in ctx.scopes and scopes[a] in grant["actions"]],
+                              "limits": {k: min(v, resource.get(k, v)) for k, v in grant["limits"].items()}})
         if not modes or resource is None:
             raise denied or AccessError("RESOURCE_NOT_FOUND", "资源不存在或无访问权限", 404)
+        modes.sort(key=lambda m: m["mode"] != "normal")
         return {"id": resource["id"], "name": resource["name"], "type": resource["type"], "host": resource["host"], "port": resource["port"], "database": resource["database"],
                 "environment": resource.get("environment", ""), "project_groups": resource.get("project_groups", []), "tags": resource.get("tags", []),
                 **({"namespaces": resource["namespaces"]} if resource["type"] == "k8s" else {}),
@@ -292,6 +416,7 @@ class AccessService:
     def me(self, ctx: AuthContext) -> dict:
         principal = self.store.get("principals", ctx.principal_id)
         return {"principal": {"id": principal["id"], "name": principal["name"], "kind": principal["kind"]},
+                "roles": [{"id": m["role_id"], "name": m["role_name"], "expires_at": m.get("expires_at")} for m in self.memberships(ctx.principal_id)],
                 "source_id": ctx.source_id, "auth_method": ctx.method, "scopes": sorted(ctx.scopes), "expires_at": ctx.expires_at}
 
     def cursor(self, ctx: AuthContext, purpose: str, offset: int) -> str:

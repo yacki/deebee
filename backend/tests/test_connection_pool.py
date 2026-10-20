@@ -44,12 +44,12 @@ def test_backfill_all_connection_types_without_publishing_or_copying_secrets(poo
     resources = pool.store.list("resources")
     assert len(resources) == 8
     assert all(not r["enabled"] for r in resources)
-    assert len(pool.store.list("accounts")) == 3
+    assert len(pool.store.list("accounts")) == 4
     assert pool.store.list("grants") == []
     assert pool.store.list("keys") == []
     for resource in resources:
         assert resource["connection_sync"]["created_by"] == "admin-one"
-        if resource["type"] not in {"ssh", "mysql", "postgresql"}:
+        if resource["type"] not in {"ssh", "mysql", "postgresql", "rdp"}:
             assert resource["connection_sync"]["state"] == "unsupported"
             with pytest.raises(ValueError):
                 Resource.model_validate({k: v for k, v in resource.items() if k in Resource.model_fields} | {"enabled": True})
@@ -235,3 +235,17 @@ def test_kubernetes_token_pool_preserves_source_and_requires_verification(pool):
     assert not pool.store.list('grants') and not pool.store.list('keys')
     assert pool.sync() == 0
     assert pool.service.legacy.record(profile['id'])['host'] == 'https://cluster.example:6443'
+
+
+def test_encrypted_workbench_key_keeps_its_passphrase_in_resource_account_mapping(pool):
+    import asyncssh
+    key = asyncssh.generate_private_key('ssh-ed25519')
+    private_key = key.export_private_key('pkcs8-pem', passphrase='lab-key-passphrase').decode()
+    pool.manager.create_connection(connection(password='lab-key-passphrase', private_key=private_key,
+        options={'auth_method': 'private_key', 'host_key_fingerprint': 'SHA256:test'}))
+    pool.sync()
+    account = pool.store.list('accounts')[0]
+    secret = pool.service.account_secret(account)
+    assert secret['passphrase'] == 'lab-key-passphrase'
+    assert asyncssh.import_private_key(secret['private_key'], passphrase=secret['passphrase']).export_public_key() == key.export_public_key()
+    assert 'lab-key-passphrase' not in '\n'.join(pool.store.db.iterdump())

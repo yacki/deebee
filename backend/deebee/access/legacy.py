@@ -40,7 +40,9 @@ class LegacyBridge:
 
     def credentials(self, account):
         row = self.checked(account)
-        return {"password": row.get("password", ""), "private_key": row.get("private_key", ""), "passphrase": ""}
+        # The workbench stores an encrypted SSH key's passphrase in password.
+        passphrase = row.get("password", "") if row.get("options", {}).get("auth_method") == "private_key" else ""
+        return {"password": row.get("password", ""), "private_key": row.get("private_key", ""), "passphrase": passphrase}
 
     def preview(self):
         result = []

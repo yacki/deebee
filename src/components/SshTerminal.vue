@@ -4,9 +4,11 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { Icon } from "@iconify/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import "../remoteSessions.css";
 import { API_BASE, authToken } from "../api";
+import { createAccessSocket, type AccessSession } from '../accessSession';
 
-const props = defineProps<{ profileId: string; title: string; active: boolean }>();
+const props = defineProps<{ profileId: string; title: string; active: boolean; access?: AccessSession }>();
 const emit = defineEmits<{ state: [value: "online" | "checking" | "offline"] }>();
 type SessionState = "connecting" | "connected" | "closed" | "error";
 
@@ -18,6 +20,8 @@ let fit: FitAddon | undefined;
 let socket: WebSocket | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let dataDisposable: { dispose: () => void } | undefined;
+let generation = 0;
+let disposed = false;
 
 function socketUrl() {
   const url = new URL(`${API_BASE}/connections/${encodeURIComponent(props.profileId)}/ssh`, window.location.href);
@@ -38,14 +42,23 @@ function resize() {
   send({ type: "resize", cols: terminal.cols, rows: terminal.rows });
 }
 
-function connect() {
+async function connect() {
+  const currentGeneration = ++generation;
   socket?.close();
   state.value = "connecting";
   message.value = "正在建立 SSH 会话";
   emit("state", "checking");
   terminal?.reset();
   terminal?.writeln("\x1b[38;5;75m正在连接 " + props.title + "…\x1b[0m");
-  socket = new WebSocket(socketUrl());
+  let url: string;
+  try {
+    url = props.access ? await createAccessSocket(props.access) : socketUrl();
+  } catch (e) {
+    if (disposed || currentGeneration !== generation) return;
+    state.value = 'error'; message.value = e instanceof Error ? e.message : '会话授权失败'; emit('state', 'offline'); return;
+  }
+  if (disposed || currentGeneration !== generation) return;
+  socket = new WebSocket(url);
   socket.onmessage = event => {
     const payload = JSON.parse(String(event.data)) as { type: string; state?: SessionState; data?: string; message?: string };
     if (payload.type === "data") terminal?.write(payload.data || "");
@@ -107,6 +120,7 @@ onMounted(async () => {
 
 watch(() => props.active, active => { if (active) nextTick(() => { resize(); terminal?.focus(); }); });
 onBeforeUnmount(() => {
+  disposed = true; generation += 1;
   send({ type: "close" });
   socket?.close();
   resizeObserver?.disconnect();

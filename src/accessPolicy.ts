@@ -2,6 +2,7 @@
 export const accessNavigation = [
   { id: 'identity-bindings', name: '外部身份', icon: 'lucide:link' },
   { id: 'principals', name: '系统账号', icon: 'lucide:users' },
+  { id: 'roles', name: '用户组管理', icon: 'lucide:users-round' },
   { id: 'resources', name: '资源管理', icon: 'lucide:server' },
   { id: 'access-grants', name: '资源授权', icon: 'lucide:badge-check' },
   { id: 'executions', name: '执行记录', icon: 'lucide:activity' },
@@ -18,6 +19,8 @@ export const actionOptions = [
   { value: 'k8s:read', label: '查看集群与日志' },
   { value: 'k8s:write', label: '重启集群工作负载', warning: true },
   { value: 'ssh:exec', label: '执行服务器命令', warning: true },
+  { value: 'ssh:connect', label: '打开交互终端', warning: true },
+  { value: 'rdp:connect', label: '连接远程桌面', warning: true },
   { value: 'privilege:use', label: '使用高权限资源账号', warning: true },
 ];
 
@@ -27,9 +30,10 @@ export function optionLabel(value: string): string {
     external_http: '由外部服务验证', jwt: '验证令牌签名', introspection: '向登录服务核验令牌',
     api_key: 'API Key', oidc: '企业登录（OIDC）', succeeded: '成功', failed: '失败',
     queued: '排队中', running: '执行中', cancelled: '已取消', unknown: '结果待确认',
-    'ssh.exec': '执行服务器命令', 'db.schema': '查看数据库结构', 'db.query': '查询数据库',
+    'ssh.exec': '执行服务器命令', 'ssh.connect': '打开交互终端', 'rdp.connect': '连接远程桌面', 'db.schema': '查看数据库结构', 'db.query': '查询数据库',
+    role: '用户组', principal: '系统账号',
     'db.execute': '修改数据库', 'ssh.inspect': '只读检查服务器', 'k8s.read': '查看集群与日志', 'k8s.restart': '重启 Deployment',
-  } as Record<string, string>)[value] || value;
+  } as Record<string, string>)[value] || actionOptions.find(action => action.value === value)?.label || value;
 }
 
 type Account = { id: string; resource_id: string; tier: string; enabled: boolean };
@@ -69,6 +73,6 @@ export function expiryTimestamp(value: string): number | null {
 
 export function actionsForResource(resourceType?: string) {
   if (!resourceType) return actionOptions;
-  const prefix = resourceType === 'ssh' ? 'ssh:' : resourceType === 'k8s' ? 'k8s:' : 'db:';
+  const prefix = resourceType === 'ssh' ? 'ssh:' : resourceType === 'k8s' ? 'k8s:' : resourceType === 'rdp' ? 'rdp:' : 'db:';
   return actionOptions.filter(item => item.value === 'resources:read' || item.value === 'privilege:use' || item.value.startsWith(prefix));
 }
