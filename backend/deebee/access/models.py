@@ -215,6 +215,7 @@ class ExecutionInput(Model):
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     max_rows: int = Field(default=1000, ge=1, le=10000)
     idempotency_key: str = Field(min_length=1, max_length=128)
+    approval_reason: str = Field(default="", max_length=2000, description="危险操作的申请原因，供管理员审核")
 
 
 @dataclass(frozen=True)

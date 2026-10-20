@@ -103,6 +103,7 @@ class AccessStore:
                 digest TEXT PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES entities(id),
                 expires_at REAL NOT NULL, csrf TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS executions_status ON executions(json_extract(body,'$.status'));
         """)
         self._migrate_audit()
         with self.transaction():
@@ -117,6 +118,10 @@ class AccessStore:
                 if body["status"] in {"queued", "running", "cancel_requested"}:
                     body.update(status="unknown", error={"code": "PROCESS_RESTARTED", "message": "服务重启，远端结果需核实，未自动重放"})
                     self.db.execute("UPDATE executions SET body=?,updated_at=? WHERE id=?", (encode(body), time.time(), row["id"]))
+                elif body["status"] == "pending_approval":
+                    body.update(status="expired", ended_at=time.time(), error={"code": "APPROVAL_RESTARTED", "message": "服务重启，审批申请已失效；请重新提交，原命令未执行"})
+                    self.db.execute("UPDATE executions SET body=?,updated_at=? WHERE id=?", (encode(body), time.time(), row["id"]))
+                    self.audit("system", "approval.expired", row["id"], {"reason": "APPROVAL_RESTARTED"})
 
     def cleanup(self):
         now = time.time()
@@ -124,8 +129,8 @@ class AccessStore:
             self.db.execute("DELETE FROM local_sessions WHERE expires_at<?", (now,))
             # Keep execution/idempotency tombstones for 90 days; clear sensitive
             # payloads/results after 7 days without making an old key executable.
-            self.db.execute("UPDATE executions SET payload_cipher='',result_cipher=NULL WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown')", (now - 7 * 86400,))
-            self.db.execute("DELETE FROM executions WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown')", (now - 90 * 86400,))
+            self.db.execute("UPDATE executions SET payload_cipher='',result_cipher=NULL WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown','rejected','expired')", (now - 7 * 86400,))
+            self.db.execute("DELETE FROM executions WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown','rejected','expired')", (now - 90 * 86400,))
             # Audit previews are the durable management archive. Zero means keep
             # indefinitely; operators can explicitly opt into a retention limit.
             try:

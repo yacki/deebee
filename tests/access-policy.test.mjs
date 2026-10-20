@@ -10,7 +10,7 @@ const accounts = [
   { id:'second',resource_id:'db1',tier:'normal',enabled:true },
 ];
 test('navigation uses one vocabulary and nests resource accounts, credentials and settings',()=>{
-  assert.deepEqual(accessNavigation.map(s=>s.name),['外部身份','系统账号','用户组管理','资源管理','资源授权','执行记录','会话录像','审计日志','系统设置']);
+  assert.deepEqual(accessNavigation.map(s=>s.name),['外部身份','系统账号','用户组管理','资源管理','资源授权','操作审批','执行记录','会话录像','审计日志','系统设置']);
   assert.equal(accessNavigation.some(s=>['accounts','api-keys','preview','identity-sources'].includes(s.id)),false);
   assert.equal(optionLabel('privileged'),'高权限账号');
 });

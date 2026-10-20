@@ -23,8 +23,10 @@ def public_entity(value: dict) -> dict:
 
 class AccessService:
     def __init__(self, store: AccessStore):
+        from .approvals import ApprovalPolicy
         self.store = store
         self.auth = Authenticator(store)
+        self.approvals = ApprovalPolicy(store)
         self.on_change = None
         self.legacy = None
 
@@ -383,6 +385,8 @@ class AccessService:
                     continue
                 if resource["type"] == "ssh":
                     actions = ["ssh.inspect", "ssh.exec", "ssh.connect"]
+                    if self.approvals.rules(resource):
+                        actions.remove("ssh.connect")
                 elif resource["type"] == "rdp":
                     actions = ["rdp.connect"]
                 elif resource["type"] == "k8s":
@@ -393,6 +397,7 @@ class AccessService:
                 modes.append({"mode": mode, "access_option_id": option, "account_alias": account["name"], "username": account["username"],
                               "grant_id": grant["id"], "role_id": grant["role_id"], "role_name": grant["role_name"],
                               "source": "role" if grant["role_id"] else "direct", "expires_at": grant["authorization_expires_at"],
+                              "approval_controlled": bool(self.approvals.rules(resource)),
                               "actions": [a for a in actions if scopes[a] in ctx.scopes and scopes[a] in grant["actions"]],
                               "limits": {k: min(v, resource.get(k, v)) for k, v in grant["limits"].items()}})
         if not modes or resource is None:

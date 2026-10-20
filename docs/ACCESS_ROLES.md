@@ -23,6 +23,8 @@
 
 只读能力由实际远端权限和执行方式共同保证。服务器巡检使用固定 `ssh.inspect`；`ssh.exec` 和 `ssh:connect` 都可能修改账号有权写入的内容。交互终端与远程桌面必须单独授予 `ssh:connect` / `rdp:connect`，旧授权和旧 API Key 不会自动获得这两个新权限。
 
+SSH 资源启用审批规则后，普通系统账号通过 `ssh.exec` 逐条提交命令，原始交互终端由服务端关闭，避免绕过审核。MySQL/PostgreSQL 变更和危险 SSH 命令默认进入管理员审批；通过不会扩大用户组或凭据原有权限。详见 [操作审批说明](OPERATION_APPROVALS.md)。
+
 RDP 通过 guacd 连接，配置 Windows 域和安全模式。TLS/NLA 不跳过证书验证；自签名证书需在 guacd 信任库中预先配置。RDP 的真实测试不能证明 Windows 账号只读，因此本版仅允许核验并人工确认后的高权限账号类别。原工作台中关闭证书验证的 RDP 连接会保持不可发布状态。
 
 ## 授权判定

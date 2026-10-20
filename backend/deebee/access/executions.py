@@ -16,7 +16,7 @@ from .store import encode, new_id
 
 
 ACTION_SCOPES = {"ssh.exec": "ssh:exec", "db.query": "db:query", "db.execute": "db:write", "ssh.inspect": "ssh:inspect", "k8s.read": "k8s:read", "k8s.restart": "k8s:write"}
-TERMINAL = {"succeeded", "failed", "cancelled", "unknown"}
+TERMINAL = {"succeeded", "failed", "cancelled", "unknown", "rejected", "expired"}
 
 
 class ExecutionManager:
@@ -24,6 +24,9 @@ class ExecutionManager:
         self.service, self.store = service, service.store
         self.tasks: dict[str, asyncio.Task] = {}
         self.active: dict[str, tuple[AuthContext, RunningHandle]] = {}
+        # Request credentials stay in memory, as for running executions. A restart
+        # expires pending requests instead of persisting/replaying bearer tokens.
+        self.pending: dict[str, AuthContext] = {}
         self.changed = asyncio.Event()
         self.service.on_change = self.changed.set
         self.monitor_task = None
@@ -42,6 +45,8 @@ class ExecutionManager:
             await asyncio.wait(list(self.tasks.values()), timeout=3)
         for task in list(self.tasks.values()):
             task.cancel()
+        for execution_id in list(self.pending):
+            self.expire(execution_id, "APPROVAL_RESTARTED", "服务停止，审批申请已失效；原命令未执行")
 
     async def monitor(self):
         last_cleanup = 0
@@ -49,6 +54,20 @@ class ExecutionManager:
             with suppress(TimeoutError):
                 await asyncio.wait_for(self.changed.wait(), timeout=1)
             self.changed.clear()
+            for execution_id, ctx in list(self.pending.items()):
+                record = self.get_body(execution_id)
+                if record["status"] != "pending_approval":
+                    self.pending.pop(execution_id, None)
+                elif record["approval"]["expires_at"] <= time.time():
+                    self.expire(execution_id)
+                else:
+                    try:
+                        # Pending work has no target connection. Check local
+                        # revocation here; external identity services are called
+                        # again at approval and immediately before dispatch.
+                        self.service.authorize(ctx, record["resource_id"], record["mode"], ACTION_SCOPES[record["tool"]], record["access_option_id"])
+                    except Exception:
+                        self.expire(execution_id, "AUTHORIZATION_REVOKED", "申请人的会话或资源授权已失效，原命令未执行")
             if time.time() - last_cleanup > 3600:
                 self.store.cleanup()
                 last_cleanup = time.time()
@@ -136,10 +155,13 @@ class ExecutionManager:
                 if old["request_hash"] != request_hash:
                     raise AccessError("IDEMPOTENCY_CONFLICT", "该幂等键已用于不同请求", 409)
                 return self.public(json.loads(old["body"]))
+            if len(self.pending) >= 200 or sum(p.principal_id == ctx.principal_id for p in self.pending.values()) >= 20:
+                raise AccessError("RATE_LIMITED", "待审批申请达到上限，请处理或取消已有申请", 429)
             running = [self.get_body(k) for k in self.tasks]
             if len(running) >= 50 or sum(b["owner"] == ctx.principal_id for b in running) >= 3 or sum(b["resource_id"] == resource["id"] for b in running) >= 5:
                 raise AccessError("RATE_LIMITED", "执行并发达到上限", 429)
             execution_id = new_id("exec")
+            matched = self.service.approvals.match(resource, tool, body)
             record = {"id": execution_id, "execution_id": execution_id, "owner": ctx.principal_id, "binding_id": ctx.binding_id,
                       "source_id": ctx.source_id, "subject": ctx.subject, "credential_id": ctx.credential_id, "client_id": ctx.client_id,
                       "tool": tool, "resource_id": resource["id"], "mode": body["mode"], "account_id": account["id"],
@@ -148,26 +170,86 @@ class ExecutionManager:
                       "access_option_id": grant["access_option_id"], "grant_id": grant["id"], "role_id": grant["role_id"],
                       "role_name": grant["role_name"], "membership_id": grant["membership_id"], "status": "queued", "created_at": time.time(),
                       "request_hash": request_hash, "auth_expires_at": ctx.expires_at}
+            record["policy_revision"] = self.service.approvals.revision(resource)
+            record["target"] = {k: resource.get(k) for k in ("name", "type", "host", "port", "database", "schemas")}
+            if matched:
+                record.update(status="pending_approval", approval={
+                    "rules": matched, "reason": body.get("approval_reason", ""),
+                    "expires_at": min(time.time() + min(r["expires_minutes"] for r in matched) * 60, grant["authorization_expires_at"]),
+                })
             self.store.db.execute("INSERT INTO executions VALUES(?,?,?,?,?,?,?,?,?,?)",
                                   (execution_id, ctx.principal_id, ctx.binding_id, idem, request_hash, encode(record), self.store.encrypt(body), None, time.time(), time.time()))
             request_preview, request_truncated = preview_value(body)
             response_preview, response_truncated = preview_value(self.public(record), limit=RESPONSE_PREVIEW_BYTES)
             principal = self.store.get("principals", ctx.principal_id, required=False) or {}
             self.store.audit(
-                ctx.principal_id, "execution.queued", execution_id, record,
+                ctx.principal_id, "execution." + record["status"], execution_id, record,
                 surface="execution_worker", actor_name=principal.get("name", ctx.subject), actor_kind=principal.get("kind", "service"),
                 auth_method=ctx.method, source_id=ctx.source_id, subject=ctx.subject, credential_id=ctx.credential_id,
-                client_id=ctx.client_id, operation="execution.queued", resource_id=resource["id"], account_id=account["id"],
+                client_id=ctx.client_id, operation="execution." + record["status"], resource_id=resource["id"], account_id=account["id"],
                 account_username=account["username"], mode=body["mode"], status_code=202,
                 request_preview=request_preview, response_preview=response_preview,
                 request_truncated=request_truncated, response_truncated=response_truncated,
             )
+        if matched:
+            self.pending[execution_id] = ctx
+        else:
+            self.schedule(execution_id, ctx, body)
+        return self.public(record)
+
+    def schedule(self, execution_id, ctx, body):
         handle = RunningHandle()
         self.active[execution_id] = (ctx, handle)
         task = asyncio.create_task(self.run(execution_id, ctx, body, handle))
         self.tasks[execution_id] = task
         task.add_done_callback(lambda _: (self.tasks.pop(execution_id, None), self.active.pop(execution_id, None)))
+
+    def expire(self, execution_id, code="APPROVAL_EXPIRED", message="审批已超时，原命令未执行；请重新提交"):
+        record = self.get_body(execution_id)
+        if record["status"] == "pending_approval":
+            record = self.update(execution_id, {"status": "expired", "ended_at": time.time(), "error": {"code": code, "message": message}})
+        self.pending.pop(execution_id, None)
         return self.public(record)
+
+    async def decide(self, execution_id, decision, actor):
+        record = self.get_body(execution_id)
+        if record["status"] != "pending_approval":
+            raise AccessError("APPROVAL_ALREADY_DECIDED", "此申请已处理或已失效，不能重复审批", 409)
+        if decision.request_hash != record["request_hash"]:
+            raise AccessError("APPROVAL_REQUEST_CHANGED", "审核内容不匹配，请重新打开申请", 409)
+        if record["approval"]["expires_at"] <= time.time():
+            return self.expire(execution_id)
+        ctx = self.pending.get(execution_id)
+        if not ctx:
+            return self.expire(execution_id, "APPROVAL_RESTARTED", "申请上下文已失效，请重新提交；原命令未执行")
+        if decision.decision == "approve":
+            try:
+                fresh = await self.service.auth.revalidate(ctx)
+                resource, _, _ = self.service.authorize(fresh, record["resource_id"], record["mode"], ACTION_SCOPES[record["tool"]], record["access_option_id"])
+            except Exception:
+                return self.expire(execution_id, "AUTHORIZATION_REVOKED", "申请人的会话或资源授权已失效，原命令未执行")
+            if self.service.approvals.revision(resource) != record["policy_revision"]:
+                return self.expire(execution_id, "APPROVAL_POLICY_CHANGED", "审批规则已变化，请重新提交；原命令未执行")
+            running = [self.get_body(k) for k in self.tasks]
+            if len(running) >= 50 or sum(b["owner"] == ctx.principal_id for b in running) >= 3 or sum(b["resource_id"] == record["resource_id"] for b in running) >= 5:
+                raise AccessError("RATE_LIMITED", "执行并发达到上限，请稍后审批", 429)
+        with self.store.transaction():
+            current = self.get_body(execution_id)
+            if current["status"] != "pending_approval":
+                raise AccessError("APPROVAL_ALREADY_DECIDED", "此申请已处理或已失效", 409)
+            if current["approval"]["expires_at"] <= time.time():
+                return self.expire(execution_id)
+            status = "queued" if decision.decision == "approve" else "rejected"
+            approval = current["approval"] | {"decision": decision.decision, "reviewer": actor, "comment": decision.comment, "decided_at": time.time()}
+            updated = self.update(execution_id, {"status": status, "approval": approval} | ({"ended_at": time.time()} if status == "rejected" else {}))
+            self.store.audit(actor, "approval." + decision.decision, execution_id,
+                             {"request_hash": decision.request_hash, "comment": decision.comment, "owner": current["owner"], "resource_id": current["resource_id"]})
+            row = self.store.db.execute("SELECT payload_cipher FROM executions WHERE id=?", (execution_id,)).fetchone()
+            body = self.store.decrypt(row[0])
+        self.pending.pop(execution_id, None)
+        if status == "queued":
+            self.schedule(execution_id, fresh, body)
+        return self.public(updated)
 
     async def run(self, execution_id: str, ctx: AuthContext, body: dict, handle: RunningHandle):
         work = None
@@ -177,6 +259,8 @@ class ExecutionManager:
             resource, account, grant = self.service.authorize(fresh, body["resource_id"], body["mode"], ACTION_SCOPES[record["tool"]], record.get("access_option_id", ""))
             if (resource["version"], account["version"], grant["version"]) != (record["resource_version"], record["account_version"], record["grant_version"]):
                 raise AccessError("AUTHORIZATION_CHANGED", "排队期间配置已变化", 403)
+            if record["tool"] in {"ssh.exec", "db.query", "db.execute"} and self.service.approvals.revision(resource) != record["policy_revision"]:
+                raise AccessError("APPROVAL_POLICY_CHANGED", "审批规则已变化，请重新提交；原命令未执行", 409)
             if handle.cancelled.is_set():
                 raise AccessError("CANCELLED", "尚未执行，已取消", 409)
             secret = self.service.account_secret(account)
@@ -224,7 +308,7 @@ class ExecutionManager:
 
     @staticmethod
     def public(body: dict) -> dict:
-        return {k: v for k, v in body.items() if k in {"id", "execution_id", "resource_id", "mode", "tool", "status", "grant_id", "role_id", "role_name", "membership_id", "created_at", "started_at", "ended_at", "error"}} | {
+        return {k: v for k, v in body.items() if k in {"id", "execution_id", "resource_id", "mode", "tool", "status", "grant_id", "role_id", "role_name", "membership_id", "created_at", "started_at", "ended_at", "error", "approval"}} | {
             "account": {"alias": body["account_alias"], "username": body["username"]}
         }
 
@@ -252,6 +336,9 @@ class ExecutionManager:
         body = self.get_body(execution_id)
         if body["status"] in TERMINAL:
             return self.public(body)
+        if body["status"] == "pending_approval":
+            self.pending.pop(execution_id, None)
+            return self.public(self.update(execution_id, {"status": "cancelled", "ended_at": time.time(), "cancel_reason": reason}))
         body = self.update(execution_id, {"status": "cancel_requested", "cancel_reason": reason})
         if execution_id in self.active:
             with suppress(Exception):

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Icon } from "@iconify/vue";
 import BrandMark from "./BrandMark.vue";
 import { API_BASE, authToken } from "../api";
 import JsonPanel from "./JsonPanel.vue";
 import SessionRecordings from "./SessionRecordings.vue";
+import ApprovalCenter from "./ApprovalCenter.vue";
 import ResourceCatalog from "./ResourceCatalog.vue";
 import ResourceIcon from "./ResourceIcon.vue";
 import { environmentLabel, resourceProduct } from "../resourcePresentation";
@@ -76,11 +77,15 @@ const sections: Section[] = [
     {key:"resource_ids",label:"限定可用资源（可选）",type:"list",hint:"留空仍受系统账号的显式资源授权约束。"}]},
   { id:"preview", name:"查看可用权限", icon:"lucide:scan-eye", description:"检查系统账号最终可使用的资源账号。凭证权限可能进一步限制访问。"},
   { id:"executions", name:"执行记录", icon:"lucide:activity", description:"执行实际使用的账号、状态与结果。unknown 需要核实远端状态，不应自动重放修改。"},
+  { id:"approvals", name:"操作审批", icon:"lucide:clipboard-check", description:"审核数据库和 SSH 的危险操作，配置审批规则和危险命令模板。"},
   { id:"session-recordings", name:"会话录像", icon:"lucide:clapperboard", description:"SSH 与 RDP 会话自动录制；结束会话后可回放或下载。仅管理员可查看。" },
   { id:"audit-events", name:"审计日志", icon:"lucide:scroll-text", description:"按真实登录身份归档 MCP、授权用户、管理端和原工作台操作；请求保留 1 KiB，返回内容保留 4 KiB，均先脱敏。历史截断内容无法恢复。"},
   { id:"integration", name:"系统设置", icon:"lucide:plug", description:"配置外部身份的验证方式、程序接入地址和配置备份。"},
 ];
 const recordingsPanel = ref<InstanceType<typeof SessionRecordings>>();
+const approvalsPanel = ref<InstanceType<typeof ApprovalCenter>>();
+const approvalReason = ref(''), userHistory = ref<Row[]>([]);
+async function loadUserHistory(){userHistory.value=(await request('/v1/executions','GET',undefined,false)).items;}
 const location = window.location;
 const isUser = ref(location.hash === "#access-user");
 const loggedIn = ref(false); const busy = ref(false); const message = ref(""); const error = ref("");
@@ -212,6 +217,7 @@ async function load() {
 }
 async function login(){await act(async()=>{if(isUser.value){const result=await request("/v1/local/login","POST",{username:loginName.value,password:loginPassword.value},false);csrf.value=result.csrf;}else{const result=await request("/auth/login","POST",{username:loginName.value,password:loginPassword.value},false);sessionStorage.setItem("deebee_token",result.token);}loginPassword.value="";await load();});}
 async function refresh(){
+  if(current.value==="approvals"){await approvalsPanel.value?.refresh();return;}
   if(current.value==="session-recordings"){await recordingsPanel.value?.refresh();return;}
   if(current.value==="audit-events"){
     const query=new URLSearchParams();if(auditActor.value)query.set("actor",auditActor.value);if(auditOperation.value)query.set("operation",auditOperation.value);if(auditSurface.value)query.set("surface",auditSurface.value);
@@ -290,11 +296,25 @@ async function executeUser(){await act(async()=>{
   if(operation.value==="ssh.inspect")body.check=sshCheck.value;
   else if(operation.value.startsWith("k8s."))Object.assign(body,{namespace:kubeNamespace.value,kind:operation.value==="k8s.restart"?"deployments":kubeOperation.value==="logs"?"pods":kubeOperation.value==="rollout"?"deployments":kubeKind.value,name:operation.value==="k8s.read"&&kubeOperation.value==="list"?"":kubeName.value,operation:operation.value==="k8s.restart"?"restart":kubeOperation.value});
   else body[operation.value==="ssh.exec"?"command":"sql"]=command.value;
+  if(['ssh.exec','db.query','db.execute'].includes(operation.value))body.approval_reason=approvalReason.value;
   userExecution.value=await request(path,"POST",body,false);
+  await loadUserHistory();
 });}
 async function pollUser(cursor:unknown=""){await act(async()=>{if(userExecution.value)userExecution.value=await request(`/v1/executions/${userExecution.value.execution_id}${typeof cursor==='string'&&cursor?'?cursor='+encodeURIComponent(cursor):''}`,"GET",undefined,false);});}
 async function loadSchema(cursor=""){await act(async()=>{userSchema.value=await request(`/v1/resources/${selectedResource.value}/schema?mode=${mode.value}&access_option_id=${encodeURIComponent(accessOption.value)}&cursor=${encodeURIComponent(cursor)}`,"GET",undefined,false);});}
 async function cancelUser(){await act(async()=>{if(userExecution.value)userExecution.value=await request(`/v1/executions/${userExecution.value.execution_id}/cancel`,"POST",{},false);});}
+async function openOwnExecution(row:Row){await act(async()=>{
+  selectedResource.value=row.resource_id;await nextTick();chooseResource();await nextTick();
+  accessOption.value=activeResource.value?.access_modes.find((a:Row)=>a.mode===row.mode&&a.grant_id===row.grant_id)?.access_option_id||'';
+  await nextTick();userExecution.value=await request('/v1/executions/'+row.id,'GET',undefined,false);
+});}
+const executionPoll=setInterval(async()=>{
+  if(!isUser.value||!loggedIn.value||busy.value||!userExecution.value||!['pending_approval','queued','running','cancel_requested'].includes(userExecution.value.status))return;
+  const id=userExecution.value.id;
+  try{const result=await request('/v1/executions/'+id,'GET',undefined,false);if(userExecution.value?.id===id){userExecution.value=result;await loadUserHistory();}}
+  catch(e){error.value=e instanceof Error?e.message:'刷新执行状态失败';}
+},3000);
+onUnmounted(()=>clearInterval(executionPoll));
 async function logout(){await act(async()=>{if(isUser.value)await request("/v1/logout","POST",{},false);else sessionStorage.removeItem("deebee_token");loggedIn.value=false;newKey.value="";});}
 function label(collection:string,id:string){const row=records.value[collection]?.find(r=>r.id===id);return row?.name||row?.username||id;}
 function summary(item:Row){if(current.value==="identity-bindings")return `${label("identity-sources",item.source_id)} / ${item.subject} → ${label("principals",item.principal_id)}`;if(current.value==="access-grants")return `${label("principals",item.principal_id)} → ${label("resources",item.resource_id)} · 特权${item.allow_privileged?"允许":"关闭"}`;if(current.value==="accounts")return `${item.username} · ${optionLabel(item.tier)} · ${label("resources",item.resource_id)}`;if(current.value==="resources")return `${item.type} · ${item.host}:${item.port}${item.database?` / ${item.database}`:""}`;if(current.value==="identity-sources")return `${item.type} / ${item.validation_mode}`;if(current.value==="executions")return `${optionLabel(item.tool)} · ${optionLabel(item.mode)} · ${item.username}`;if(current.value==="audit-events")return `${item.actor_name||item.actor}（${item.actor_kind||"未知身份"}） · ${item.auth_method||"无认证"} · ${item.surface||"历史记录"}`;return optionLabel(item.kind)||item.subject||item.principal_id||"";}
@@ -356,6 +376,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         </section>
         <section v-if="newKey" class="access-secret" role="status"><h2>API Key 仅显示一次</h2><p>请安全保存，不要发到聊天或写入日志。</p><a-input :input-attrs="{'aria-label':'新 API Key'}" :model-value="newKey" readonly /><a-button @click="newKey=''">已保存，隐藏原文</a-button></section>
         <SessionRecordings v-if="current==='session-recordings'" ref="recordingsPanel" />
+        <ApprovalCenter v-else-if="current==='approvals'" ref="approvalsPanel" :request="request" :resources="records.resources||[]" :principals="records.principals||[]" />
         <form v-else-if="form" class="access-form" @submit.prevent="save">
           <h2>{{ editing?'编辑':'新增' }}{{ section.name }}</h2>
           <p v-if="editing?.connection_sync">来自工作台连接，地址和登录凭证请在工作台修改。{{ connectionNotice(editing) }}</p>
@@ -494,7 +515,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
                       <a-button v-if="current==='accounts'" :disabled="busy" @click="testAccount(item)">检查连接与权限</a-button>
                       <a-button v-if="current==='identity-sources'" @click="testingSource=item;sourceCredential=''">检查验证服务</a-button>
                       <a-button v-if="current==='executions'" @click="inspectExecution(item)">查看结果</a-button>
-                      <a-button v-if="current==='executions'&&!['succeeded','failed','cancelled','unknown'].includes(item.status)" @click="cancelAdmin(item)">请求取消</a-button>
+                      <a-button v-if="current==='executions'&&!['succeeded','failed','cancelled','unknown','rejected','expired'].includes(item.status)" @click="cancelAdmin(item)">请求取消</a-button>
                       <a-button v-if="current==='audit-events'" @click="inspectAudit(item)">查看详情</a-button>
                     </div>
                   </template>
@@ -513,6 +534,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
       <section v-if="activeResource" class="access-panel">
         <h2>{{ activeResource.name }}</h2><div class="access-field">资源账号<a-select v-model="accessOption" role="combobox" aria-label="资源账号"><a-option v-for="m in activeResource.access_modes" :key="m.access_option_id" :value="m.access_option_id">{{ m.username }} · {{ optionLabel(m.mode) }} · {{ m.role_name||'直接授权' }}</a-option></a-select></div>
         <p>权限来源：{{ activeAccess?.role_name||'直接授权' }} · 到期 {{ formatTime(activeAccess?.expires_at) }}</p>
+        <a-alert v-if="activeAccess?.approval_controlled" type="info">此资源已启用操作审批，命中规则的请求将在管理员通过后执行。{{ activeResource.type==='ssh'?'请逐条提交服务器命令；固定只读检查可直接执行。':'' }}</a-alert>
         <a-button v-if="activeAccess?.actions.includes('db.schema')" :disabled="busy" @click="loadSchema()">查看数据库结构</a-button><JsonPanel v-if="userSchema" :value="userSchema" /><a-button v-if="userSchema?.next_cursor" :disabled="busy" @click="loadSchema(userSchema.next_cursor)">下一页</a-button>
         <div class="access-field">操作<a-select v-model="operation" role="combobox" aria-label="操作"><a-option v-for="action in activeAccess?.actions.filter((a:string)=>a!=='db.schema')" :key="action" :value="action">{{ optionLabel(action) }}</a-option></a-select></div>
         <div v-if="operation==='ssh.inspect'" class="access-field">检查项目<a-select v-model="sshCheck" role="combobox" aria-label="检查项目"><a-option v-for="c in ['overview','disk','memory','processes','network']" :key="c" :value="c">{{ ({overview:'概览',disk:'磁盘与 inode',memory:'内存',processes:'进程',network:'网络'})[c] }}</a-option></a-select></div>
@@ -521,12 +543,14 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <template v-if="operation==='k8s.read'"><div class="access-field">查询类型<a-select v-model="kubeOperation" role="combobox" aria-label="查询类型"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></div><div class="access-field">资源类型<a-select v-model="kubeKind" role="combobox" aria-label="资源类型"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></div></template>
           <div v-if="operation==='k8s.restart'||kubeOperation!=='list'" class="access-field">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></div>
         </template>
-        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :auto-size="{minRows:6,maxRows:20}" /></div>
+        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :textarea-attrs="{'aria-label':activeResource.type==='ssh'?'服务器命令':'SQL'}" :auto-size="{minRows:6,maxRows:20}" /></div>
+        <div v-if="['ssh.exec','db.query','db.execute'].includes(operation)" class="access-field">申请原因（供管理员审核）<a-textarea v-model="approvalReason" :textarea-attrs="{'aria-label':'申请原因'}" :max-length="2000" :auto-size="{minRows:2,maxRows:4}" placeholder="说明操作目的、影响范围和验证方式" /></div>
         <p v-if="mode==='privileged'" class="access-warning">正在使用已授权的高权限资源账号，操作可能修改数据或服务器文件。</p>
         <a-button type="primary" :disabled="busy||!operation" @click="executeUser">{{ ['ssh.connect','rdp.connect'].includes(operation)?'打开会话':'提交执行' }}</a-button>
         <section v-if="sessionOpen" class="access-live-session"><a-button @click="sessionOpen=false">关闭会话</a-button><SshTerminal v-if="activeResource.type==='ssh'" :key="accessOption" profile-id="" :title="activeResource.name" active :access="sessionAccess" /><RdpDesktop v-else-if="activeResource.type==='rdp'" :key="accessOption" profile-id="" :title="activeResource.name" active :access="sessionAccess" /></section>
-        <div v-if="userExecution" class="access-panel"><span>{{ optionLabel(userExecution.status) }}</span><a-button :disabled="busy" @click="pollUser">刷新结果</a-button><a-button v-if="userExecution.result?.next_cursor" :disabled="busy" @click="pollUser(userExecution.result.next_cursor)">下一页结果</a-button><a-button :disabled="busy" @click="cancelUser">请求取消</a-button><JsonPanel :value="userExecution" /></div>
+        <div v-if="userExecution" class="access-panel"><span>{{ optionLabel(userExecution.status) }}</span><a-button :disabled="busy" @click="pollUser">刷新结果</a-button><a-button v-if="userExecution.result?.next_cursor" :disabled="busy" @click="pollUser(userExecution.result.next_cursor)">下一页结果</a-button><a-button v-if="!['succeeded','failed','cancelled','unknown','rejected','expired'].includes(userExecution.status)" :disabled="busy" @click="cancelUser">请求取消</a-button><a-alert v-if="userExecution.status==='pending_approval'" type="warning">申请已提交，原命令尚未执行。请等待管理员审核，到期时间：{{ formatTime(userExecution.approval.expires_at) }}。请勿重复提交。</a-alert><p v-if="userExecution.approval">审批规则：{{ userExecution.approval.rules.map((r:Row)=>r.name).join('、') }}</p><p v-if="userExecution.approval?.comment">审核意见：{{ userExecution.approval.comment }}</p><a-alert v-if="userExecution.error" type="warning">{{ userExecution.error.message }}</a-alert><JsonPanel v-if="userExecution.result" :value="userExecution.result" /><details><summary>执行详情</summary><JsonPanel :value="userExecution" /></details></div>
       </section>
+      <section class="access-panel"><h2>我的执行与审批申请</h2><a-button :disabled="busy" @click="act(loadUserHistory)">刷新我的申请</a-button><p v-if="!userHistory.length">刷新后可查看最近 100 条申请，重新登录后也可继续查看。</p><a-table :data="userHistory" row-key="id" :pagination="{pageSize:10}"><template #columns><a-table-column title="资源"><template #cell="{record:r}">{{ userResources.find(item=>item.id===r.resource_id)?.name||r.resource_id }}</template></a-table-column><a-table-column title="操作 / 时间"><template #cell="{record:r}">{{ optionLabel(r.tool) }} · {{ formatTime(r.created_at) }}</template></a-table-column><a-table-column title="状态"><template #cell="{record:r}">{{ optionLabel(r.status) }}</template></a-table-column><a-table-column title="操作"><template #cell="{record:r}"><a-button :disabled="busy" @click="openOwnExecution(r)">查看执行结果</a-button></template></a-table-column></template></a-table></section>
     </main>
     <a-modal :visible="!!report" :title="reportTitle||'详情'" :width="960" :footer="false" @cancel="report=null">
       <div v-if="report" class="report-content">

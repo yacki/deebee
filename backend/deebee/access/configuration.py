@@ -4,11 +4,12 @@ from __future__ import annotations
 import re
 
 from .models import AccessError, ENTITY_MODELS
+from .approvals import ApprovalRule
 from .service import SECRET_FIELDS, INTERNAL_FIELDS, META_FIELDS, public_entity
 
 
 NAMES = {"identity-sources": "sources", "principals": "principals", "roles": "roles", "role-memberships": "memberships", "resources": "resources",
-         "accounts": "accounts", "identity-bindings": "bindings", "access-grants": "grants"}
+         "accounts": "accounts", "identity-bindings": "bindings", "access-grants": "grants", "approval-rules": "approval_rules"}
 
 
 class PreviewRollback(Exception):
@@ -30,7 +31,7 @@ async def import_configuration(service, config: dict, actor: str, *, preview: bo
             if not isinstance(entity_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", entity_id) or entity_id in seen:
                 raise AccessError("INVALID_ARGUMENT", "配置 ID 缺失、重复或格式无效")
             seen.add(entity_id)
-            fields = ENTITY_MODELS[kind].model_fields
+            fields = (ApprovalRule if kind == "approval_rules" else ENTITY_MODELS[kind]).model_fields
             if set(item) & (SECRET_FIELDS | INTERNAL_FIELDS) or set(item) - set(fields) - META_FIELDS - {"has_credentials", "test_result", "verified_at", "verified_by", "legacy_profile_id", "connection_sync"}:
                 raise AccessError("INVALID_ARGUMENT", "导入不接受秘密、内部字段或未知字段")
             values = {k: v for k, v in item.items() if k in fields}
@@ -62,9 +63,13 @@ async def import_configuration(service, config: dict, actor: str, *, preview: bo
                 if old and all(old.get(k) == v for k, v in values.items()):
                     action = "unchanged"
                 else:
-                    await service.save(kind, values | ({"expected_version": old["version"]} if old else {}), actor,
-                                       old["id"] if old else None, create_id=None if old else entity_id,
-                                       source_urls_validated=True)
+                    supplied = values | ({"expected_version": old["version"]} if old else {})
+                    if kind == "approval_rules":
+                        service.approvals.save(supplied, actor, old["id"] if old else None, create_id=None if old else entity_id)
+                    else:
+                        await service.save(kind, supplied, actor,
+                                           old["id"] if old else None, create_id=None if old else entity_id,
+                                           source_urls_validated=True)
                     action = "update" if old else "create"
                 changes.append({"kind": kind, "id": entity_id, "action": action})
             service.store.audit(actor, "config.import", "access", {"count": len(changes)})

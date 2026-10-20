@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from ..config import settings
 from ..security import verify_token
 from .auth import PASSWORDS
+from .approvals import Decision, RuleChange, TEMPLATES
 from .executions import ExecutionManager
 from .models import AccessError, AuthContext, ExecutionInput, KINDS, SCOPES
 from .operations import KubernetesInput, SSHInspectInput
@@ -136,6 +137,45 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, 
         install_sessions(app, service, context, session_handlers, public_url)
 
     management = APIRouter(prefix="/api/admin/v1", dependencies=[Depends(admin)])
+
+    @management.get("/approval-templates")
+    async def approval_templates():
+        return {"items": TEMPLATES}
+
+    @management.get("/approval-rules")
+    async def approval_rules():
+        return {"items": service.approvals.rules()}
+
+    @management.post("/approval-rules", status_code=201)
+    async def create_approval_rule(body: RuleChange, actor: str = Depends(admin)):
+        return service.approvals.save(body.model_dump(exclude={"expected_version"}), actor)
+
+    @management.patch("/approval-rules/{rule_id}")
+    async def update_approval_rule(rule_id: str, body: dict, actor: str = Depends(admin)):
+        return service.approvals.save(body, actor, rule_id)
+
+    @management.delete("/approval-rules/{rule_id}")
+    async def delete_approval_rule(rule_id: str, body: dict, actor: str = Depends(admin)):
+        return service.approvals.delete(rule_id, body.get("expected_version"), actor)
+
+    @management.get("/approvals")
+    async def approvals(status: str = "", resource_id: str = "", owner: str = "",
+                        offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):
+        clauses = ["json_extract(body,'$.approval') IS NOT NULL"]
+        params: list[Any] = []
+        for field, value in (("status", status), ("resource_id", resource_id), ("owner", owner)):
+            if value:
+                clauses.append(f"json_extract(body,'$.{field}')=?")
+                params.append(value)
+        where = " AND ".join(clauses)
+        with store.lock:
+            total = store.db.execute("SELECT count(*) FROM executions WHERE " + where, params).fetchone()[0]
+            rows = store.db.execute("SELECT id FROM executions WHERE " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()
+        return {"items": [executions.get_body(row[0]) for row in rows], "total": total}
+
+    @management.post("/approvals/{execution_id}/decision")
+    async def approval_decision(execution_id: str, body: Decision, actor: str = Depends(admin)):
+        return await executions.decide(execution_id, body, actor)
 
     from ..recordings import RecordingStore
     from ..mysql import DeeBeeError
@@ -275,7 +315,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, 
 
     # Configuration names in the public API remain descriptive; storage uses short internal names.
     names = {"identity-sources": "sources", "identity-bindings": "bindings", "access-grants": "grants",
-             "principals": "principals", "roles": "roles", "role-memberships": "memberships", "resources": "resources", "accounts": "accounts"}
+             "principals": "principals", "roles": "roles", "role-memberships": "memberships", "resources": "resources", "accounts": "accounts", "approval-rules": "approval_rules"}
 
     @management.get("/access-config/export")
     async def export_config(actor: str = Depends(admin)):
@@ -444,6 +484,13 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, 
     async def execution(execution_id: str, cursor: str = "", ctx: AuthContext = Depends(context)):
         return executions.get(ctx, execution_id, cursor)
 
+    @data.get("/executions")
+    async def own_executions(ctx: AuthContext = Depends(context)):
+        with store.lock:
+            rows = store.db.execute("SELECT body FROM executions WHERE owner=? AND binding_id=? ORDER BY created_at DESC LIMIT 100", (ctx.principal_id, ctx.binding_id)).fetchall()
+        import json
+        return {"items": [executions.public(json.loads(row[0])) for row in rows]}
+
     @data.post("/executions/{execution_id}/cancel")
     async def cancel(execution_id: str, ctx: AuthContext = Depends(context)):
         return await executions.cancel(ctx, execution_id)
@@ -565,7 +612,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, 
     }
     for tool, desc in (("ssh.exec", "任意 SSH shell 命令（可能修改主机）。磁盘、inode、内存、进程、网络的只读 Linux 诊断请使用 ssh.inspect，无需调用本工具。显式 privileged 才使用已授权特权账号。"),
                        ("db.query", "以真正只读账号和只读事务执行受支持的单条 SELECT，使用命名参数。"),
-                       ("db.execute", "以已授权特权账号执行单条业务数据或表结构变更；可能产生不可逆修改，无逐次人工审批。")):
+                       ("db.execute", "以已授权特权账号执行单条业务数据或表结构变更；命中审批规则时返回 pending_approval，管理员通过前不会执行。通过后仍核验原授权；拒绝、过期或取消不得自动重提。")):
         schema = ExecutionInput.model_json_schema()
         properties = schema["properties"].copy()
         if tool == "ssh.exec":
@@ -576,7 +623,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, 
             properties.pop("command")
             properties.pop("elevation")
         properties["resource_id"]["description"] = "必须先 resources.list，使用返回的真实资源 id；不得把显示名称当 ID。"
-        definitions[tool] = (desc, properties)
+        definitions[tool] = (desc + " 命中管理员审批规则时返回 pending_approval，使用 executions.get 查看审批和执行结果；等待期间原命令尚未执行，不得换幂等键重复提交或绕过审核。" if tool == "ssh.exec" else desc, properties)
 
     for name, model, description in (
         ("ssh.inspect", SSHInspectInput, "SSH Linux 主机只读诊断，磁盘容量/inode、内存、进程、网络检查；disk df、memory free、processes ps、network ss/netstat、overview。使用固定检查，无任意 shell。先 resources.list 选准主机；返回 queued 后必须用 executions.get 等到终态并读取结果。"),

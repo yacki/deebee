@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 from deebee.access.api import install_access
 from deebee.access.configuration import import_configuration, NAMES
 from deebee.access.executions import ExecutionManager
+from deebee.access.approvals import ApprovalPolicy, Decision
 from deebee.access.models import AccessError
 from deebee.access.service import public_entity
 from deebee.access.store import AccessStore
@@ -212,6 +213,7 @@ def test_config_v2_preview_rollback_roundtrip_and_v1_compatibility(service, tmp_
     service.store.close()
     service.store = AccessStore(directory)
     service.auth.store = service.store
+    service.approvals = ApprovalPolicy(service.store)
     assert service.store.get('roles', r['id'])['name'] == r['name']
     ctx, _ = identity(service, p['id'])
     assert service.resources(ctx)
@@ -236,6 +238,7 @@ def test_running_execution_is_cancelled_and_records_role_source(service, monkeyp
         await manager.start()
         try:
             record = await manager.submit(ctx, 'ssh.exec', {'resource_id': resource['id'], 'command': 'sleep 60', 'idempotency_key': change})
+            await manager.decide(record['id'], Decision(decision='approve', comment='Allow fixture process for revocation test', request_hash=manager.get_body(record['id'])['request_hash']), 'admin')
             await asyncio.wait_for(started.wait(), 2)
             assert record['role_name'] == r['name'] and record['grant_id'] == g['id']
             if change == 'remove_member':
@@ -304,6 +307,10 @@ def test_browser_sessions_enforce_cookie_csrf_origin_owner_and_revocation(tmp_pa
     app = FastAPI()
     install_access(app, tmp_path / 'access', session_handlers={'ssh': handler, 'rdp': handler})
     service = app.state.access
+    # This regression exercises unrestricted sessions with approval explicitly off.
+    for rule in service.approvals.rules():
+        if rule['protocol'] == 'ssh':
+            service.approvals.save({'expected_version': rule['version'], 'enabled': False}, 'admin', rule['id'])
     p = save(service, 'principals', {'name': 'Human', 'username': 'role_user', 'password': 'test_password_123'})
     r = role(service)
     resource, accounts = published(service, 'ssh')
@@ -417,6 +424,7 @@ def test_v1_database_upgrade_retains_direct_grants_and_adds_independent_role_gra
     service.store.close()
     service.store = AccessStore(directory)
     service.auth.store = service.store
+    service.approvals = ApprovalPolicy(service.store)
     try:
         ctx, _ = identity(service, p['id'])
         assert service.projected(ctx, resource['id'])['access_modes'][0]['source'] == 'direct'

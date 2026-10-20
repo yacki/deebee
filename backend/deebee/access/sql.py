@@ -31,12 +31,14 @@ def prepare_sql(sql: str, parameters: dict, resource: dict, write: bool = False)
         raise AccessError("UNSUPPORTED_STATEMENT", "每次只支持一条 SQL")
     tree = statements[0]
     if write:
-        if not isinstance(tree, (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Alter, exp.Drop)):
+        if not isinstance(tree, (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Alter, exp.Drop, exp.TruncateTable)):
             raise AccessError("UNSUPPORTED_STATEMENT", "只允许业务表数据和结构变更")
         if isinstance(tree, (exp.Create, exp.Drop)) and str(tree.args.get("kind", "")).upper() not in {"TABLE", "INDEX"}:
             raise AccessError("UNSUPPORTED_STATEMENT", "不允许账号、数据库、过程或扩展管理")
         if isinstance(tree, exp.Alter) and str(tree.args.get("kind", "TABLE")).upper() != "TABLE":
             raise AccessError("UNSUPPORTED_STATEMENT", "仅允许 ALTER TABLE")
+        if isinstance(tree, exp.TruncateTable) and (tree.args.get("is_database") or not tree.expressions or any(not isinstance(t, exp.Table) for t in tree.expressions)):
+            raise AccessError("UNSUPPORTED_STATEMENT", "仅允许清空业务表")
     elif not isinstance(tree, (exp.Select, exp.Union, exp.Intersect, exp.Except)):
         raise AccessError("UNSUPPORTED_STATEMENT", "查询接口仅允许只读 SELECT")
     forbidden = {"Command", "Transaction", "Commit", "Rollback", "Set", "Use", "Into", "Lock", "Copy", "Grant", "Revoke", "Execute", "Pragma", "LoadData", "SessionParameter", "Parameter", "Returning"}

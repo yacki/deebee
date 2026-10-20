@@ -45,6 +45,9 @@ class AuthorizedSession:
         return await ssh_connect(self.resource, self.account, self.service.account_secret(self.account))
 
     async def check(self):
+        resource = self.service.store.get("resources", self.resource["id"])
+        if resource["type"] == "ssh" and self.service.approvals.rules(resource):
+            raise AccessError("APPROVAL_COMMAND_MODE_REQUIRED", "此 SSH 资源启用了命令审批，请使用逐条命令执行；交互终端无法逐条审核", 403)
         if self.service.store.get("principals", self.ctx.principal_id)["kind"] != "human":
             raise AccessError("BROWSER_LOGIN_REQUIRED", "交互会话需要人员身份", 403)
         if time.monotonic() >= self.next_refresh:
@@ -87,6 +90,8 @@ def install_sessions(app, service, context, handlers, public_url):
         if resource["type"] not in handlers:
             raise AccessError("UNSUPPORTED_PROTOCOL", "此资源不支持交互会话")
         resource, account, grant = service.authorize(ctx, body.resource_id, body.mode, resource["type"] + ":connect", body.access_option_id)
+        if resource["type"] == "ssh" and service.approvals.rules(resource):
+            raise AccessError("APPROVAL_COMMAND_MODE_REQUIRED", "此 SSH 资源启用了命令审批，请使用逐条命令执行", 403)
         for session_id, session in list(pending.items()):
             if session["expires_at"] <= time.time():
                 del pending[session_id]
