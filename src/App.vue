@@ -9,6 +9,7 @@ import RdpDesktop from "./components/RdpDesktop.vue";
 import KubernetesWorkspace from "./components/KubernetesWorkspace.vue";
 import SqlEditor from "./components/SqlEditor.vue";
 import SshTerminal from "./components/SshTerminal.vue";
+import SshFileManager from "./components/SshFileManager.vue";
 import TableDesigner from "./components/TableDesigner.vue";
 import { toolbarCapabilitiesFor, type ToolbarCapability } from "./toolbarPolicy";
 import { API_BASE, ApiError, api, authToken, download, isNetworkError, isSessionExpiredError, jsonBody, workspaceId } from "./api";
@@ -41,6 +42,7 @@ const backgroundJobs = ref<BackgroundJob[]>([]); const jobsOpen = ref(false); le
 const searchDialog = ref<{ term: string; rows: { kind: string; name: string; detail: string }[] }>();
 const createDatabaseDialog = ref<{ name: string; charset: string; collation: string; recovery_model: "SIMPLE" | "FULL" | "BULK_LOGGED"; data_size_mb: number; log_size_mb: number; filegrowth_mb: number; saving: boolean }>();
 const connectionDialog = ref<ConnectionDialogState>();
+const fileManagerProfile = ref<Profile>();
 const connectionState = ref<"online" | "checking" | "offline">("checking"); const reconnecting = ref(false); let heartbeatId = 0;
 let pauseDraftPersistence = false;
 const hydratedProfileIds = new Set<string>();
@@ -698,6 +700,7 @@ function connectionMenu(event: MouseEvent, item: Profile) {
   contextMenu.value = { x:event.clientX, y:event.clientY, title:`${item.name} 连接操作`, items:[
     { id:"open", label:current?"当前连接":"打开连接", icon:"lucide:log-in", disabled:current, action:()=>switchProfile(item.id) },
     ...(current&&isRemoteDriver(item.driver)?[{ id:"session", label:item.driver==="ssh"?"新建终端":"新建桌面", icon:item.driver==="ssh"?"lucide:square-terminal":"lucide:monitor-up", action:()=>openRemoteSession(item.driver) }]:[]),
+    ...(item.driver==="ssh"?[{ id:"files", label:"文件管理", icon:"lucide:folder-open", action:()=>{fileManagerProfile.value=item;} }]:[]),
     { id:"properties", label:"连接属性…", icon:"lucide:info", action:()=>showConnectionProperties(item) },
     { id:"edit-connection", label:"编辑连接…", icon:"lucide:server-cog", action:()=>openEditConnection(item) },
     { id:"duplicate-connection", label:"复制连接…", icon:"lucide:copy-plus", action:()=>openCreateConnection(item) },
@@ -873,6 +876,7 @@ function toolbarItems(): ToolbarItem[] {
       <div v-if="backgroundJobs.length" class="job-list"><article v-for="job in backgroundJobs" :key="job.id" :class="`job-${job.status}`"><div class="job-heading"><Icon :icon="job.kind==='sql-file'?'lucide:file-code-2':job.kind==='import'?'lucide:file-input':'lucide:sparkles'" /><span><b :title="jobTitle(job)">{{ jobTitle(job) }}</b><small>{{ jobTarget(job) }}<template v-if="jobSize(job)"> · {{ jobSize(job) }}</template></small></span><em>{{ jobStatus(job) }}</em></div><div class="job-progress"><i :style="{width:`${job.progress}%`}" /></div><p>{{ job.error || job.message }}<small>{{ new Date(job.created_at*1000).toLocaleString() }}</small></p><button v-if="job.status==='queued'||job.status==='running'" @click="cancelBackgroundJob(job)">取消</button></article></div>
       <div v-else class="empty-jobs"><Icon icon="lucide:inbox" /><strong>暂无后台任务</strong><span>SQL、CSV、JSON、Excel 导入会显示在这里。</span></div>
     </aside>
+    <SshFileManager v-if="fileManagerProfile" :key="fileManagerProfile.id" :profile="fileManagerProfile" @close="fileManagerProfile=undefined" />
     <ContextMenu :menu="contextMenu" @close="closeMenu" />
     <div v-if="notice" class="toast" :class="{error:noticeError}">{{ notice }}</div>
     <div v-if="connectionDialog" class="modal-backdrop" @mousedown.self="connectionDialog=undefined">

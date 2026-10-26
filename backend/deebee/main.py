@@ -1278,6 +1278,9 @@ async def apply_ddl(body: DdlApplyBody, _: str = Depends(current_user)) -> dict[
 
 
 from .access.api import install_access
+from .sftp import install_sftp
+
+install_sftp(app, workbench, current_user)
 
 access_lifespan = install_access(app, legacy=workbench, session_handlers={"ssh": ssh_terminal, "rdp": rdp_desktop})
 
