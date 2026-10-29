@@ -136,6 +136,9 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, 
         from .sessions import install_sessions
         install_sessions(app, service, context, session_handlers, public_url)
 
+    from ..ai import install_ai
+    install_ai(app, service, admin, context)
+
     management = APIRouter(prefix="/api/admin/v1", dependencies=[Depends(admin)])
 
     @management.get("/approval-templates")

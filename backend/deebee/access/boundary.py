@@ -39,7 +39,7 @@ class AccessRequestBoundary:
         status_code = 500
         response_content_type = ""
         request_content_type = _header(scope, b"content-type")
-        bounded = path.startswith(("/api/v1/", "/api/admin/v1/", "/api/auth/oidc/", "/mcp"))
+        bounded = path.startswith(("/api/v1/", "/api/admin/v1/", "/api/ai/", "/api/auth/oidc/", "/mcp"))
 
         async def capture_receive():
             nonlocal request_total
@@ -115,11 +115,18 @@ class AccessRequestBoundary:
             request_raw, request_content_type, total_bytes=request_total, already_truncated=request_total > len(request_raw)
         )
         override = scope.get("state", {}).get("audit_request_override")
+        # AI keystrokes and provider configuration are never stored in audit previews,
+        # including invalid requests which fail before reaching an endpoint.
+        ai_request = path.startswith(("/api/ai/", "/api/v1/ai/", "/api/admin/v1/ai/"))
+        if ai_request:
+            override = {"ai_content_omitted": True}
         if override is not None:
             request_preview, request_truncated = preview_value(override)
         if not request_preview and query:
             request_preview, request_truncated = preview_value({"query": query})
-        if path == "/api/admin/v1/audit-events" and method == "GET":
+        if ai_request:
+            response_preview, response_truncated = preview_value({"ai_content_omitted": True})
+        elif path == "/api/admin/v1/audit-events" and method == "GET":
             response_preview, response_truncated = preview_value({"archived_records_returned": True, "bytes": response_total}, limit=RESPONSE_PREVIEW_BYTES)
         else:
             response_preview, response_truncated = preview_bytes(

@@ -4,6 +4,8 @@ import { Icon } from "@iconify/vue";
 import BrandMark from "./BrandMark.vue";
 import { API_BASE, authToken } from "../api";
 import JsonPanel from "./JsonPanel.vue";
+import AISettings from "./AISettings.vue";
+import SqlEditor from "./SqlEditor.vue";
 import SessionRecordings from "./SessionRecordings.vue";
 import ApprovalCenter from "./ApprovalCenter.vue";
 import ResourceCatalog from "./ResourceCatalog.vue";
@@ -23,6 +25,7 @@ type Field = { key: string; label: string; type?: "password" | "number" | "check
 type Section = { id: string; name: string; icon: string; description: string; fields?: Field[] };
 
 const sections: Section[] = [
+  { id:"ai", name:"AI 配置", icon:"lucide:sparkles", description:"配置模型服务，让 SQL 和服务器命令在输入时自动续写。" },
   { id:"roles", name:"用户组管理", icon:"lucide:users-round", description:"把人员或 Agent 分配到用户组，按资源绑定真实账号和允许操作。用户组不授予后台管理权限。", fields:[
     {key:"name",label:"用户组名称",required:true},{key:"description",label:"用户组说明",type:"textarea"},{key:"enabled",label:"启用用户组",type:"check"}]},
   { id:"role-memberships", name:"用户组成员", icon:"lucide:users", description:"管理系统账号所属用户组。", fields:[
@@ -82,6 +85,7 @@ const sections: Section[] = [
   { id:"audit-events", name:"审计日志", icon:"lucide:scroll-text", description:"按真实登录身份归档 MCP、授权用户、管理端和原工作台操作；请求保留 1 KiB，返回内容保留 4 KiB，均先脱敏。历史截断内容无法恢复。"},
   { id:"integration", name:"系统设置", icon:"lucide:plug", description:"配置外部身份的验证方式、程序接入地址和配置备份。"},
 ];
+const aiSettingsPanel = ref<InstanceType<typeof AISettings>>();
 const recordingsPanel = ref<InstanceType<typeof SessionRecordings>>();
 const approvalsPanel = ref<InstanceType<typeof ApprovalCenter>>();
 const approvalReason = ref(''), userHistory = ref<Row[]>([]);
@@ -217,6 +221,7 @@ async function load() {
 }
 async function login(){await act(async()=>{if(isUser.value){const result=await request("/v1/local/login","POST",{username:loginName.value,password:loginPassword.value},false);csrf.value=result.csrf;}else{const result=await request("/auth/login","POST",{username:loginName.value,password:loginPassword.value},false);sessionStorage.setItem("deebee_token",result.token);}loginPassword.value="";await load();});}
 async function refresh(){
+  if(current.value==="ai")return;
   if(current.value==="approvals"){await approvalsPanel.value?.refresh();return;}
   if(current.value==="session-recordings"){await recordingsPanel.value?.refresh();return;}
   if(current.value==="audit-events"){
@@ -355,7 +360,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
         <div class="access-heading">
           <div><h1>{{ current==='accounts' ? resourceDetail?.name+' · 资源详情' : section.name }}</h1><p>{{ section.description }}</p></div>
           <a-button v-if="section.fields&&!form&&!(current==='principals'&&principalContext)" type="primary" :disabled="busy" @click="start()">{{ current==='api-keys'?'添加 API Key':current==='accounts'?'添加资源账号':current==='identity-bindings'?'绑定外部身份':'新增' }}</a-button>
-          <a-button :disabled="busy" @click="act(load)">刷新</a-button>
+          <a-button :disabled="busy" @click="current==='ai'?aiSettingsPanel?.refresh():act(load)">刷新</a-button>
         </div>
         <div v-if="['identity-bindings','api-keys'].includes(current)" class="access-tabs" aria-label="外部身份功能">
           <a-button :class="{selected:current==='identity-bindings'}" @click="select('identity-bindings')">身份绑定</a-button>
@@ -375,7 +380,8 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <p v-if="resourceDetail?.connection_sync">来自工作台连接。{{ connectionNotice(resourceDetail) || '资源账号启用后，还需要在“资源授权”中分配给系统账号。' }}</p>
         </section>
         <section v-if="newKey" class="access-secret" role="status"><h2>API Key 仅显示一次</h2><p>请安全保存，不要发到聊天或写入日志。</p><a-input :input-attrs="{'aria-label':'新 API Key'}" :model-value="newKey" readonly /><a-button @click="newKey=''">已保存，隐藏原文</a-button></section>
-        <SessionRecordings v-if="current==='session-recordings'" ref="recordingsPanel" />
+        <AISettings v-if="current==='ai'" ref="aiSettingsPanel" />
+        <SessionRecordings v-else-if="current==='session-recordings'" ref="recordingsPanel" />
         <ApprovalCenter v-else-if="current==='approvals'" ref="approvalsPanel" :request="request" :resources="records.resources||[]" :principals="records.principals||[]" />
         <form v-else-if="form" class="access-form" @submit.prevent="save">
           <h2>{{ editing?'编辑':'新增' }}{{ section.name }}</h2>
@@ -543,7 +549,7 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <template v-if="operation==='k8s.read'"><div class="access-field">查询类型<a-select v-model="kubeOperation" role="combobox" aria-label="查询类型"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></div><div class="access-field">资源类型<a-select v-model="kubeKind" role="combobox" aria-label="资源类型"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></div></template>
           <div v-if="operation==='k8s.restart'||kubeOperation!=='list'" class="access-field">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></div>
         </template>
-        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<a-textarea v-model="command" :textarea-attrs="{'aria-label':activeResource.type==='ssh'?'服务器命令':'SQL'}" :auto-size="{minRows:6,maxRows:20}" /></div>
+        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<div style="height:240px;border:1px solid #dce2eb"><SqlEditor :key="selectedResource+operation" v-model="command" :language="activeResource.type==='ssh'?'shell':undefined" :dialect="activeResource.type==='postgresql'?'postgresql':'mysql'" :ai-access="{resourceId:selectedResource,csrf}" /></div></div>
         <div v-if="['ssh.exec','db.query','db.execute'].includes(operation)" class="access-field">申请原因（供管理员审核）<a-textarea v-model="approvalReason" :textarea-attrs="{'aria-label':'申请原因'}" :max-length="2000" :auto-size="{minRows:2,maxRows:4}" placeholder="说明操作目的、影响范围和验证方式" /></div>
         <p v-if="mode==='privileged'" class="access-warning">正在使用已授权的高权限资源账号，操作可能修改数据或服务器文件。</p>
         <a-button type="primary" :disabled="busy||!operation" @click="executeUser">{{ ['ssh.connect','rdp.connect'].includes(operation)?'打开会话':'提交执行' }}</a-button>

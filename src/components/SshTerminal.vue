@@ -7,6 +7,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import "../remoteSessions.css";
 import { API_BASE, authToken } from "../api";
 import { createAccessSocket, type AccessSession } from '../accessSession';
+import SqlEditor from './SqlEditor.vue';
 
 const props = defineProps<{ profileId: string; title: string; active: boolean; access?: AccessSession }>();
 const emit = defineEmits<{ state: [value: "online" | "checking" | "offline"] }>();
@@ -15,6 +16,11 @@ type SessionState = "connecting" | "connected" | "closed" | "error";
 const host = ref<HTMLElement>();
 const state = ref<SessionState>("connecting");
 const message = ref("");
+const aiDraftOpen = ref(false), aiDraft = ref(''), draftMessage = ref('');
+async function copyDraft() {
+  try { await navigator.clipboard.writeText(aiDraft.value); draftMessage.value = '已复制命令，可在终端粘贴并检查后执行'; }
+  catch { draftMessage.value = '复制失败，请在编辑器中选择并复制命令'; }
+}
 let terminal: Terminal | undefined;
 let fit: FitAddon | undefined;
 let socket: WebSocket | undefined;
@@ -134,12 +140,21 @@ onBeforeUnmount(() => {
     <header class="remote-toolbar">
       <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
+        <a-button type="text" :aria-expanded="aiDraftOpen" @click="aiDraftOpen=!aiDraftOpen"><Icon icon="lucide:sparkles" />自然语言写命令</a-button>
         <button @click="copySelection"><Icon icon="lucide:copy" />复制</button>
         <button @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</button>
         <button @click="terminal?.clear()"><Icon icon="lucide:eraser" />清屏</button>
         <button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button>
       </nav>
     </header>
+    <section v-if="aiDraftOpen" class="ssh-ai-draft">
+      <header><strong>命令草稿</strong><span>{{ draftMessage || '写下需求，点击「自然语言转命令」' }}</span><a-button :disabled="!aiDraft" @click="copyDraft">复制命令</a-button><a-button @click="aiDraftOpen=false">关闭</a-button></header>
+      <div style="height:240px"><SqlEditor v-model="aiDraft" language="shell" :ai-access="access" :context-id="profileId" /></div>
+    </section>
     <div ref="host" class="terminal-host" @click="terminal?.focus()" />
   </section>
 </template>
+
+<style scoped>
+.ssh-ai-draft{flex:none;background:#fff;border-bottom:1px solid #dce2eb}.ssh-ai-draft>header{display:flex;align-items:center;gap:12px;padding:6px 12px;color:#59677d;font-size:12px}.ssh-ai-draft>header span{flex:1}
+</style>

@@ -9,6 +9,7 @@ export const accessNavigation = [
   { id: 'executions', name: '执行记录', icon: 'lucide:activity' },
   { id: 'session-recordings', name: '会话录像', icon: 'lucide:clapperboard' },
   { id: 'audit-events', name: '审计日志', icon: 'lucide:scroll-text' },
+  { id: 'ai', name: 'AI 配置', icon: 'lucide:sparkles' },
   { id: 'integration', name: '系统设置', icon: 'lucide:settings' },
 ];
 
