@@ -223,24 +223,9 @@ def current_user(request: Request, authorization: str | None = Header(default=No
     return user
 
 
-def _parse_import_rows(filename: str, content: bytes) -> list[dict[str, Any]]:
-    suffix = filename.lower().rsplit(".", 1)[-1]
-    if suffix == "csv":
-        return list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
-    if suffix == "json":
-        parsed = json.loads(content)
-        if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
-            raise DeeBeeError("JSON 文件必须是对象数组")
-        return parsed
-    if suffix in {"xlsx", "xlsm"}:
-        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        sheet = workbook.active
-        values = list(sheet.iter_rows(values_only=True))
-        if not values:
-            raise DeeBeeError("Excel 文件没有数据")
-        headers = [str(item) if item is not None else "" for item in values[0]]
-        return [dict(zip(headers, row)) for row in values[1:]]
-    raise DeeBeeError("仅支持 CSV、JSON 和 XLSX 文件")
+def _parse_import_rows(filename: str, content: bytes, *, delimiter: str = ',', encoding: str = 'utf-8-sig', null_marker: str = r'\N') -> list[dict[str, Any]]:
+    from .data_transfer import parse_rows
+    return parse_rows(filename, content, delimiter=delimiter, encoding=encoding, null_marker=null_marker)
 
 
 MAX_SQL_IMPORT_BYTES = 2 * 1024 * 1024 * 1024
@@ -1007,63 +992,90 @@ async def delete_row(body: RowDelete, _: str = Depends(current_user)) -> dict[st
     )
 
 
-@app.get("/api/data/export")
-async def export_data(
-    profile_id: str,
-    database: str,
-    table: str,
-    schema: str = "",
-    format: Literal["csv", "json", "sql", "xlsx"] = Query(default="csv"),
-    _: str = Depends(current_user),
-) -> Response:
-    payload = await asyncio.to_thread(
-        workbench.export_table, profile_id, database, table, schema,
-    )
-    rows = payload["rows"]
-    columns = [item["name"] for item in payload["columns"]]
-    column_types = {item["name"]: str(item.get("data_type") or "") for item in payload["columns"]}
-    filename = f"{table}.{format}"
-    if format == "json":
-        data = json.dumps(rows, ensure_ascii=False, indent=2).encode("utf-8")
-        media_type = "application/json"
-    elif format == "sql":
-        driver = workbench.profile_driver(profile_id)
-        quote = '"' if driver == "postgresql" else "[" if driver == "mssql" else "`"
+def _export_response(payload: dict[str, Any], table: str, format: str, driver: str, schema: str = '', *, selected_columns: str = '', delimiter: str = ',', header: bool = True, null_marker: str = r'\N') -> Response:
+    from .data_transfer import csv_bytes, xlsx_bytes
+    from .data_values import is_generated_column
+    from urllib.parse import quote
+    definitions = payload['columns']
+    if selected_columns:
+        try:
+            names = json.loads(selected_columns)
+        except ValueError as exc:
+            raise DeeBeeError('导出字段配置无效') from exc
+        available = {column['name']: column for column in definitions}
+        if not isinstance(names, list) or not names or any(not isinstance(name, str) or name not in available for name in names) or len(names) != len(set(names)):
+            raise DeeBeeError('请选择有效且不重复的导出字段')
+        definitions = [available[name] for name in names]
+    if format == 'sql':
+        definitions = [column for column in definitions if not is_generated_column(column)]
+    columns = [column['name'] for column in definitions]
+    if not columns:
+        raise DeeBeeError('没有可导出的字段；SQL 导出不能只选择生成列')
+    rows = [{name: row.get(name) for name in columns} for row in payload['rows']]
+    if format == 'json':
+        data = json.dumps(rows, ensure_ascii=False, indent=2).encode('utf-8');media_type = 'application/json'
+    elif format == 'sql':
         def quote_name(value: str) -> str:
-            if driver == "mssql":
-                return "[" + value.replace("]", "]]" ) + "]"
-            return quote + value.replace(quote, quote + quote) + quote
-        output = []
-        for row in rows:
-            values = [_sql_export_literal(row.get(column), driver, column_types[column]) for column in columns]
-            escaped_columns = ", ".join(quote_name(column) for column in columns)
-            target = f"{quote_name(schema)}.{quote_name(table)}" if schema else quote_name(table)
-            output.append(f"INSERT INTO {target} ({escaped_columns}) VALUES ({', '.join(values)});")
-        data = ("\n".join(output) + "\n").encode("utf-8")
-        media_type = "application/sql"
-    elif format == "xlsx":
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = table[:31]
-        sheet.append(columns)
-        for row in rows:
-            sheet.append([json.dumps(row.get(column), ensure_ascii=False) if isinstance(row.get(column), (dict, list)) else row.get(column) for column in columns])
-        buffer = io.BytesIO()
-        workbook.save(buffer)
-        data = buffer.getvalue()
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if driver == 'mssql':return '[' + value.replace(']', ']]') + ']'
+            mark = '"' if driver == 'postgresql' else '`'
+            return mark + value.replace(mark, mark + mark) + mark
+        types = {column['name']: str(column.get('data_type') or column.get('type') or '') for column in definitions}
+        target = f'{quote_name(schema)}.{quote_name(table)}' if schema else quote_name(table)
+        fields = ', '.join(quote_name(name) for name in columns)
+        output = [f"INSERT INTO {target} ({fields}) VALUES ({', '.join(_sql_export_literal(row[name], driver, types[name]) for name in columns)});" for row in rows]
+        data = ('\n'.join(output) + '\n').encode('utf-8');media_type = 'application/sql'
+    elif format == 'xlsx':
+        data = xlsx_bytes(table, columns, rows);media_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     else:
-        text = io.StringIO()
-        writer = csv.DictWriter(text, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
-        data = ("\ufeff" + text.getvalue()).encode("utf-8")
-        media_type = "text/csv"
-    return Response(
-        data,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+        data = csv_bytes(columns, rows, delimiter=delimiter, header=header, null_marker=null_marker);media_type = 'text/csv'
+    filename = quote(f'{table}.{format}', safe='')
+    return Response(data, media_type=media_type, headers={'Content-Disposition': f"attachment; filename=export.{format}; filename*=UTF-8''{filename}"})
+
+
+@app.get('/api/data/export')
+async def export_data(profile_id: str, database: str, table: str, schema: str = '', format: Literal['csv','json','sql','xlsx'] = Query(default='csv'), columns: str = '', delimiter: str = ',', header: bool = True, null_marker: str = r'\N', _: str = Depends(current_user)) -> Response:
+    payload = await asyncio.to_thread(workbench.export_table, profile_id, database, table, schema)
+    return await asyncio.to_thread(_export_response, payload, table, format, workbench.profile_driver(profile_id), schema, selected_columns=columns, delimiter=delimiter, header=header, null_marker=null_marker)
+
+
+class ResultExportBody(SchemaBody):
+    profile_id: str
+    table: str = 'query_result'
+    format: Literal['csv','json','sql','xlsx'] = 'csv'
+    columns: list[dict[str, Any]] = Field(min_length=1, max_length=16384)
+    rows: list[dict[str, Any]] = Field(max_length=100000)
+
+
+@app.post('/api/data/export-result')
+async def export_result(body: ResultExportBody, _: str = Depends(current_user)) -> Response:
+    return await asyncio.to_thread(_export_response, {'columns':body.columns,'rows':body.rows}, body.table, body.format, workbench.profile_driver(body.profile_id), body.schema_)
+
+
+class RowEditBody(BaseModel):
+    key: dict[str, Any]
+    changes: dict[str, Any]
+
+
+class BatchRowBody(SchemaBody):
+    profile_id: str
+    database: str
+    table: str
+    edits: list[RowEditBody] = Field(min_length=1, max_length=1000)
+
+
+@app.patch('/api/data/rows/batch')
+async def update_rows(body: BatchRowBody, _: str = Depends(current_user)) -> dict[str, Any]:
+    return await asyncio.to_thread(workbench.update_rows, body.profile_id, body.database, body.table, [edit.model_dump() for edit in body.edits], body.schema_)
+
+
+@app.post('/api/data/import/preview')
+async def preview_import(profile_id: str, database: str, table: str, schema: str = '', delimiter: str = ',', encoding: str = 'utf-8-sig', null_marker: str = r'\N', file: UploadFile = File(...), _: str = Depends(current_user)) -> dict[str, Any]:
+    rows = _parse_import_rows(file.filename or '', await file.read(), delimiter=delimiter, encoding=encoding, null_marker=null_marker)
+    if not rows:raise DeeBeeError('导入文件没有数据')
+    definition = await asyncio.to_thread(workbench.table_schema, profile_id, database, table, schema)
+    from .data_values import is_generated_column
+    columns = [column for column in definition['columns'] if not is_generated_column(column)]
+    return {'source_columns':list(rows[0]),'target_columns':columns,'rows':rows[:8],'row_count':len(rows)}
 
 
 @app.post("/api/data/import")
@@ -1073,13 +1085,20 @@ async def import_data(
     database: str,
     table: str,
     schema: str = "",
+    delimiter: str = ",",
+    encoding: str = "utf-8-sig",
+    null_marker: str = r"\N",
+    mapping: str = "",
     file: UploadFile = File(...),
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
     request.state.audit_request_override = {"profile_id": profile_id, "database": database, "table": table,
                                             "schema": schema, "filename": file.filename or "", "bytes": len(content)}
-    rows = _parse_import_rows(file.filename or "", content)
+    rows = _parse_import_rows(file.filename or "", content, delimiter=delimiter, encoding=encoding, null_marker=null_marker)
+    from .data_transfer import mapped_rows
+    definition = await asyncio.to_thread(workbench.table_schema, profile_id, database, table, schema)
+    rows = mapped_rows(rows, mapping, definition["columns"])
     request.state.audit_request_override.update(row_count=len(rows), rows=rows[:20])
     if len(rows) > 100000:
         raise DeeBeeError("单次最多导入 100000 行")
@@ -1166,11 +1185,15 @@ async def execute_sql_file_job(
 @app.post("/api/jobs/import")
 async def import_data_job(
     request: Request, profile_id: str, database: str, table: str, schema: str = "", file: UploadFile = File(...),
+    delimiter: str = ",", encoding: str = "utf-8-sig", null_marker: str = r"\N", mapping: str = "",
     _: str = Depends(current_user),
 ) -> dict[str, Any]:
     content = await file.read()
     filename = file.filename or ""
-    rows = _parse_import_rows(filename, content)
+    rows = _parse_import_rows(filename, content, delimiter=delimiter, encoding=encoding, null_marker=null_marker)
+    from .data_transfer import mapped_rows
+    definition = await asyncio.to_thread(workbench.table_schema, profile_id, database, table, schema)
+    rows = mapped_rows(rows, mapping, definition["columns"])
     request.state.audit_request_override = {"profile_id": profile_id, "database": database, "table": table,
                                             "schema": schema, "filename": filename, "bytes": len(content),
                                             "row_count": len(rows), "rows": rows[:20]}

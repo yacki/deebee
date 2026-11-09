@@ -73,12 +73,22 @@ def quote_ident(value: str) -> str:
 
 
 def json_value(value: Any) -> Any:
+    if isinstance(value, int) and abs(value) > 9007199254740991:
+        return str(value)
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, decimal.Decimal):
         return str(value)
     if isinstance(value, (dt.datetime, dt.date, dt.time)):
         return value.isoformat(sep=" ") if isinstance(value, dt.datetime) else value.isoformat()
+    if isinstance(value, dt.timedelta):
+        total = (value.days * 86400 + value.seconds) * 1000000 + value.microseconds
+        sign = '-' if total < 0 else ''
+        total = abs(total)
+        seconds, microseconds = divmod(total, 1000000)
+        hours, seconds = divmod(seconds, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        return f'{sign}{hours:02}:{minutes:02}:{seconds:02}' + (f'.{microseconds:06}' if microseconds else '')
     if isinstance(value, (bytes, bytearray, memoryview)):
         data = bytes(value)
         return {"$binary": data.hex(), "size": len(data)}
@@ -225,8 +235,14 @@ class MySQLWorkbench:
             with session.lock:
                 try:
                     session.connection.rollback()
+                except pymysql.MySQLError:
+                    # Closing a dead socket must not prevent configuration saves.
+                    pass
                 finally:
-                    session.connection.close()
+                    try:
+                        session.connection.close()
+                    except pymysql.MySQLError:
+                        pass
 
     def cleanup_workspace(self, workspace_id: str) -> int:
         if not workspace_id:
@@ -627,8 +643,10 @@ class MySQLWorkbench:
                     create = (cursor.fetchone() or {}).get("Create Table", "")
                     output.extend([f"DROP TABLE IF EXISTS {quote_ident(name)};", f"{create};"])
                     if include_data:
-                        cursor.execute(f"SELECT * FROM {quote_ident(database)}.{quote_ident(name)}")
-                        columns = [item[0] for item in cursor.description or []]
+                        from .data_values import is_generated_column
+                        cursor.execute("SELECT COLUMN_NAME AS name, EXTRA AS extra FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s ORDER BY ORDINAL_POSITION", (database, name))
+                        columns = [column['name'] for column in cursor.fetchall() if not is_generated_column(column)]
+                        cursor.execute(f"SELECT {', '.join(quote_ident(column) for column in columns)} FROM {quote_ident(database)}.{quote_ident(name)}")
                         while True:
                             rows = cursor.fetchmany(500)
                             if not rows:
@@ -650,6 +668,8 @@ class MySQLWorkbench:
             return str(value)
         if isinstance(value, (bytes, bytearray, memoryview)):
             return "0x" + bytes(value).hex()
+        if isinstance(value, dt.timedelta):
+            value = json_value(value)
         escaped = str(value).replace("\\", "\\\\").replace("'", "''")
         return f"'{escaped}'"
 
@@ -876,6 +896,8 @@ class MySQLWorkbench:
         schema = self.table_schema(profile_id, database, table)
         allowed = {column["name"] for column in schema["columns"]}
         fields = [field for field in values if field in allowed]
+        from .data_values import mysql_value, is_generated_column
+        definitions = {column["name"]: column for column in schema["columns"]}
         profile = self.require_profile(profile_id)
         conn = self._connect(profile, database)
         try:
@@ -883,7 +905,7 @@ class MySQLWorkbench:
                 if fields:
                     placeholders = ", ".join(["%s"] * len(fields))
                     sql = f"INSERT INTO {quote_ident(table)} ({', '.join(quote_ident(f) for f in fields)}) VALUES ({placeholders})"
-                    cursor.execute(sql, [values[field] for field in fields])
+                    cursor.execute(sql, [mysql_value(values[field], definitions[field]) for field in fields])
                 else:
                     cursor.execute(f"INSERT INTO {quote_ident(table)} () VALUES ()")
                 return {"affected_rows": cursor.rowcount, "last_insert_id": cursor.lastrowid}
@@ -905,8 +927,49 @@ class MySQLWorkbench:
             raise DeeBeeError("没有需要保存的修改")
         sets = ", ".join(f"{quote_ident(field)}=%s" for field in fields)
         where = " AND ".join(f"{quote_ident(field)} <=> %s" for field in primary)
-        params = [changes[field] for field in fields] + [key[field] for field in primary]
+        from .data_values import mysql_value, is_generated_column
+        definitions = {column["name"]: column for column in schema["columns"]}
+        params = [mysql_value(changes[field], definitions[field]) for field in fields] + [mysql_value(key[field], definitions[field]) for field in primary]
         return self._mutation(profile_id, database, f"UPDATE {quote_ident(table)} SET {sets} WHERE {where} LIMIT 1", params)
+
+    def update_rows(self, profile_id: str, database: str, table: str, edits: list[dict[str, Any]]) -> dict[str, Any]:
+        from .data_values import mysql_value, is_generated_column
+        schema = self.table_schema(profile_id, database, table)
+        primary = schema['primary_key']
+        definitions = {column['name']: column for column in schema['columns']}
+        if str(schema.get('engine', 'InnoDB')).lower() not in {'innodb', 'ndb', 'ndbcluster'}:
+            raise DeeBeeError('该表引擎不支持事务批量粘贴，请使用 InnoDB 事务表')
+        if not primary:
+            raise DeeBeeError('批量修改需要主键')
+        prepared = []
+        for edit in edits:
+            key, changes = edit['key'], edit['changes']
+            if any(field not in key for field in primary):
+                raise DeeBeeError('批量修改需要完整主键')
+            if not changes or any(field not in definitions or field in primary or is_generated_column(definitions[field]) for field in changes):
+                raise DeeBeeError('不能批量修改主键、生成列或未知字段')
+            sets = ', '.join(f'{quote_ident(field)}=%s' for field in changes)
+            where = ' AND '.join(f'{quote_ident(field)} <=> %s' for field in primary)
+            params = [mysql_value(value, definitions[field]) for field, value in changes.items()]
+            params += [mysql_value(key[field], definitions[field]) for field in primary]
+            prepared.append((f'UPDATE {quote_ident(table)} SET {sets} WHERE {where} LIMIT 1', params))
+        conn = self._connect(self.require_profile(profile_id), database, autocommit=False)
+        try:
+            affected = 0
+            with conn.cursor() as cursor:
+                for statement, params in prepared:
+                    cursor.execute(statement, params)
+                    affected += max(cursor.rowcount, 0)
+            conn.commit()
+            return {'affected_rows': affected, 'updated_rows': len(edits)}
+        except pymysql.MySQLError as exc:
+            conn.rollback()
+            raise DeeBeeError(str(exc.args[1] if len(exc.args) > 1 else exc), exc.args[0] if exc.args else None) from exc
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def delete_row(self, profile_id: str, database: str, table: str, key: dict[str, Any]) -> dict[str, Any]:
         schema = self.table_schema(profile_id, database, table)
@@ -941,6 +1004,8 @@ class MySQLWorkbench:
         schema = self.table_schema(profile_id, database, table)
         allowed = {column["name"] for column in schema["columns"]}
         fields = [field for field in rows[0] if field in allowed]
+        from .data_values import mysql_value, is_generated_column
+        definitions = {column["name"]: column for column in schema["columns"]}
         if not fields:
             raise DeeBeeError("导入文件的列与数据表不匹配")
         profile = self.require_profile(profile_id)
@@ -954,7 +1019,7 @@ class MySQLWorkbench:
                     if cancelled and cancelled.is_set():
                         raise DeeBeeError("任务已取消")
                     batch = rows[start : start + 500]
-                    cursor.executemany(sql, [[row.get(field) for field in fields] for row in batch])
+                    cursor.executemany(sql, [[mysql_value(row.get(field), definitions[field]) for field in fields] for row in batch])
                     affected += max(cursor.rowcount, 0)
                     if progress:
                         progress(min(start + len(batch), len(rows)), len(rows))
