@@ -109,7 +109,7 @@ test('人员侧继承展示、最终权限预览与资源账号反查',async({pa
   for(const role of temporary)await expect(page.getByRole('row').filter({hasText:role.name})).toContainText('已移除');
   await page.getByRole('button',{name:'查看最终可用权限',exact:true}).click(); await expect(page.locator('.report-content')).toContainText(ssh.name); await expect(page.locator('.report-content')).toContainText(mysql.name);
   await page.locator('.arco-modal:visible .arco-modal-close-btn').click();
-  await nav(page,'资源管理'); await page.locator('.resource-card').filter({hasText:ssh.name}).getByRole('button',{name:'查看详情',exact:true}).click(); await settled(page);
+  await nav(page,'资源管理'); await page.getByLabel('搜索资源',{exact:true}).fill(ssh.name); await page.locator('.resource-card').filter({hasText:ssh.name}).getByRole('button',{name:'查看详情',exact:true}).click(); await settled(page);
   const account=accounts.find(a=>a.resource_id===ssh.id&&a.enabled&&a.tier==='normal')!;
   const row=page.getByRole('row').filter({hasText:account.name}); await expect(row).toContainText(roleName); await expect(row).toContainText(personName); await expect(row).toContainText(secondName);
 });
@@ -120,7 +120,7 @@ test('人员真实 SQL 查询、交互终端、多个用户组账号选择及撤
   const issues:string[]=[];userPage.on('pageerror',e=>issues.push(e.message));
   await userPage.goto(base+'/#access-user'); await userPage.getByLabel('用户名',{exact:true}).fill('role_ui_'+suffix); await userPage.getByLabel('密码',{exact:true}).fill(password); await userPage.getByRole('button',{name:'登录',exact:true}).click();
   await expect(userPage.getByRole('heading',{name:personName+' 的可用资源',exact:true})).toBeVisible(); await expect(userPage.getByText('所属用户组：'+roleName,{exact:true})).toBeVisible();
-  await userPage.locator('.access-resource-cards button').filter({hasText:mysql.name}).click(); await userPage.locator('.access-user-main textarea').fill('SELECT name FROM items WHERE id=1'); await userPage.getByRole('button',{name:'提交执行',exact:true}).click();
+  await userPage.locator('.access-resource-cards button').filter({hasText:mysql.name}).click(); await userPage.getByLabel('SQL',{exact:true}).fill('SELECT name FROM items WHERE id=1'); await userPage.getByRole('button',{name:'提交执行',exact:true}).click();
   await expect.poll(async()=>{await userPage.getByRole('button',{name:'刷新结果',exact:true}).click();return await userPage.locator('.access-user-main').innerText();}).toContain('Alpha');
   await userPage.locator('.access-resource-cards button').filter({hasText:ssh.name}).click(); await choose(userPage,'操作','打开交互终端'); await userPage.getByRole('button',{name:'打开会话',exact:true}).click();
   await expect(userPage.locator('.ssh-session .remote-dot.connected')).toBeVisible({timeout:15000});

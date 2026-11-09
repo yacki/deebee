@@ -12,6 +12,7 @@ const emit = defineEmits<{ state: [value: "online" | "checking" | "offline"] }>(
 const viewport = ref<HTMLElement>();
 const state = ref<"connecting" | "connected" | "closed" | "error">("connecting");
 const message = ref("正在建立 RDP 会话");
+const fullscreen = ref(false);
 let client: Guacamole.Client | undefined;
 let mouse: Guacamole.Mouse | undefined;
 let keyboard: Guacamole.Keyboard | undefined;
@@ -20,6 +21,7 @@ let reconnectTimer: number | undefined;
 let resizeFrame: number | undefined;
 let connectionGeneration = 0;
 let reconnectAttempts = 0;
+let retryAllowed = true;
 let disposed = false;
 let lastVisibleSize = { width: 1280, height: 720 };
 
@@ -120,7 +122,7 @@ async function connect() {
   disconnect();
   if (!viewport.value || !props.active || disposed) return;
   const generation = connectionGeneration;
-  let retryAllowed = true;
+  retryAllowed = true;
   let firstSync: number | undefined;
   state.value = "connecting";
   message.value = "正在建立 RDP 会话";
@@ -129,6 +131,7 @@ async function connect() {
   try { url = props.access ? await createAccessSocket(props.access) : tunnelUrl(); }
   catch (e) {
     if (disposed || generation !== connectionGeneration) return;
+    retryAllowed = false;
     state.value = 'error'; message.value = e instanceof Error ? e.message : '会话授权失败'; emit('state', 'offline'); return;
   }
   if (disposed || generation !== connectionGeneration) return;
@@ -195,12 +198,18 @@ async function connect() {
 
 async function toggleFullscreen() {
   if (!viewport.value) return;
-  if (document.fullscreenElement) await document.exitFullscreen(); else await viewport.value.requestFullscreen();
+  if (document.fullscreenElement) await document.exitFullscreen(); else await (viewport.value.closest<HTMLElement>('.rdp-session')||viewport.value).requestFullscreen();
   window.setTimeout(resize, 80);
 }
+function reconnect() {
+  reconnectAttempts = 0;
+  void connect();
+}
+function fullscreenChanged(){fullscreen.value=!!document.fullscreenElement?.contains(viewport.value||null);resize();}
 
 onMounted(async () => {
   await nextTick();
+  document.addEventListener('fullscreenchange',fullscreenChanged);
   resizeObserver = new ResizeObserver(() => { if (props.active) resize(); });
   if (viewport.value) resizeObserver.observe(viewport.value);
   if (props.active) connect();
@@ -212,13 +221,17 @@ watch(() => props.active, active => {
     keyboard?.reset();
     return;
   }
-  if (!client || state.value === "closed" || state.value === "error") {
+  if (state.value === "closed" || state.value === "error") {
+    if (retryAllowed) scheduleReconnect();
+    return;
+  }
+  if (!client) {
     void nextTick(() => window.requestAnimationFrame(connect));
     return;
   }
   refreshViewport(true);
 });
-onBeforeUnmount(() => { disposed = true; resizeObserver?.disconnect(); disconnect(); });
+onBeforeUnmount(() => { document.removeEventListener('fullscreenchange',fullscreenChanged);disposed = true; resizeObserver?.disconnect(); disconnect(); });
 </script>
 
 <template>
@@ -226,8 +239,8 @@ onBeforeUnmount(() => { disposed = true; resizeObserver?.disconnect(); disconnec
     <header class="remote-toolbar">
       <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
-        <button @click="toggleFullscreen"><Icon icon="lucide:maximize-2" />全屏</button>
-        <button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button>
+        <a-button type="text" @click="toggleFullscreen"><Icon :icon="fullscreen?'lucide:minimize-2':'lucide:maximize-2'" />{{ fullscreen?'退出全屏':'全屏' }}</a-button>
+        <a-button type="text" @click="reconnect"><Icon icon="lucide:refresh-cw" />重新连接</a-button>
       </nav>
     </header>
     <div ref="viewport" class="rdp-viewport" tabindex="0" />

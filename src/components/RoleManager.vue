@@ -58,9 +58,9 @@ async function submitModal() { await run(async () => {
       </template>
     </a-table>
   </section>
-  <a-modal :visible="!!modal" :title="modal==='clone'?'复制用户组':'删除用户组'" :ok-loading="busy" :ok-button-props="{disabled:modal==='delete'?confirmName!==role?.name:!confirmName.trim()}" @ok="submitModal" @cancel="modal=''">
+  <WorkbenchModal :visible="!!modal" :title="modal==='clone'?'复制用户组':'删除用户组'" :ok-loading="busy" :ok-button-props="{disabled:modal==='delete'?confirmName!==role?.name:!confirmName.trim()}" @ok="submitModal" @cancel="modal=''">
     <p>{{ modal==='clone'?'填写新用户组名称。新用户组及复制的资源授权均停用，不复制成员。':'删除后撤销该用户组的成员和资源授权，历史审计保留。请输入完整用户组名称：'+role?.name }}</p><a-input v-model="confirmName" :input-attrs="{'aria-label':modal==='clone'?'新用户组名称':'确认删除的用户组名称'}" /><a-alert v-if="error" type="error">{{ error }}</a-alert>
-  </a-modal>
+  </WorkbenchModal>
 </template>
 
 <style scoped>

@@ -68,6 +68,23 @@ test("RDP waits for a new desktop frame after the initial placeholder", async ({
   await expect(page.locator(".connection-state.online")).toBeVisible();
 });
 
+test("RDP decodes streamed PNG frames with Windows audio and cursor initialization", async ({ page }) => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAsAAAAQCAYAAADAvYV+AAAABmJLR0QA/wD/AP+gvaeTAAAAYklEQVQokY2RQQ4AIQgDW+L/v9y9qCEsIJ4QZggoJAnDYwAwFQwASI4EO8FEMH95CRYTnfCDOyGFK6GEM6GFo7AqKI4sSSsCJH1X+roFkKdjueABX/On77lz2uGtr6pj9okfTeJQAYVaxnMAAAAASUVORK5CYII=';
+  await mockRdp(page, socket => {
+    for (const values of [
+      ['audio', '1', 'audio/L16;rate=44100,channels=2'],
+      ['size', '-1', '11', '16'], ['img', '3', '12', '-1', 'image/png', '0', '0'],
+      ['blob', '3', png], ['end', '3'], ['cursor', '0', '0', '-1', '0', '0', '11', '16'],
+      ['img', '3', '14', '0', 'image/png', '0', '0'], ['blob', '3', png], ['end', '3'], ['sync', '123'],
+    ]) socket.send(instruction(...values));
+  });
+  await expect(page.locator('.rdp-session .remote-dot.connected')).toBeVisible();
+  await expect.poll(() => page.locator('.rdp-session canvas').evaluateAll(nodes => nodes.some(node => {
+    const canvas = node as HTMLCanvasElement;
+    return canvas.width >= 800 && canvas.height >= 600 && canvas.getContext('2d')!.getImageData(0, 0, 11, 16).data.some(value => value > 0);
+  }))).toBe(true);
+});
+
 test("RDP opens once and never authenticates automatically on page reload or health checks", async ({ page }) => {
   let tests = 0;
   page.on("request", request => { if (new URL(request.url()).pathname.endsWith("/connections/rdp-test/test")) tests += 1; });
@@ -105,6 +122,28 @@ test("RDP bounds automatic retries when the upstream remains unavailable", async
   await expect(page.locator(".connection-state.offline")).toBeVisible();
 });
 
+for (const failure of [
+  { message: "RDP 登录失败，请检查用户名、密码和域", code: "769", attempts: 1 },
+  { message: "RDP 服务器证书校验失败", code: "519", attempts: 1 },
+  { message: "Server unavailable", code: "520", attempts: 4 },
+]) {
+  test(`switching RDP tabs does not restart blocked ${failure.code} authentication or exhausted retries`, async ({ page }) => {
+    const attempts = await mockRdp(page, socket => socket.send(instruction("error", failure.message, failure.code)));
+    await page.clock.runFor(15_000);
+    expect(attempts()).toBe(failure.attempts);
+    await page.getByRole("button", { name: "新建远程会话", exact: true }).click();
+    await page.clock.runFor(15_000);
+    expect(attempts()).toBe(failure.attempts * 2);
+    await page.getByRole("tab", { name: "Windows 关闭 Windows", exact: true }).click();
+    await page.clock.runFor(15_000);
+    expect(attempts()).toBe(failure.attempts * 2);
+    await expect(page.locator(".rdp-session:visible .remote-toolbar")).toContainText(failure.message);
+    await page.locator(".rdp-session:visible").getByRole("button", { name: "重新连接", exact: true }).click();
+    await page.clock.runFor(15_000);
+    expect(attempts()).toBe(failure.attempts * 3);
+  });
+}
+
 test("saving edited RDP credentials opens a fresh desktop session", async ({ page }) => {
   const attempts = await mockRdp(page, socket => socket.send(instruction("sync", "123")));
   await expect(page.locator(".rdp-session .remote-dot.connected")).toBeVisible();
@@ -114,5 +153,5 @@ test("saving edited RDP credentials opens a fresh desktop session", async ({ pag
   await dialog.getByRole("button", { name: "保存并连接" }).click();
   await expect(dialog).not.toBeVisible();
   await expect.poll(attempts).toBe(2);
-  await expect(page.getByRole("tab", { name: /远程桌面 2/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /Windows \(2\)/ })).toHaveAttribute("aria-selected", "true");
 });

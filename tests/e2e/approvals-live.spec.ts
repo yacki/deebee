@@ -34,6 +34,7 @@ async function query(sql: string) {
   return (await own(id)).result;
 }
 async function submit(resource: 'db' | 'ssh', command: string, reason: string) {
+  reason += ' ' + randomUUID().slice(0,8);
   await userPage.locator('.access-resource-cards button').filter({hasText: resource === 'db' ? '审批验收 · MySQL 专用库' : '审批验收 · SSH 测试目录'}).click();
   if (resource === 'db') {
     await choose(userPage, '资源账号', writer + ' · 高权限账号 · 直接授权');
@@ -65,7 +66,7 @@ async function review(id: string, command: string, approve: boolean) {
 }
 
 test.beforeAll(async ({browser, playwright}) => {
-  expect(base).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/deebee$/);
+  expect(base).toMatch(/^http:\/\/127\.0\.0\.1:\d+(?:\/deebee)?$/);
   admin = await playwright.request.newContext();
   const login = await admin.post(base + '/api/auth/login', {data: {username: config.admin_username, password: config.admin_password}});
   expect(login.ok()).toBeTruthy(); const token = (await login.json()).token;
@@ -121,7 +122,7 @@ test('SSH 删除目录分别通过和拒绝，普通用户无法打开原始交�
 
 test('规则新增、协议与资源范围、停用、编辑、删除和从模板新增', async () => {
   await adminPage.getByRole('navigation').getByText('操作审批', {exact: true}).click();
-  await adminPage.getByRole('button', {name: '审批规则与模板', exact: true}).click();
+  await adminPage.getByRole('tab', {name: '审批规则与模板', exact: true}).click();
   await expect(adminPage.getByRole('row').filter({hasText: '其他 Shell 命令（保守兜底）'})).toHaveCount(1);
   await adminPage.getByRole('button', {name: '新增审批规则', exact: true}).click();
   await adminPage.getByLabel('审批规则名称', {exact: true}).fill('验收自定义只读查询规则');

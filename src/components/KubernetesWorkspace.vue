@@ -178,24 +178,24 @@ onBeforeUnmount(() => {
 <template>
   <section class="view k8s-workspace">
     <aside class="k8s-tree" :style="{ width: `${sidebarWidth}px` }">
-      <header><strong>Kubernetes</strong><nav><button title="集群终端" :disabled="state!=='connected'" @click="openCluster"><Icon icon="lucide:square-terminal" /></button><button title="搜索容器" :class="{active:searchOpen}" @click="searchOpen=!searchOpen"><Icon icon="lucide:search" /></button><button title="刷新资源树" :disabled="loadingTree" @click="refreshTree"><Icon icon="lucide:refresh-cw" :class="{spin:loadingTree}" /></button></nav></header>
-      <label v-if="searchOpen" class="k8s-search"><Icon icon="lucide:search" /><input v-model="search" autofocus placeholder="筛选容器" /></label>
+      <header><strong>Kubernetes</strong><nav><IconButton label="集群终端" title="集群终端" :disabled="state!=='connected'" @click="openCluster"><Icon icon="lucide:square-terminal" /></IconButton><IconButton label="搜索容器" title="搜索容器" :class="{active:searchOpen}" @click="searchOpen=!searchOpen"><Icon icon="lucide:search" /></IconButton><IconButton label="刷新资源树" title="刷新资源树" :disabled="loadingTree" @click="refreshTree"><Icon icon="lucide:refresh-cw" :class="{spin:loadingTree}" /></IconButton></nav></header>
+      <div v-if="searchOpen" class="form-field k8s-search"><Icon icon="lucide:search" /><WorkbenchInput v-model="search" autofocus placeholder="筛选容器" /></div>
       <div class="k8s-tree-body">
         <template v-if="search.trim()">
-          <button v-for="item in filteredContainers" :key="item.label" class="k8s-row container-row search-result" :title="item.label" @click="openTerminal(item)"><span class="k8s-spacer" /><Icon icon="lucide:container" /><span>{{ item.label }}</span></button>
+          <a-button v-for="item in filteredContainers" :key="item.label" type="text" class="k8s-row container-row search-result" :title="item.label" @click="openTerminal(item)"><span class="k8s-spacer" /><Icon icon="lucide:container" /><span>{{ item.label }}</span></a-button>
           <p v-if="!filteredContainers.length" class="k8s-tree-note">没有匹配的容器</p>
         </template>
         <template v-else>
-          <div class="k8s-root-row"><button class="k8s-row"><Icon icon="lucide:chevron-down" /><Icon icon="lucide:history" /><span>最近容器</span></button><button v-if="recent.length" title="清空最近容器" @click="clearRecent"><Icon icon="lucide:trash-2" /></button></div>
-          <button v-for="item in recent" :key="`recent-${item.label}`" class="k8s-row container-row depth-one" :title="item.label" @click="openTerminal(item)"><span class="k8s-spacer" /><Icon icon="lucide:container" /><span>{{ item.label }}</span></button>
-          <div class="k8s-root-row"><button class="k8s-row"><Icon icon="lucide:chevron-down" /><Icon icon="lucide:ship-wheel" /><span>{{ title }}</span></button></div>
+          <div class="k8s-root-row"><a-button type="text" class="k8s-row"><Icon icon="lucide:chevron-down" /><Icon icon="lucide:history" /><span>最近容器</span></a-button><IconButton v-if="recent.length" label="清空最近容器" title="清空最近容器" @click="clearRecent"><Icon icon="lucide:trash-2" /></IconButton></div>
+          <a-button v-for="item in recent" :key="`recent-${item.label}`" type="text" class="k8s-row container-row depth-one" :title="item.label" @click="openTerminal(item)"><span class="k8s-spacer" /><Icon icon="lucide:container" /><span>{{ item.label }}</span></a-button>
+          <div class="k8s-root-row"><a-button type="text" class="k8s-row"><Icon icon="lucide:chevron-down" /><Icon icon="lucide:ship-wheel" /><span>{{ title }}</span></a-button></div>
           <p v-if="treeError" class="k8s-tree-note error">{{ treeError }}</p><p v-else-if="loadingTree" class="k8s-tree-note">正在加载 Pod…</p>
           <template v-for="namespace in tree" :key="namespace.name">
-            <button class="k8s-row depth-one" @click="toggleNamespace(namespace)"><Icon icon="lucide:chevron-right" :class="{expanded:expandedNamespaces.has(namespace.name)}" /><Icon :icon="expandedNamespaces.has(namespace.name)?'lucide:folder-open':'lucide:folder'" /><span>{{ namespace.name }}</span><b>{{ namespace.pods.length }}</b></button>
+            <a-button type="text" class="k8s-row depth-one" @click="toggleNamespace(namespace)"><Icon icon="lucide:chevron-right" :class="{expanded:expandedNamespaces.has(namespace.name)}" /><Icon :icon="expandedNamespaces.has(namespace.name)?'lucide:folder-open':'lucide:folder'" /><span>{{ namespace.name }}</span><b>{{ namespace.pods.length }}</b></a-button>
             <template v-if="expandedNamespaces.has(namespace.name)">
               <template v-for="pod in namespace.pods" :key="pod.name">
-                <button class="k8s-row depth-two" @click="togglePod(namespace.name,pod)"><Icon icon="lucide:chevron-right" :class="{expanded:expandedPods.has(podKey(namespace.name,pod.name))}" /><Icon icon="lucide:box" /><span>{{ pod.name }}</span><b>{{ pod.containers.length }}</b></button>
-                <button v-for="container in expandedPods.has(podKey(namespace.name,pod.name))?pod.containers:[]" :key="container.name" class="k8s-row container-row depth-three" :title="`${namespace.name}/${pod.name}/${container.name}`" @click="openContainer(namespace.name,pod.name,container.name)"><span class="k8s-spacer" /><Icon icon="lucide:container" /><span>{{ container.name }}</span></button>
+                <a-button type="text" class="k8s-row depth-two" @click="togglePod(namespace.name,pod)"><Icon icon="lucide:chevron-right" :class="{expanded:expandedPods.has(podKey(namespace.name,pod.name))}" /><Icon icon="lucide:box" /><span>{{ pod.name }}</span><b>{{ pod.containers.length }}</b></a-button>
+                <a-button v-for="container in expandedPods.has(podKey(namespace.name,pod.name))?pod.containers:[]" :key="container.name" type="text" class="k8s-row container-row depth-three" :title="`${namespace.name}/${pod.name}/${container.name}`" @click="openContainer(namespace.name,pod.name,container.name)"><span class="k8s-spacer" /><Icon icon="lucide:container" /><span>{{ container.name }}</span></a-button>
               </template>
             </template>
           </template>
@@ -204,11 +204,11 @@ onBeforeUnmount(() => {
     </aside>
     <div class="k8s-resizer" role="separator" aria-label="调整 Kubernetes 资源树宽度" @pointerdown="startResize" />
     <div class="k8s-terminal-area">
-      <header class="remote-toolbar k8s-toolbar"><div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span>{{ message }}</span></div><nav><button :disabled="!activeTab" @click="copySelection"><Icon icon="lucide:copy" />复制</button><button :disabled="!activeTab" @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</button><button :disabled="!activeTab" @click="activeTab&&terminals.get(activeTab.id)?.terminal.clear()"><Icon icon="lucide:eraser" />清屏</button><button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button></nav></header>
-      <nav class="k8s-subtabs"><button v-for="item in tabs" :key="item.id" :class="{active:activeTabId===item.id}" :title="item.label" @click="activeTabId=item.id"><Icon :icon="item.container?'lucide:container':'lucide:boxes'" /><span>{{ item.label }}</span><i :class="item.status" /><b @click.stop="closeTab(item)"><Icon icon="lucide:x" /></b></button></nav>
+      <header class="remote-toolbar k8s-toolbar"><div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span>{{ message }}</span></div><nav><a-button type="text" :disabled="!activeTab" @click="copySelection"><Icon icon="lucide:copy" />复制</a-button><a-button type="text" :disabled="!activeTab" @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</a-button><a-button type="text" :disabled="!activeTab" @click="activeTab&&terminals.get(activeTab.id)?.terminal.clear()"><Icon icon="lucide:eraser" />清屏</a-button><a-button type="text" @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</a-button></nav></header>
+      <nav class="k8s-subtabs"><a-button v-for="item in tabs" :key="item.id" type="text" :class="{active:activeTabId===item.id}" :title="item.label" @click="activeTabId=item.id"><Icon :icon="item.container?'lucide:container':'lucide:boxes'" /><span>{{ item.label }}</span><i :class="item.status" /><b @click.stop="closeTab(item)"><Icon icon="lucide:x" /></b></a-button></nav>
       <div class="k8s-terminal-stack">
         <div v-for="item in tabs" v-show="activeTabId===item.id" :id="terminalElementId(item.id)" :key="item.id" class="terminal-host k8s-terminal" />
-        <div v-if="!tabs.length" class="k8s-empty"><Icon icon="lucide:square-terminal" /><strong>选择容器或打开集群终端</strong><span>可同时打开多个容器会话</span><button class="primary" :disabled="state!=='connected'" @click="openCluster"><Icon icon="lucide:square-terminal" />连接集群</button></div>
+        <div v-if="!tabs.length" class="k8s-empty"><Icon icon="lucide:square-terminal" /><strong>选择容器或打开集群终端</strong><span>可同时打开多个容器会话</span><a-button type="primary" class="primary" :disabled="state!=='connected'" @click="openCluster"><Icon icon="lucide:square-terminal" />连接集群</a-button></div>
       </div>
     </div>
   </section>

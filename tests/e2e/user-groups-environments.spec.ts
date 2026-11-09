@@ -116,9 +116,12 @@ test('用户组新增、编辑、成员分配、人员归组和授权对象术�
   await page.getByLabel('搜索用户组',{exact:true}).fill(groupName);await page.getByRole('button',{name:groupName,exact:true}).click();
   await page.getByRole('button',{name:'编辑用户组',exact:true}).click();await page.getByLabel('用户组说明',{exact:true}).fill('生产值班成员');await save(page);
   await page.getByRole('button',{name:groupName,exact:true}).click();
-  await choose(page,'选择系统账号',memberName);await page.getByRole('button',{name:'添加成员 / 保存有效期',exact:true}).click();
+  await choose(page,'选择系统账号',memberName);
+  await page.getByLabel('成员到期时间',{exact:true}).fill('2030-12-31T23:59');await page.getByLabel('成员到期时间',{exact:true}).press('Tab');
+  await page.getByRole('button',{name:'添加成员 / 保存有效期',exact:true}).click();
   await expect(page.getByRole('row').filter({hasText:memberName})).toContainText('生效中');
-  expect((await api('role-memberships')).items.some((m:{role_id:string;principal_id:string})=>m.role_id===groupId&&m.principal_id===memberId)).toBeTruthy();
+  const membership=(await api('role-memberships')).items.find((m:{role_id:string;principal_id:string})=>m.role_id===groupId&&m.principal_id===memberId);
+  expect(membership.expires_at).toBe(new Date('2030-12-31T23:59').getTime()/1000);
   await page.getByRole('button',{name:'添加资源授权',exact:true}).click();await expect(page.getByRole('radio',{name:'用户组',exact:true})).toBeChecked();await expect(page.getByRole('combobox',{name:'用户组',exact:true})).toContainText(groupName);await page.getByRole('button',{name:'取消',exact:true}).click();
   await nav(page,'系统账号');await page.getByRole('row').filter({hasText:memberName}).getByRole('button',{name:'查看关联',exact:true}).click();await settled(page);
   await expect(page.getByRole('heading',{name:'所属用户组',exact:true})).toBeVisible();await expect(page.locator('section[aria-label="用户组成员配置"]')).toContainText(groupName);

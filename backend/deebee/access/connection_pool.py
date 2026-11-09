@@ -92,12 +92,18 @@ class ConnectionPool:
                     changes.update(provenance)
                 if changes:
                     self.store.put("accounts", account["id"], account | changes, account["version"])
-        if row["driver"] in SUPPORTED:
+        # Kubeconfig has no standalone account to publish. Token connections
+        # may also omit user: Kubernetes derives the identity from the token.
+        options = row.get("options", {})
+        create_account = row["driver"] in SUPPORTED and not (
+            row["driver"] == "k8s" and options.get("k8s_auth_method", "token") != "token"
+        )
+        if create_account:
             account = self.store.get("accounts", account_id, required=False)
             if not account or source_changed:
                 fields = {k: v for k, v in (account or {}).items() if k in Account.model_fields}
                 fields.update(resource_id=resource_id, name=(account or {}).get("name", "前台连接账号（待核验）"),
-                              username=row["user"], auth_method=row.get("options", {}).get("auth_method", "password") if row["driver"] == "ssh" else "password",
+                              username=row["user"] or ("service-account" if row["driver"] == "k8s" else ""), auth_method=options.get("auth_method", "password") if row["driver"] == "ssh" else "password",
                               tier=(account or {}).get("tier", "privileged"), enabled=False, permission_confirmed=False, permission_note="")
                 body = Account.model_validate(fields).model_dump(exclude={"password", "private_key", "passphrase"})
                 self.store.put("accounts", account_id, body | provenance | {"test_result": {}}, (account or {}).get("version"))

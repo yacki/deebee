@@ -237,6 +237,21 @@ def test_kubernetes_token_pool_preserves_source_and_requires_verification(pool):
     assert pool.service.legacy.record(profile['id'])['host'] == 'https://cluster.example:6443'
 
 
+@pytest.mark.parametrize('auth_method', ['token', 'kubeconfig'])
+def test_kubernetes_without_username_does_not_break_resource_reconciliation(pool, auth_method):
+    pool.manager.create_connection(connection('k8s', name='Cluster', user='', port=6443,
+        options={'k8s_auth_method': auth_method}, private_key='apiVersion: v1' if auth_method == 'kubeconfig' else ''))
+    pool.manager.create_connection(connection(name='Unaffected SSH'))
+    assert pool.sync() == 2
+    resources = pool.store.list('resources')
+    assert len(resources) == 2
+    cluster = next(r for r in resources if r['type'] == 'k8s')
+    assert not cluster['enabled']
+    assert cluster['connection_sync']['state'] == ('synced' if auth_method == 'token' else 'needs_configuration')
+    assert pool.sync() == 0
+    assert all(a['username'] for a in pool.store.list('accounts'))
+
+
 def test_encrypted_workbench_key_keeps_its_passphrase_in_resource_account_mapping(pool):
     import asyncssh
     key = asyncssh.generate_private_key('ssh-ed25519')

@@ -141,10 +141,10 @@ onBeforeUnmount(() => {
       <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
         <a-button type="text" :aria-expanded="aiDraftOpen" @click="aiDraftOpen=!aiDraftOpen"><Icon icon="lucide:sparkles" />自然语言写命令</a-button>
-        <button @click="copySelection"><Icon icon="lucide:copy" />复制</button>
-        <button @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</button>
-        <button @click="terminal?.clear()"><Icon icon="lucide:eraser" />清屏</button>
-        <button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button>
+        <a-button type="text" @click="copySelection"><Icon icon="lucide:copy" />复制</a-button>
+        <a-button type="text" @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</a-button>
+        <a-button type="text" @click="terminal?.clear()"><Icon icon="lucide:eraser" />清屏</a-button>
+        <a-button type="text" @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</a-button>
       </nav>
     </header>
     <section v-if="aiDraftOpen" class="ssh-ai-draft">

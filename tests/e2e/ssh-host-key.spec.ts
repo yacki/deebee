@@ -190,7 +190,7 @@ test("saving an edited SSH connection opens a terminal with the saved configurat
   await expect(dialog).not.toBeVisible();
   expect(mock.saved[0]).toMatchObject({ host: "other.example.test", options: { host_key_fingerprint: fingerprint } });
   await expect.poll(() => mock.sockets.length).toBe(2);
-  await expect(page.getByRole("tab", { name: /SSH 终端 2/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /Saved SSH \(2\)/ })).toHaveAttribute("aria-selected", "true");
 });
 
 test("cancelling trust after save-and-connect leaves no connection or terminal", async ({ page }) => {
@@ -210,8 +210,9 @@ test("cancelling trust after save-and-connect leaves no connection or terminal",
 test("private-key SSH authentication follows the same save-and-connect confirmation", async ({ page }) => {
   const mock = await mockWorkbench(page);
   const dialog = await newSshConnection(page);
-  await dialog.getByRole("button", { name: "选项", exact: true }).click();
-  await dialog.getByLabel("SSH 认证方式", { exact: true }).selectOption("private_key");
+  await dialog.getByRole("tab", { name: "选项", exact: true }).click();
+  await dialog.getByRole("combobox",{name:"SSH 认证方式",exact:true}).click();
+  await page.locator(".arco-select-dropdown:visible").getByText("私钥",{exact:true}).click();
   await dialog.getByLabel("SSH 私钥", { exact: true }).fill("test-private-key");
   await dialog.getByRole("button", { name: "保存并连接" }).click();
   await expect(dialog.getByRole("group", { name: "确认 SSH 主机密钥" })).toBeVisible();
@@ -248,8 +249,9 @@ test("database SSH tunnels use the same inline fingerprint confirmation", async 
   const mock = await mockWorkbench(page);
   await page.goto("/");
   const dialog = page.getByRole("dialog", { name: "新建服务器连接" });
-  await dialog.getByRole("button", { name: "SSH 隧道", exact: true }).click();
-  await dialog.getByLabel("通过 SSH 隧道连接", { exact: true }).check();
+  await dialog.getByRole("tab", { name: "SSH 隧道", exact: true }).click();
+  await dialog.getByRole("checkbox",{name:"通过 SSH 隧道连接",exact:true}).locator("..").click();
+  await expect(dialog.getByRole("checkbox",{name:"通过 SSH 隧道连接",exact:true})).toBeChecked();
   await dialog.getByLabel("SSH 隧道主机", { exact: true }).fill("bastion.example.test");
   await dialog.getByLabel("SSH 隧道用户名", { exact: true }).fill("operator");
   await dialog.getByRole("button", { name: "保存并连接" }).click();

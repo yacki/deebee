@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import DateTimeField from './ui/DateTimeField.vue';
 import { expiryTimestamp, localDateTime } from '../accessPolicy';
 
 // Management entities are validated by the backend.
@@ -46,8 +47,8 @@ async function save(enabled: boolean, ids = selected.value) {
     <a-alert v-if="error" type="error">{{ error }}</a-alert><a-alert v-if="message" type="success">{{ message }}</a-alert>
     <div class="access-fields">
       <div class="access-field wide-field">{{ roleId ? '选择系统账号' : '选择用户组' }}<a-select v-model="selected" role="combobox" multiple allow-search :aria-label="roleId ? '选择系统账号' : '选择用户组'" :options="choices.map(c=>({value:c.id,label:c.name+(c.enabled?'':'（已停用）')}))" /></div>
-      <div class="access-field">成员开始时间<input v-model="starts" type="datetime-local" aria-label="成员开始时间" /></div>
-      <div class="access-field">成员到期时间<input v-model="expires" type="datetime-local" aria-label="成员到期时间" /></div>
+      <div class="access-field">成员开始时间<DateTimeField v-model="starts" label="成员开始时间" /></div>
+      <div class="access-field">成员到期时间<DateTimeField v-model="expires" label="成员到期时间" /></div>
     </div>
     <div class="access-actions"><a-button type="primary" :disabled="busy||!selected.length" @click="save(true)">{{ roleId ? '添加成员 / 保存有效期' : '分配用户组 / 保存有效期' }}</a-button><a-button :disabled="busy||!selected.length" @click="save(false)">移除所选</a-button></div>
     <a-table :data="members" row-key="id" :pagination="{pageSize:10}" :loading="busy">

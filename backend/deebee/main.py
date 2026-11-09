@@ -880,7 +880,7 @@ async def search_objects(
 @app.get("/api/privileges/{profile_id}/{database}")
 async def privileges(
     profile_id: str, database: str, table: str = "", schema: str = "", _: str = Depends(current_user)
-) -> dict[str, Any]:
+) -> dict[str, Any] | list[dict[str, Any]]:
     return await asyncio.to_thread(workbench.grants, profile_id, database, table, schema)
 
 
@@ -926,9 +926,16 @@ async def set_autocommit(
 
 @app.post("/api/sessions/{session_id}/query")
 async def run_query(
-    session_id: str, body: QueryBody, _: str = Depends(current_user)
+    session_id: str, body: QueryBody, request: Request, _: str = Depends(current_user)
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(workbench.execute, session_id, body.sql, body.limit)
+    response = await asyncio.to_thread(workbench.execute, session_id, body.sql, body.limit)
+    if request.headers.get("x-deebee-row-format") == "array":
+        for result in response["results"]:
+            if result["kind"] == "rows":
+                names = [column["name"] for column in result["columns"]]
+                result["rows"] = [[row.get(name) for name in names] for row in result["rows"]]
+                result["row_format"] = "array"
+    return response
 
 
 @app.post("/api/sessions/{session_id}/cancel")

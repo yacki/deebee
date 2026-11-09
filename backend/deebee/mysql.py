@@ -220,10 +220,13 @@ class MySQLWorkbench:
         with self._guard:
             session = self.sessions.pop(session_id, None)
         if session:
-            try:
-                session.connection.rollback()
-            finally:
-                session.connection.close()
+            # An in-flight query owns the protocol stream. Closing/rolling
+            # back concurrently can consume its packets and corrupt both calls.
+            with session.lock:
+                try:
+                    session.connection.rollback()
+                finally:
+                    session.connection.close()
 
     def cleanup_workspace(self, workspace_id: str) -> int:
         if not workspace_id:

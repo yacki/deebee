@@ -40,9 +40,9 @@ function sourceNotice(r:Row){return String(r.connection_sync?.reason||'').replac
     <section class="environment-panel" aria-label="资源环境">
       <div class="environment-heading"><span>按环境浏览</span><small>在新增或编辑资源时选择环境，也可填写自定义名称</small></div>
       <div class="environment-tabs" role="group" aria-label="环境分组">
-        <button :aria-pressed="environment===null" :class="{active:environment===null}" @click="environment=null"><Icon icon="lucide:layout-grid" width="16" />全部环境 <span>{{ resources.length }}</span></button>
-        <button v-for="env in environments" :key="env" :aria-pressed="environment===env" :class="{active:environment===env}" @click="environment=env"><span class="environment-dot" :data-environment="env" />{{ environmentLabel(env) }}<small v-if="environmentLabel(env)!==env">{{ env }}</small><span>{{ count(env) }}</span></button>
-        <button v-if="unassigned" :aria-pressed="environment===''" :class="{active:environment===''}" @click="environment=''">未分配环境 <span>{{ unassigned }}</span></button>
+        <a-button type="text" :aria-pressed="environment===null" :class="{active:environment===null}" @click="environment=null"><Icon icon="lucide:layout-grid" width="16" />全部环境 <span>{{ resources.length }}</span></a-button>
+        <a-button v-for="env in environments" :key="env" type="text" :aria-pressed="environment===env" :class="{active:environment===env}" @click="environment=env"><span class="environment-dot" :data-environment="env" />{{ environmentLabel(env) }}<small v-if="environmentLabel(env)!==env">{{ env }}</small><span>{{ count(env) }}</span></a-button>
+        <a-button v-if="unassigned" type="text" :aria-pressed="environment===''" :class="{active:environment===''}" @click="environment=''">未分配环境 <span>{{ unassigned }}</span></a-button>
       </div>
     </section>
 
@@ -57,11 +57,11 @@ function sourceNotice(r:Row){return String(r.connection_sync?.reason||'').replac
     <div class="catalog-bar"><div><b>{{ environment===null?'全部资源':environmentLabel(environment) }}</b><small>{{ filtered.length }} 项资源</small></div><a-radio-group v-model="view" type="button" size="small" aria-label="资源展示方式"><a-radio value="cards"><Icon icon="lucide:layout-grid" width="14" /> 卡片</a-radio><a-radio value="table"><Icon icon="lucide:list" width="14" /> 列表</a-radio></a-radio-group></div>
     <div v-if="view==='cards'" class="resource-grid">
       <article v-for="r in shown" :key="r.id" class="resource-card">
-        <div class="resource-title"><span class="product-tile"><ResourceIcon :type="r.type" :size="34" /></span><div><button class="resource-name" @click="emit('detail',r)">{{ r.name }}</button><small>{{ resourceProduct(r.type).name }}</small></div><span class="resource-status" :class="{enabled:r.enabled}"><i />{{ r.enabled?'已启用':'未启用' }}</span></div>
+        <div class="resource-title"><span class="product-tile"><ResourceIcon :type="r.type" :size="34" /></span><div><a-button type="text" class="resource-name" @click="emit('detail',r)">{{ r.name }}</a-button><small>{{ resourceProduct(r.type).name }}</small></div><a-tag :color="r.enabled?'green':'gray'">{{ r.enabled?'已启用':'未启用' }}</a-tag></div>
         <div class="resource-address"><Icon icon="lucide:network" width="14" /><span>{{ r.host }}:{{ r.port }}</span></div>
         <div v-if="r.database" class="resource-database"><Icon icon="lucide:database" width="14" /><span>{{ r.database }}</span></div>
         <div class="resource-meta"><span class="environment-badge"><Icon icon="lucide:folder" width="13" />{{ environmentLabel(r.environment) }}</span><a-tag v-for="p in r.project_groups" :key="p" size="small">{{ p }}</a-tag><a-tag v-for="t in r.tags" :key="t" size="small" color="gray">{{ t }}</a-tag></div>
-        <div class="resource-footer"><span class="source-note" :title="sourceNotice(r)">{{ sourceNotice(r) }}</span><a-button type="text" size="mini" @click="emit('detail',r)">查看详情 <Icon icon="lucide:arrow-up-right" width="14" /></a-button><a-dropdown position="br" trigger="click"><a-button type="text" size="mini" :aria-label="r.name+'的更多操作'"><Icon icon="lucide:ellipsis" width="18" /></a-button><template #content><a-doption @click="emit('edit',r)">编辑资源</a-doption><a-doption :disabled="busy||(!r.enabled&&r.connection_sync&&r.connection_sync.state!=='synced')" @click="emit('toggle',r)">{{ r.enabled?'停用资源':'启用资源' }}</a-doption><a-doption class="danger-action" @click="emit('remove',r)">删除资源</a-doption></template></a-dropdown></div>
+        <div class="resource-footer"><span class="source-note" :title="sourceNotice(r)">{{ sourceNotice(r) }}</span><a-button type="text" size="mini" @click="emit('detail',r)">查看详情 <Icon icon="lucide:arrow-up-right" width="14" /></a-button><a-dropdown position="br" trigger="click"><IconButton size="mini" :label="r.name+'的更多操作'"><Icon icon="lucide:ellipsis" width="18" /></IconButton><template #content><a-doption @click="emit('edit',r)">编辑资源</a-doption><a-doption :disabled="busy||(!r.enabled&&r.connection_sync&&r.connection_sync.state!=='synced')" @click="emit('toggle',r)">{{ r.enabled?'停用资源':'启用资源' }}</a-doption><a-doption class="danger-action" @click="emit('remove',r)">删除资源</a-doption></template></a-dropdown></div>
       </article>
     </div>
     <a-table v-else :data="shown" :pagination="false" :scroll="{x:900}" row-key="id">
@@ -70,7 +70,7 @@ function sourceNotice(r:Row){return String(r.connection_sync?.reason||'').replac
         <a-table-column title="连接地址"><template #cell="{record:r}"><span>{{ r.host }}:{{ r.port }}</span><small class="table-database">{{ r.database }}</small></template></a-table-column>
         <a-table-column title="环境"><template #cell="{record:r}"><span class="environment-badge">{{ environmentLabel(r.environment) }}</span></template></a-table-column>
         <a-table-column title="项目 / 标签"><template #cell="{record:r}">{{ [...(r.project_groups||[]),...(r.tags||[])].join(' · ')||'—' }}</template></a-table-column>
-        <a-table-column title="状态" :width="100"><template #cell="{record:r}"><span class="resource-status" :class="{enabled:r.enabled}"><i />{{ r.enabled?'已启用':'未启用' }}</span></template></a-table-column>
+        <a-table-column title="状态" :width="100"><template #cell="{record:r}"><a-tag :color="r.enabled?'green':'gray'">{{ r.enabled?'已启用':'未启用' }}</a-tag></template></a-table-column>
         <a-table-column title="操作" :width="140" fixed="right"><template #cell="{record:r}"><a-space size="mini"><a-button type="text" size="mini" @click="emit('detail',r)">详情</a-button><a-button type="text" size="mini" @click="emit('edit',r)">编辑</a-button></a-space></template></a-table-column>
       </template>
     </a-table>

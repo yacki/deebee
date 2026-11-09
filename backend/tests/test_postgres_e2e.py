@@ -86,6 +86,14 @@ def test_postgres_database_schema_object_hierarchy_and_isolation():
                 f'SELECT * FROM "{TABLE}";',
             )
             assert result["results"][-1]["rows"] == [{"id": 1, "label": label}]
+            privileges = client.get(
+                f"/api/privileges/{profile['id']}/{database}",
+                headers=headers,
+                params={"schema": schema, "table": TABLE},
+            )
+            assert privileges.status_code == 200, privileges.text
+            assert isinstance(privileges.json(), list)
+            assert any(row["privilege_type"] == "SELECT" for row in privileges.json())
 
         schemas = client.get(
             f"/api/connections/{profile['id']}/databases/{database}/schemas",

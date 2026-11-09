@@ -6,8 +6,8 @@ test("login API follows the page deployment path", async ({ page }) => {
   const loginRequest = page.waitForRequest(request =>
     request.method() === "POST" && request.url().endsWith("/auth/login")
   );
-  await page.getByLabel("用户名").fill("path-check");
-  await page.getByLabel("密码").fill("path-check");
+  await page.getByLabel("用户名",{exact:true}).fill("path-check");
+  await page.getByLabel("密码",{exact:true}).fill("path-check");
   await page.getByRole("button", { name: "登录工作台" }).click();
 
   const request = await loginRequest;

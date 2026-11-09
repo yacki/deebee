@@ -64,10 +64,7 @@ defineExpose({ refresh });
   <div class="approval-center">
     <a-alert v-if="error" type="error" role="alert">{{ error }}</a-alert>
     <a-alert v-if="message" type="success" role="status">{{ message }}</a-alert>
-    <div class="approval-tabs">
-      <a-button :type="tab==='requests'?'primary':'secondary'" @click="tab='requests'">审批申请</a-button>
-      <a-button :type="tab==='rules'?'primary':'secondary'" @click="tab='rules'">审批规则与模板</a-button>
-    </div>
+    <WorkbenchTabs :active-key="tab" class="component-tabs" @change="tab=String($event)"><a-tab-pane key="requests" title="审批申请" /><a-tab-pane key="rules" title="审批规则与模板" /></WorkbenchTabs>
     <template v-if="tab==='requests'">
       <div class="approval-filters">
         <div class="access-field">申请状态<a-select v-model="status" aria-label="申请状态" role="combobox" @change="filter"><a-option value="">全部状态</a-option><a-option v-for="s in ['pending_approval','queued','running','succeeded','failed','rejected','expired','cancelled','unknown']" :key="s" :value="s">{{ optionLabel(s) }}</a-option></a-select></div>
@@ -93,7 +90,7 @@ defineExpose({ refresh });
         <a-select v-model="selectedTemplate" aria-label="危险命令模板" role="combobox" placeholder="选择危险命令模板"><a-option v-for="t in templates" :key="t.template_id" :value="t.template_id">{{ t.name }}</a-option></a-select>
         <a-button :disabled="busy||!selectedTemplate" @click="fromTemplate">从模板新增</a-button>
       </div>
-      <form v-if="form" class="approval-form" @submit.prevent="save">
+      <a-form v-if="form" :model="form" layout="vertical" class="approval-form" @submit-success="save">
         <h2>{{ editing?'编辑审批规则':'新增审批规则' }}</h2>
         <div class="approval-fields">
           <div class="access-field">规则名称<a-input v-model="form.name" :input-attrs="{'aria-label':'审批规则名称'}" required /></div>
@@ -107,7 +104,7 @@ defineExpose({ refresh });
           <a-checkbox v-model="form.enabled">启用审批规则</a-checkbox>
         </div>
         <div class="approval-toolbar"><a-button type="primary" html-type="submit" :disabled="busy">保存审批规则</a-button><a-button :disabled="busy" @click="form=null">取消编辑</a-button></div>
-      </form>
+      </a-form>
       <a-table :data="rules" row-key="id" :loading="busy" :pagination="{pageSize:20}" :scroll="{x:900}">
         <template #columns>
           <a-table-column title="规则"><template #cell="{record:r}">{{ r.name }}<small>{{ r.description }}</small></template></a-table-column>
@@ -118,7 +115,7 @@ defineExpose({ refresh });
         </template>
       </a-table>
     </template>
-    <a-modal :visible="!!detail" title="操作审批详情" :width="960" :footer="false" @cancel="detail=null">
+    <WorkbenchModal :visible="!!detail" title="操作审批详情" :width="960" :footer="false" @cancel="detail=null">
       <div v-if="detail" class="approval-detail">
         <a-alert v-if="error" type="error" role="alert">{{ error }}</a-alert><a-alert v-if="message" type="success" role="status">{{ message }}</a-alert>
         <dl><dt>申请人</dt><dd>{{ person(detail.owner) }}</dd><dt>目标资源</dt><dd>{{ (detail.target||resource(detail.resource_id))?.name }} · {{ (detail.target||resource(detail.resource_id))?.host }}:{{ (detail.target||resource(detail.resource_id))?.port }} {{ (detail.target||resource(detail.resource_id))?.database }}</dd><dt>资源账号</dt><dd>{{ detail.username }} · {{ optionLabel(detail.mode) }}</dd><dt>状态 / 到期时间</dt><dd>{{ optionLabel(detail.status) }} · {{ date(detail.approval.expires_at) }}</dd><dt>触发规则</dt><dd>{{ detail.approval.rules.map((r:Row)=>r.name).join('、') }}</dd><dt>申请原因</dt><dd>{{ detail.approval.reason||'未填写' }}</dd></dl>
@@ -135,7 +132,7 @@ defineExpose({ refresh });
         <a-button :disabled="busy" @click="reloadDetail">刷新审批与结果</a-button>
         <template v-if="detail.result"><h3>执行结果</h3><JsonPanel :value="detail.result" /></template>
       </div>
-    </a-modal>
+    </WorkbenchModal>
   </div>
 </template>
 
