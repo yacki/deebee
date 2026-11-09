@@ -131,7 +131,7 @@ test('D01 database open/close, properties, new query, console, search, print and
  const db=page.locator('.db-node').filter({hasText:database});
  const command=async(label:string)=>{await db.click({button:'right'});await page.getByRole('menuitem',{name:label,exact:true}).click();};
  await command('关闭数据库');await expect(node(page)).toHaveCount(0);await command('打开数据库');await expect(node(page)).toBeVisible();
- await command('编辑数据库…');await expect(page.locator('.inspector-details')).toContainText('字符集：');await page.locator('.inspector-details').getByRole('button',{name:'关闭',exact:true}).click();
+ await command('编辑数据库…');await expect(page.locator('.inspector-details dt').filter({hasText:'字符集'})).toBeVisible();await page.getByRole('button',{name:'关闭对象信息',exact:true}).click();
  await command('新建查询');await expect(page.locator('.workspace-tabs').getByRole('tab')).toHaveCount(2);await command('控制台');await expect(page.locator('.view-lines')).toContainText('SHOW STATUS');await page.locator('.query-bar').getByRole('button',{name:'运行',exact:true}).click();await expect(page.getByRole('columnheader',{name:'Variable_name',exact:true})).toBeVisible();
  await command('在数据库中查找…');await confirm(page,table);await expect(page.getByRole('dialog').last()).toContainText(table);await page.keyboard.press('Escape');
  await page.evaluate(()=>{Object.defineProperty(window,'print',{value:()=>document.body.setAttribute('data-print-invoked','true')});});await command('打印数据库…');await expect(page.locator('body')).toHaveAttribute('data-print-invoked','true');await command('刷新');await expect(node(page)).toBeVisible();
@@ -141,7 +141,7 @@ test('D02 new database and typed deletion update the server and object tree',asy
 });
 test('P01 server expand/collapse, properties, test, edit, duplicate and new connection forms are usable',async({page})=>{
  const server=page.locator('.server-node.active');const command=async(label:string)=>{await server.click({button:'right'});await page.getByRole('menuitem',{name:label,exact:true}).click();};
- await command('收起服务器');await expect(page.locator('.db-node')).toHaveCount(0);await command('展开服务器');await expect(node(page)).toBeVisible();await command('连接属性…');await expect(page.locator('.inspector-details')).toContainText('127.0.0.1');await page.locator('.inspector-details').getByRole('button',{name:'关闭',exact:true}).click();await command('测试连接');await expect(page.getByText('连接成功',{exact:true})).toBeVisible();
+ await command('收起服务器');await expect(page.locator('.db-node')).toHaveCount(0);await command('展开服务器');await expect(node(page)).toBeVisible();await command('连接属性…');await expect(page.locator('.inspector-details')).toContainText('127.0.0.1');await page.getByRole('button',{name:'关闭对象信息',exact:true}).click();await command('测试连接');await expect(page.getByText('连接成功',{exact:true})).toBeVisible();
  for(const label of ['编辑连接…','复制连接…','新建连接…']){await command(label);const dialog=page.getByRole('dialog',{name:label==='编辑连接…'?'编辑服务器连接':'新建服务器连接',exact:true});await expect(dialog.getByLabel('连接名称',{exact:true})).toBeVisible();if(label!=='新建连接…')await expect(dialog.getByLabel('服务器主机',{exact:true})).toHaveValue('127.0.0.1');await dialog.getByRole('button',{name:'取消',exact:true}).click();}
  await command('刷新');await expect(node(page)).toBeVisible();
 });
@@ -207,7 +207,7 @@ test('P03 server new-database/new-query entries and inactive-connection open exe
   await command('新建查询');await run(page,'SELECT DATABASE() AS context_database;');await expect(page.getByRole('cell',{name:createdDatabase,exact:true})).toBeVisible();
   const created=await api.post('connections',{data:{driver:'mysql',name:copyName,host:'127.0.0.1',port:13377,user:'root',password:env.DEEBEE_MYSQL_PASSWORD,default_database:database,options:{}}});expect(created.ok()).toBeTruthy();copied=(await created.json()).id;
   await page.reload();await expect(page.locator('.monaco-editor textarea')).toBeVisible();const target=page.locator('.server-node').filter({has:page.locator('.node-label b').getByText(copyName,{exact:true})});
-  await target.click({button:'right'});await page.getByRole('menuitem',{name:'连接属性…',exact:true}).click();await expect(page.locator('.inspector-details')).toContainText(copyName);await page.locator('.inspector-details').getByRole('button',{name:'关闭',exact:true}).click();
+  await target.click({button:'right'});await page.getByRole('menuitem',{name:'连接属性…',exact:true}).click();await expect(page.locator('.inspector-details')).toContainText(copyName);await page.getByRole('button',{name:'关闭对象信息',exact:true}).click();
   await target.click({button:'right'});await page.getByRole('menuitem',{name:'测试连接',exact:true}).click();await expect(page.getByText(copyName+' 连接正常',{exact:false})).toBeVisible();
   await target.click({button:'right'});await page.getByRole('menuitem',{name:'打开连接',exact:true}).click();await expect(target).toHaveClass(/active/);await run(page,'SELECT DATABASE() AS opened_database;');await expect(page.getByRole('cell',{name:database,exact:true})).toBeVisible();
  }finally{if(copied)await api.delete('connections/'+copied);await sql(`DROP DATABASE IF EXISTS ${createdDatabase}`);}

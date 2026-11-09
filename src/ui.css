@@ -51,3 +51,19 @@ body{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;font-size:var(
 .app-shell .toolbar{gap:2px;padding:0 8px}.app-shell .toolbar>.arco-btn{flex:none;min-width:0;padding:0 8px;gap:5px}.app-shell .toolbar-spacer{min-width:0}.app-shell .toolbar .profile-switch{flex:0 1 180px;min-width:100px;gap:5px}.app-shell .toolbar .profile-switch .arco-select{min-width:0;width:100%;max-width:180px}.app-shell .toolbar .profile-switch>.iconify{flex:none}.app-shell .toolbar .connection-state{flex:0 1 230px;min-width:80px;margin-left:0}.app-shell .toolbar .connection-state>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-shell .toolbar .connection-state>i,.app-shell .toolbar .connection-state>b{flex:none}.app-shell .toolbar .workbench-brand{flex:none}.app-shell .toolbar .toolbar-query-action{width:32px;padding:0}.app-shell .toolbar .toolbar-query-action>span{display:none}
 @media(max-width:1440px){.app-shell .toolbar .jobs-button>span{display:none}.app-shell .toolbar .connection-state{max-width:180px}.app-shell .toolbar .profile-switch{max-width:150px}}
 @media(max-width:1200px){.app-shell .toolbar .toolbar-primary>span,.app-shell .toolbar .toolbar-more>span{display:none}.app-shell .toolbar .toolbar-primary,.app-shell .toolbar .toolbar-more{width:34px;padding:0}.app-shell .toolbar .workbench-brand>strong{display:none}}
+
+.object-info-drawer .arco-drawer-header{justify-content:space-between;gap:12px;padding:12px 18px;font-size:14px}
+.object-info-drawer .arco-drawer-body{padding:18px;overflow:auto}
+.inspector-details{min-width:0;font-size:12px;line-height:1.6}
+.inspector-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
+.inspector-heading>div:last-child{flex:1;min-width:0}
+.inspector-details .inspector-icon{flex:none;width:36px;height:36px;margin:0;border-radius:7px}
+.inspector-details .inspector-icon svg{width:20px;height:20px}
+.inspector-details h3{margin:0 0 4px;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.inspector-details p{margin:0;color:var(--color-text-2);overflow-wrap:anywhere}
+.inspector-details dl{margin:0;border-top:1px solid var(--color-border-2)}
+.inspector-details dl>div{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:start;gap:12px;padding:10px 0;border-bottom:1px solid var(--color-border-2)}
+.inspector-details dt,.inspector-details dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.inspector-details dt{color:var(--color-text-2)}
+.inspector-details dd{color:var(--color-text-1);white-space:pre-wrap}
+.inspector-details dl>.inspector-note{display:block}

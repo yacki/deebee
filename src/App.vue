@@ -42,6 +42,10 @@ const profiles = ref<Profile[]>([]); const profile = ref<Profile>(); const serve
 const selectedTreeProfileId = ref("");
 watch(() => profile.value?.id, id => { selectedTreeProfileId.value = id || ""; });
 const tabs = ref<WorkTab[]>([]); const activeId = ref(""); const fatal = ref(""); const contextMenu = ref<MenuState | null>(null); const inspector = ref<{ title: string; subtitle: string; lines: string[] }>();
+const inspectorFields = computed(() => (inspector.value?.lines || []).map(line => {
+  const separator = line.indexOf('：');
+  return separator < 0 ? { label:'', value:line } : { label:line.slice(0,separator), value:line.slice(separator+1) };
+}));
 const resultPane = ref<string>("result-0"); const historyOpen = ref(false); const history = ref<string[]>([]); const savedQueries = ref<{ name:string; database:string; schema?:string; sql:string }[]>([]); const editorRef = ref<{ formatSql: () => void; focus: () => void; run: (all?: boolean) => void; cancelRun: () => void }>();
 const queryPreparing = ref(false);
 const explorerMaxWidth = ref(Math.max(220,Math.min(600,window.innerWidth-520)));
@@ -1105,7 +1109,13 @@ function toolbarItems(): ToolbarItem[] {
         </section>
       </template>
     </a-split>
-    <a-drawer :visible="!!inspector" title="对象信息" :width="360" :footer="false" :mask="false" :mask-closable="false" @cancel="inspector=undefined"><section v-if="inspector" class="inspector-details"><header><strong>对象信息</strong><IconButton label="关闭" @click="inspector=undefined"><Icon icon="lucide:x" /></IconButton></header><div class="inspector-icon"><Icon icon="lucide:database" /></div><h3>{{ inspector.title }}</h3><p>{{ inspector.subtitle }}</p><dl><div v-for="(line,index) in inspector.lines" :key="index"><dt>{{ index+1 }}</dt><dd>{{ line }}</dd></div></dl></section></a-drawer>
+    <a-drawer class="object-info-drawer" :visible="!!inspector" title="对象信息" :width="420" :drawer-style="{maxWidth:'calc(100vw - 32px)'}" :footer="false" :mask="false" :mask-closable="false" @cancel="inspector=undefined">
+      <template #header><strong>对象信息</strong><IconButton label="关闭对象信息" @click="inspector=undefined"><Icon icon="lucide:x" /></IconButton></template>
+      <section v-if="inspector" class="inspector-details" aria-label="对象属性">
+        <div class="inspector-heading"><div class="inspector-icon"><Icon icon="lucide:database" /></div><div><h3>{{ inspector.title }}</h3><p>{{ inspector.subtitle }}</p></div></div>
+        <dl><div v-for="(field,index) in inspectorFields" :key="index" :class="{'inspector-note':!field.label}"><dt v-if="field.label">{{ field.label }}</dt><dd>{{ field.value }}</dd></div></dl>
+      </section>
+    </a-drawer>
     <a-drawer :visible="jobsOpen" title="后台任务列表" :width="520" :footer="false" @cancel="jobsOpen=false">
       <section class="jobs-drawer-content">
         <header><div><Icon icon="lucide:list-checks" /><span><strong>后台任务</strong><small>{{ runningJobCount ? `${runningJobCount} 个正在执行` : '最近 50 个任务' }}</small></span></div><nav><IconButton label="刷新后台任务" @click="refreshJobs(true)"><Icon icon="lucide:refresh-cw" /></IconButton><IconButton label="关闭后台任务" @click="jobsOpen=false"><Icon icon="lucide:x" /></IconButton></nav></header>

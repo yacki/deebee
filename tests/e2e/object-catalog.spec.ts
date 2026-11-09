@@ -22,6 +22,24 @@ async function setup(page:Page,driver='mysql'){
 }
 async function openCatalog(page:Page){if(!await page.locator('.object-table').isVisible())await category(page).click();await expect(page.locator('.object-table .arco-table')).toBeVisible();}
 
+for(const width of [1024,1920])test(`object information uses one header and aligned property rows at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1080});const {errors}=await setup(page);
+ await page.locator('.object-node').filter({has:page.locator('.node-label').getByText('com_dict',{exact:true})}).click();
+ const drawer=page.locator('.object-info-drawer'),details=drawer.locator('.inspector-details'),header=drawer.locator('.arco-drawer-header');
+ await expect(details).toBeVisible();await expect(header.getByText('对象信息',{exact:true})).toHaveCount(1);await expect(drawer.getByText('对象信息',{exact:true})).toHaveCount(1);await expect(drawer.getByRole('button')).toHaveCount(1);
+ await expect(drawer.getByRole('button',{name:'关闭对象信息',exact:true})).toBeVisible();
+ expect(await details.locator('dt').allTextContents()).toEqual(['预计行数','引擎','数据大小','索引大小','排序规则','创建时间','更新时间','注释']);
+ await expect(details.locator('dl>div').filter({has:page.getByText('创建时间',{exact:true})}).locator('dd')).toHaveText('2024-07-09 15:45:10');
+ await expect(details.locator('dl>div').filter({has:page.getByText('注释',{exact:true})}).locator('dd')).toHaveText(tableObjects[0].comment);
+ const geometry=await details.evaluate(e=>[...e.querySelectorAll('dl>div')].map(row=>{
+  const label=row.querySelector('dt')!.getBoundingClientRect(),value=row.querySelector('dd')!.getBoundingClientRect();
+  return {topDifference:Math.abs(label.top-value.top),gap:value.left-label.right,rightOverflow:value.right-e.getBoundingClientRect().right};
+ }));
+ for(const row of geometry){expect(row.topDifference).toBeLessThan(1);expect(row.gap).toBeGreaterThan(0);expect(row.rightOverflow).toBeLessThanOrEqual(1);}
+ expect(await drawer.locator('.arco-drawer-body').evaluate(e=>e.scrollWidth<=e.clientWidth)).toBe(true);
+ await drawer.getByRole('button',{name:'关闭对象信息',exact:true}).click();await expect(details).not.toBeVisible();expect(errors).toEqual([]);
+});
+
 for(const viewport of [{width:1024,height:768},{width:1440,height:900},{width:1920,height:1080}])test(`CL01-${viewport.width} long object metadata stays clipped in aligned cells, with independent scrolling`,async({page})=>{
  await page.setViewportSize(viewport);const {errors}=await setup(page);await openCatalog(page);
  const pane=page.locator('.content'),explorer=page.locator('.explorer'),table=page.locator('.object-table'),body=table.locator('.arco-table-body');
