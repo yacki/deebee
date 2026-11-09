@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .access.audit import redact_text
 from .access.models import AccessError
+from .ai_run import can_auto_run
 
 
 def contains_secret(text: str) -> bool:
@@ -170,6 +171,11 @@ class AIService:
             result.message = "请补充要操作的对象和具体条件。"
         return result.model_dump()
 
+    async def prepare(self, body: GenerateBody) -> dict:
+        result = await self.generate(body)
+        readonly = bool(result["code"]) and can_auto_run(result["code"], body.language)
+        return result | {"auto_run": readonly, "requires_confirmation": bool(result["code"]) and not readonly}
+
     async def request_model(self, config: dict, content: dict, system: str, max_tokens: int) -> tuple[str, str]:
         if self.slots.locked():
             raise AccessError("AI_BUSY", "AI 正忙，请稍后再试", 429)
@@ -271,3 +277,18 @@ def install_ai(app, service, admin, context):
             raise AccessError("AI_RESOURCE_MISMATCH", "命令类型与当前资源不匹配", 403)
         service.auth.rate("ai:" + ctx.principal_id, 30)
         return await ai.generate(command)
+
+    @app.post("/api/ai/prepare")
+    async def workbench_ai_prepare(body: dict, actor=Depends(admin)):
+        service.auth.rate("ai:" + actor, 30)
+        return await ai.prepare(GenerateBody.model_validate(body))
+
+    @app.post("/api/v1/ai/prepare")
+    async def user_ai_prepare(body: dict, ctx=Depends(context)):
+        command = GenerateBody.model_validate(body)
+        resource = service.projected(ctx, command.resource_id)
+        expected = "shell" if resource["type"] == "ssh" else resource["type"]
+        if command.language != expected:
+            raise AccessError("AI_RESOURCE_MISMATCH", "命令类型与当前资源不匹配", 403)
+        service.auth.rate("ai:" + ctx.principal_id, 30)
+        return await ai.prepare(command)

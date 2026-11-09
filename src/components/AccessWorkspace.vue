@@ -8,6 +8,7 @@ import { API_BASE, authToken } from "../api";
 import JsonPanel from "./JsonPanel.vue";
 import AISettings from "./AISettings.vue";
 import SqlEditor from "./SqlEditor.vue";
+import type { RunMeta } from "../aiRun";
 import SessionRecordings from "./SessionRecordings.vue";
 import ApprovalCenter from "./ApprovalCenter.vue";
 import ResourceCatalog from "./ResourceCatalog.vue";
@@ -87,6 +88,8 @@ const sections: Section[] = [
   { id:"audit-events", name:"审计日志", icon:"lucide:scroll-text", description:"按真实登录身份归档 MCP、授权用户、管理端和原工作台操作；请求保留 1 KiB，返回内容保留 4 KiB，均先脱敏。历史截断内容无法恢复。"},
   { id:"integration", name:"系统设置", icon:"lucide:plug", description:"配置外部身份的验证方式、程序接入地址和配置备份。"},
 ];
+const userCommandEditor = ref<InstanceType<typeof SqlEditor>>();
+const userPreparing = ref(false);
 const aiSettingsPanel = ref<InstanceType<typeof AISettings>>();
 const recordingsPanel = ref<InstanceType<typeof SessionRecordings>>();
 const approvalsPanel = ref<InstanceType<typeof ApprovalCenter>>();
@@ -295,14 +298,26 @@ async function checkImport(){await act(async()=>{importPreview.value=await reque
 async function applyImport(){await act(async()=>{await request("/admin/v1/access-config/import","POST",JSON.parse(configText.value));importPreview.value=null;await load();message.value="配置已更新";});}
 function defaultOperation(){return activeAccess.value?.actions.find((a:string)=>a!=="db.schema")||"";}
 function chooseResource(){sessionOpen.value=false;accessOption.value=activeResource.value?.access_modes[0]?.access_option_id||"";mode.value=activeResource.value?.default_mode||"normal";operation.value=defaultOperation();command.value=activeResource.value?.type==="ssh"?"id":"SELECT 1";kubeNamespace.value=activeResource.value?.namespaces?.[0]||"";kubeName.value="";userExecution.value=null;}
-async function executeUser(){await act(async()=>{
+async function runUserCommand(sql: string, meta?: RunMeta) {
+  if (meta && activeResource.value?.type !== 'ssh') {
+    const needed = meta.readOnly ? 'db.query' : 'db.execute';
+    if (!activeAccess.value?.actions.includes(needed) || (needed === 'db.execute' && mode.value !== 'privileged')) {
+      error.value = needed === 'db.execute' ? '此操作需要已授权的数据库变更权限和高权限访问方式，请先选择对应访问方式。' : '当前访问方式没有只读查询权限。';
+      return;
+    }
+    await executeUser(sql, needed);
+    return;
+  }
+  await executeUser(sql);
+}
+async function executeUser(sql?: string, selectedOperation = operation.value){await act(async()=>{
   if(["ssh.connect","rdp.connect"].includes(operation.value)){sessionOpen.value=true;return;}
   const paths:Record<string,string>={"ssh.exec":"/v1/ssh/executions","ssh.inspect":"/v1/ssh/inspections","db.query":"/v1/db/queries","db.execute":"/v1/db/executions","k8s.read":"/v1/k8s/queries","k8s.restart":"/v1/k8s/restarts"};
-  const path=paths[operation.value]; if(!path)throw new Error("请选择获准操作");
+  const path=paths[selectedOperation]; if(!path)throw new Error("请选择获准操作");
   const body:Row={resource_id:selectedResource.value,mode:mode.value,access_option_id:accessOption.value,idempotency_key:crypto.randomUUID()};
   if(operation.value==="ssh.inspect")body.check=sshCheck.value;
   else if(operation.value.startsWith("k8s."))Object.assign(body,{namespace:kubeNamespace.value,kind:operation.value==="k8s.restart"?"deployments":kubeOperation.value==="logs"?"pods":kubeOperation.value==="rollout"?"deployments":kubeKind.value,name:operation.value==="k8s.read"&&kubeOperation.value==="list"?"":kubeName.value,operation:operation.value==="k8s.restart"?"restart":kubeOperation.value});
-  else body[operation.value==="ssh.exec"?"command":"sql"]=command.value;
+  else body[selectedOperation==="ssh.exec"?"command":"sql"]=sql ?? command.value;
   if(['ssh.exec','db.query','db.execute'].includes(operation.value))body.approval_reason=approvalReason.value;
   userExecution.value=await request(path,"POST",body,false);
   await loadUserHistory();
@@ -551,10 +566,10 @@ onMounted(async()=>{loginSources.value=(await request("/access/login-options","G
           <template v-if="operation==='k8s.read'"><div class="access-field">查询类型<a-select v-model="kubeOperation" role="combobox" aria-label="查询类型"><a-option value="list">列表</a-option><a-option value="get">详情</a-option><a-option value="logs">Pod 日志</a-option><a-option value="rollout">等待 Deployment 就绪</a-option></a-select></div><div class="access-field">资源类型<a-select v-model="kubeKind" role="combobox" aria-label="资源类型"><a-option v-for="k in ['pods','deployments','events','services','replicasets']" :key="k" :value="k">{{ k }}</a-option></a-select></div></template>
           <div v-if="operation==='k8s.restart'||kubeOperation!=='list'" class="access-field">{{ operation==='k8s.restart'?'Deployment 名称':'资源名称' }}<a-input v-model="kubeName" /></div>
         </template>
-        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<div style="height:240px;border:1px solid #dce2eb"><SqlEditor :key="selectedResource+operation" v-model="command" :language="activeResource.type==='ssh'?'shell':undefined" :dialect="activeResource.type==='postgresql'?'postgresql':'mysql'" :ai-access="{resourceId:selectedResource,csrf}" /></div></div>
+        <div v-else-if="!['ssh.connect','rdp.connect'].includes(operation)" class="access-field">{{ activeResource.type==='ssh'?'服务器命令':'SQL' }}<div style="height:240px;border:1px solid #dce2eb"><SqlEditor ref="userCommandEditor" :key="selectedResource+operation" v-model="command" :context-id="selectedResource+operation+mode+accessOption" :run-disabled="busy" :language="activeResource.type==='ssh'?'shell':undefined" :dialect="activeResource.type==='postgresql'?'postgresql':'mysql'" :ai-access="{resourceId:selectedResource,csrf}" @preparing="userPreparing=$event" @run="runUserCommand" /></div></div>
         <div v-if="['ssh.exec','db.query','db.execute'].includes(operation)" class="access-field">申请原因（供管理员审核）<a-textarea v-model="approvalReason" :textarea-attrs="{'aria-label':'申请原因'}" :max-length="2000" :auto-size="{minRows:2,maxRows:4}" placeholder="说明操作目的、影响范围和验证方式" /></div>
         <p v-if="mode==='privileged'" class="access-warning">正在使用已授权的高权限资源账号，操作可能修改数据或服务器文件。</p>
-        <a-button type="primary" :disabled="busy||!operation" @click="executeUser">{{ ['ssh.connect','rdp.connect'].includes(operation)?'打开会话':'提交执行' }}</a-button>
+        <a-button type="primary" :disabled="busy||userPreparing||!operation" @click="['db.query','db.execute','ssh.exec'].includes(operation)?userCommandEditor?.run(true):executeUser()">{{ ['ssh.connect','rdp.connect'].includes(operation)?'打开会话':'提交执行' }}</a-button>
         <section v-if="sessionOpen" class="access-live-session"><a-button @click="sessionOpen=false">关闭会话</a-button><SshTerminal v-if="activeResource.type==='ssh'" :key="accessOption" profile-id="" :title="activeResource.name" active :access="sessionAccess" /><RdpDesktop v-else-if="activeResource.type==='rdp'" :key="accessOption" profile-id="" :title="activeResource.name" active :access="sessionAccess" /></section>
         <div v-if="userExecution" class="access-panel"><span>{{ optionLabel(userExecution.status) }}</span><a-button :disabled="busy" @click="pollUser">刷新结果</a-button><a-button v-if="userExecution.result?.next_cursor" :disabled="busy" @click="pollUser(userExecution.result.next_cursor)">下一页结果</a-button><a-button v-if="!['succeeded','failed','cancelled','unknown','rejected','expired'].includes(userExecution.status)" :disabled="busy" @click="cancelUser">请求取消</a-button><a-alert v-if="userExecution.status==='pending_approval'" type="warning">申请已提交，原命令尚未执行。请等待管理员审核，到期时间：{{ formatTime(userExecution.approval.expires_at) }}。请勿重复提交。</a-alert><p v-if="userExecution.approval">审批规则：{{ userExecution.approval.rules.map((r:Row)=>r.name).join('、') }}</p><p v-if="userExecution.approval?.comment">审核意见：{{ userExecution.approval.comment }}</p><a-alert v-if="userExecution.error" type="warning">{{ userExecution.error.message }}</a-alert><JsonPanel v-if="userExecution.result" :value="userExecution.result" /><DisclosurePanel title="执行详情"><JsonPanel :value="userExecution" /></DisclosurePanel></div>
       </section>

@@ -4,16 +4,26 @@ const input = (page: Page) => page.locator('.monaco-editor textarea:visible');
 const ghost = (page: Page) => page.locator('.view-line').filter({ has: page.locator('[class*=ghost-text-decoration]') });
 const catalog = { database: 'demo', tables: [{ name: 'customers', object_type: 'BASE TABLE', columns: [{ name: 'id', data_type: 'int', nullable: false }] }], routines: [] };
 const profile = { id: 'ai-test', name: 'AI 续写测试', driver: 'mysql', host: 'database.invalid', port: 3306, user: 'reader', default_database: 'demo', default_schema: '', options: {} };
-type State = { calls: Array<Record<string, unknown>>; generations: Array<Record<string, unknown>>; errors: string[]; blocked: string[]; completion: string; generated: { code: string; message: string }; delay: number; enabled: boolean; failure: boolean };
+type State = { calls: Array<Record<string, unknown>>; prepares: Array<Record<string, unknown>>; executions: Array<Record<string, unknown>>; autoRun: boolean; generations: Array<Record<string, unknown>>; errors: string[]; blocked: string[]; completion: string; generated: { code: string; message: string }; delay: number; enabled: boolean; failure: boolean };
 
 async function setup(page: Page, enabled = true) {
-  const state: State = { calls: [], generations: [], errors: [], blocked: [], completion: ' WHERE id > 10', generated: { code: 'SELECT id FROM customers ORDER BY id DESC LIMIT 10;', message: '' }, delay: 0, enabled, failure: false };
+  const state: State = { calls: [], prepares: [], executions: [], autoRun: true, generations: [], errors: [], blocked: [], completion: ' WHERE id > 10', generated: { code: 'SELECT id FROM customers ORDER BY id DESC LIMIT 10;', message: '' }, delay: 0, enabled, failure: false };
   page.on('pageerror', error => state.errors.push(error.message));
   await page.addInitScript(() => sessionStorage.setItem('deebee_token', 'isolated-ai-test'));
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     let json: unknown = { ok: true };
     if (path.endsWith('/ai/status')) json = { enabled: state.enabled, share_schema: false };
+    else if (path.endsWith('/ai/prepare')) {
+      state.prepares.push(request.postDataJSON());
+      if (state.delay) await new Promise(resolve => setTimeout(resolve, state.delay));
+      if (state.failure) return route.fulfill({ status: 504, json: { error: { message: 'AI 响应超时' } } });
+      json = { ...state.generated, auto_run: state.autoRun, requires_confirmation: Boolean(state.generated.code) && !state.autoRun };
+    }
+    else if (/\/sessions\/[^/]+\/query$/.test(path)) {
+      state.executions.push(request.postDataJSON());
+      json = { ok: true, results: [{ kind: 'rows', columns: [{name:'ai_ready',type:'int'}], rows: [{ai_ready:1}], elapsed_ms:1 }], elapsed_ms:1, autocommit:true };
+    }
     else if (path.endsWith('/ai/generate')) {
       state.generations.push(request.postDataJSON());
       if (state.delay) await new Promise(resolve => setTimeout(resolve, state.delay));
@@ -279,4 +289,162 @@ test('login page removes decorative eyebrows at desktop and narrow sizes', async
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('button', { name: '登录工作台' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+
+const runShortcut = process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter';
+
+test('natural-language shortcut runs one read-only query and preserves the request', async ({ page }, info) => {
+  const state = await setup(page);
+  await typeSql(page, '查询 customers 表最新的 10 个 id');
+  await input(page).press(runShortcut);
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.prepares[0]).toMatchObject({instruction:'查询 customers 表最新的 10 个 id',language:'mysql'});
+  expect(state.executions[0]?.sql).toBe(state.generated.code);
+  expect(await savedSql(page)).toBe('查询 customers 表最新的 10 个 id');
+  await expect(page.getByRole('form', {name:'自然语言生成'})).toHaveCount(0);
+  await page.getByRole('button', {name:'查看本次SQL',exact:true}).click();
+  await expect(page.getByRole('region', {name:'智能运行'}).locator('pre')).toContainText(state.generated.code);
+  await page.screenshot({path:info.outputPath('one-step-query.png')});
+  expect(state.blocked).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('both Run buttons understand natural language and native SQL bypasses AI', async ({ page }) => {
+  const state = await setup(page);
+  await typeSql(page, 'SELECT 42;');
+  await input(page).press(runShortcut);
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.prepares).toEqual([]);
+  await typeSql(page, '查询 customers 表');
+  await page.locator('.query-bar').getByRole('button',{name:'运行',exact:true}).click();
+  await expect.poll(() => state.executions.length).toBe(2);
+  await typeSql(page, '查询 customers 表的 id');
+  await page.locator('.toolbar').getByRole('button',{name:'运行',exact:true}).click();
+  await expect.poll(() => state.executions.length).toBe(3);
+  expect(state.errors).toEqual([]);
+});
+
+test('generated writes wait for visible confirmation and submit once', async ({ page }, info) => {
+  const state = await setup(page); state.autoRun = false;
+  state.generated = {code:'DELETE FROM customers WHERE id = 9;',message:''};
+  await typeSql(page, '删除 customers 表中 id 为 9 的记录');
+  await input(page).press(runShortcut);
+  await expect(page.getByRole('button',{name:'确认并运行',exact:true})).toBeVisible();
+  expect(state.executions).toEqual([]);
+  await expect(page.getByRole('region',{name:'智能运行'}).locator('pre')).toContainText('DELETE FROM');
+  await page.screenshot({path:info.outputPath('confirm-write.png')});
+  await page.getByRole('button',{name:'确认并运行',exact:true}).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0]?.sql).toBe(state.generated.code);
+  expect(state.errors).toEqual([]);
+});
+
+test('clarification stays inline and Enter continues the original request', async ({ page }) => {
+  const state = await setup(page); state.autoRun = false;
+  state.generated = {code:'',message:'请指定表名。'};
+  await typeSql(page, '查一下最新的数据');
+  await input(page).press(runShortcut);
+  await expect(page.getByRole('region',{name:'智能运行'}).getByRole('alert')).toContainText('请指定表名');
+  expect(state.executions).toEqual([]);
+  state.autoRun = true; state.generated = {code:'SELECT id FROM customers LIMIT 10;',message:''};
+  await page.getByRole('textbox',{name:'补充需求',exact:true}).fill('customers 表');
+  await page.getByRole('textbox',{name:'补充需求',exact:true}).press('Enter');
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.prepares[1]?.instruction).toContain('查一下最新的数据\n补充：customers 表');
+  expect(state.errors).toEqual([]);
+});
+
+test('editing, cancellation and repeated shortcut never run a stale response', async ({ page }) => {
+  const state = await setup(page); state.delay = 900;
+  await typeSql(page, '查询 customers 表'); await input(page).press(runShortcut); await input(page).press(runShortcut);
+  await expect.poll(() => state.prepares.length).toBe(1);
+  await typeSql(page, 'SELECT 99;');
+  await page.waitForTimeout(1100);
+  expect(state.executions).toEqual([]); expect(await savedSql(page)).toBe('SELECT 99;');
+  await typeSql(page, '查询 customers 表'); await input(page).press(runShortcut);
+  await expect.poll(() => state.prepares.length).toBe(2);
+  await page.getByRole('button',{name:'取消生成',exact:true}).click();
+  await page.waitForTimeout(1100); expect(state.executions).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('failed or disabled AI keeps natural language out of the SQL endpoint', async ({ page }) => {
+  const state = await setup(page); state.failure = true;
+  await typeSql(page, '查询 customers 表'); await input(page).press(runShortcut);
+  await expect(page.getByRole('region',{name:'智能运行'}).getByRole('alert')).toContainText('AI 响应超时');
+  expect(state.executions).toEqual([]);
+  expect(await savedSql(page)).toBe('查询 customers 表');
+  expect(state.errors).toEqual([]);
+});
+
+test('disabled AI never dispatches natural language as SQL', async ({ page }) => {
+  const state = await setup(page, false);
+  await typeSql(page, '查询 customers 表');
+  await input(page).press(runShortcut);
+  await expect(page.getByRole('region',{name:'智能运行'}).getByRole('alert')).toContainText('AI 尚未启用');
+  expect(state.prepares).toEqual([]); expect(state.executions).toEqual([]);
+});
+
+test('editing a pending write invalidates its confirmation', async ({ page }) => {
+  const state = await setup(page); state.autoRun = false;
+  state.generated = {code:'DELETE FROM customers WHERE id=9;',message:''};
+  await typeSql(page, '删除 customers 表中 id 为 9 的记录'); await input(page).press(runShortcut);
+  await expect(page.getByRole('button',{name:'确认并运行',exact:true})).toBeVisible();
+  await typeSql(page, 'SELECT 88;');
+  await expect(page.getByRole('button',{name:'确认并运行',exact:true})).toHaveCount(0);
+  await input(page).press(runShortcut);
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0]?.sql).toBe('SELECT 88;');
+});
+
+test('switching database cancels a pending request', async ({ page }) => {
+  const state = await setup(page); state.delay=900;
+  await page.route('**/databases', route => route.fulfill({json:[{name:'demo',charset:'',collation:''},{name:'other',charset:'',collation:''}]}));
+  await page.reload(); await expect(input(page)).toBeVisible();
+  await typeSql(page, '查询 customers 表'); await input(page).press(runShortcut);
+  await expect.poll(() => state.prepares.length).toBe(1);
+  await page.getByRole('combobox',{name:'查询数据库',exact:true}).click();
+  await page.locator('.arco-select-dropdown:visible').getByText('other',{exact:true}).click();
+  await page.waitForTimeout(1100);
+  expect(state.executions).toEqual([]);
+});
+
+for (const kind of ['mysql', 'ssh'] as const) test(`ordinary ${kind} smart run uses the authorized execution path and CSRF`, async ({ page }) => {
+  const errors:string[]=[]; page.on('pageerror', e=>errors.push(e.message));
+  const shell = kind === 'ssh', submissions: Array<{path:string;body:Record<string,unknown>;headers:Record<string,string>}> = [];
+  const code = shell ? 'find . -type f -size +100M' : 'SELECT 1 AS ready;';
+  await page.addInitScript(() => sessionStorage.setItem('deebee_token','must-not-use-admin'));
+  await page.route('**/api/**', async route => {
+    const request = route.request(), path = new URL(request.url()).pathname;
+    let json:unknown = {sources:[],items:[]};
+    if (path.endsWith('/v1/me')) json={csrf:'smart-csrf',principal:{name:'测试用户'},roles:[]};
+    else if (path.endsWith('/v1/resources')) json={resources:[{id:'smart-resource',name:'智能运行资源',type:kind,default_mode:'normal',access_modes:[{access_option_id:'reader-option',mode:'normal',username:'reader',actions:[shell?'ssh.exec':'db.query']}]}]};
+    else if (path.endsWith('/ai/status')) json={enabled:true,share_schema:false};
+    else if (path.endsWith('/ai/prepare')) {
+      expect(request.headers()['x-csrf-token']).toBe('smart-csrf');
+      expect(request.headers().authorization).toBeUndefined();
+      expect(request.postDataJSON()).toMatchObject({resource_id:'smart-resource',language:shell?'shell':'mysql'});
+      json={code,message:'',auto_run:!shell,requires_confirmation:shell};
+    } else if (path.endsWith('/v1/db/queries') || path.endsWith('/v1/ssh/executions')) {
+      submissions.push({path,body:request.postDataJSON(),headers:request.headers()});
+      json={id:'smart-execution',execution_id:'smart-execution',status:shell?'pending_approval':'succeeded',approval:shell?{expires_at:2000000000,rules:[]}:undefined};
+    }
+    return route.fulfill({json});
+  });
+  await page.goto('/#access-user');
+  await page.getByRole('button',{name:/智能运行资源/}).click();
+  await typeSql(page,shell?'列出大于 100MB 的文件':'查询常量 1');
+  await page.getByRole('button',{name:'提交执行',exact:true}).click();
+  expect(errors).toEqual([]);
+  if (shell) {
+    await expect(page.getByRole('button',{name:'确认并运行',exact:true})).toBeVisible();
+    expect(submissions).toEqual([]);
+    await page.getByRole('button',{name:'确认并运行',exact:true}).click();
+    await expect(page.getByText('申请已提交，原命令尚未执行。',{exact:false})).toBeVisible();
+  }
+  await expect.poll(()=>submissions.length).toBe(1);
+  expect(submissions[0]?.body).toMatchObject({resource_id:'smart-resource',access_option_id:'reader-option',mode:'normal',[shell?'command':'sql']:code});
+  expect(submissions[0]?.headers['x-csrf-token']).toBe('smart-csrf');
+  expect(submissions[0]?.headers.authorization).toBeUndefined();
 });
