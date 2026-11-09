@@ -77,9 +77,35 @@ for(const width of [1920,1536,1366,1280,1024])test(`top toolbar fits ${width}px 
   }
   await toolbar.getByRole('button',{name:'更多功能',exact:true}).click();
   for(const name of ['视图','函数','触发器','事件','用户权限','备份'])await expect(page.locator('.arco-dropdown').getByText(name,{exact:true})).toBeVisible();
+  expect(await page.locator('.arco-dropdown:visible').evaluate(e=>[e,...e.querySelectorAll('*')].every(el=>el.scrollHeight<=el.clientHeight+1 && el.scrollWidth<=el.clientWidth+1))).toBeTruthy();
   await page.locator('.arco-dropdown').getByText('视图',{exact:true}).click();
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('CREATE OR REPLACE VIEW');
   expect(errors).toEqual([]);
+});
+
+test('record window and JSON/Text fields resize without losing drafts or hiding save controls',async({page})=>{
+  await page.setViewportSize({width:1280,height:800});
+  const {writes,errors}=await setup(page,false,{columns:[...columns,{name:'payload',data_type:'JSON',nullable:true,default:null,extra:'',comment:''},{name:'note',data_type:'TEXT',nullable:true,default:null,extra:'',comment:''}],rows:[{id:1,name:'Alpha',payload:'{"n":1}',note:'original'}]});
+  await page.locator('.query-bar').getByRole('button',{name:'运行',exact:true}).click();await page.getByRole('cell',{name:'Alpha',exact:true}).click();await page.getByRole('button',{name:'编辑记录',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'编辑记录',exact:true}),handle=dialog.getByRole('button',{name:'调整记录编辑窗口大小',exact:true});
+  await expect(dialog).toHaveCSS('font-size','12px');await expect(dialog.getByLabel('记录字段 name',{exact:true})).toHaveCSS('font-size','12px');
+  await expect.poll(async()=>Math.round((await dialog.boundingBox())!.width)).toBe(860);
+  const initial=await dialog.boundingBox();await handle.focus();await handle.press('ArrowRight');await handle.press('ArrowDown');
+  await expect.poll(async()=>(await dialog.boundingBox())!.width).toBe(initial!.width+16);
+  await expect.poll(async()=>(await dialog.boundingBox())!.height).toBe(initial!.height+16);
+  const grip=await handle.boundingBox();await page.mouse.move(grip!.x+grip!.width/2,grip!.y+grip!.height/2);await page.mouse.down();await page.mouse.move(grip!.x+grip!.width/2+80,grip!.y+grip!.height/2+40,{steps:8});await page.mouse.up();
+  const resized=await dialog.boundingBox();expect(resized!.width).toBeGreaterThan(initial!.width+100);expect(resized!.height).toBeGreaterThan(initial!.height+40);
+  for(const name of ['payload','note']) {
+    const field=dialog.getByLabel('记录字段 '+name,{exact:true});await expect(field).toHaveCSS('resize','both');
+    await field.scrollIntoViewIfNeeded();const box=await field.boundingBox();
+    await page.mouse.move(box!.x+box!.width-4,box!.y+box!.height-4);await page.mouse.down();await page.mouse.move(box!.x+box!.width-4,box!.y+box!.height+76,{steps:8});await page.mouse.up();
+    await expect.poll(async()=>(await field.boundingBox())!.height).toBeGreaterThan(box!.height+40);
+    const height=(await field.boundingBox())!.height;await field.fill(name==='payload'?'{"n":2}':'resized text\nsecond line');
+    expect((await field.boundingBox())!.height).toBe(height);
+  }
+  expect((await dialog.boundingBox())!.width).toBe(resized!.width);expect((await dialog.boundingBox())!.height).toBe(resized!.height);
+  const save=dialog.getByRole('button',{name:'保存记录',exact:true});const saveBox=await save.boundingBox();expect(saveBox!.y+saveBox!.height).toBeLessThan(800);
+  await save.click();await expect(dialog).not.toBeVisible();expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({changes:{payload:'{"n":2}',note:'resized text\nsecond line'}});expect(errors).toEqual([]);
 });
 
 test('Arco tabs switch with the keyboard, context actions save a query, and drawers close',async({page})=>{

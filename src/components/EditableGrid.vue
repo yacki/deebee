@@ -23,6 +23,8 @@ const viewMode = ref<'grid'|'record'|'text'|'json'>('grid');
 const error = ref('');
 const saving = ref(false);
 const recordEditor = ref<{ row: number; fields: Record<string, { value: string; nullValue: boolean }> }>();
+const recordEditorSize = reactive({ width:860, height:640 });
+let stopRecordResize: (()=>void) | undefined;
 const pastePreview = ref<{ text: string; edits: GridEdit[]; count: number }>();
 let selectionAnchor = 0;
 const selectedRows = ref(new Set<number>());
@@ -88,7 +90,7 @@ onMounted(() => {
   resizeObserver = new ResizeObserver(measureViewport);
   if (shell.value) resizeObserver.observe(shell.value);
 });
-onBeforeUnmount(() => { rememberView();resizeObserver?.disconnect(); });
+onBeforeUnmount(() => { rememberView();resizeObserver?.disconnect();stopRecordResize?.(); });
 
 function loadWidths() {
   for(const name of Object.keys(widths))delete widths[name];
@@ -291,6 +293,27 @@ async function openRecordEditor(row=currentCell.value?.row) {
   error.value='';
 }
 const recordEditable = computed(() => columns.value.some(column=>canEdit(column.name)));
+function setRecordSize(width:number,height:number) {
+  const maxWidth=Math.max(240,window.innerWidth-32),maxHeight=Math.max(200,window.innerHeight-64);
+  recordEditorSize.width=Math.max(Math.min(560,maxWidth),Math.min(maxWidth,width));
+  recordEditorSize.height=Math.max(Math.min(320,maxHeight),Math.min(maxHeight,height));
+}
+function resizeRecord(event:PointerEvent) {
+  if(event.button!==0)return;
+  event.preventDefault();stopRecordResize?.();
+  const handle=event.currentTarget as HTMLElement,dialog=handle.closest('.grid-record-dialog')!;
+  const bounds=dialog.getBoundingClientRect(),x=event.clientX,y=event.clientY;
+  handle.setPointerCapture(event.pointerId);
+  const move=(next:PointerEvent)=>setRecordSize(bounds.width+2*(next.clientX-x),bounds.height+next.clientY-y);
+  const finish=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',finish);handle.removeEventListener('lostpointercapture',finish);stopRecordResize=undefined;};
+  stopRecordResize=finish;handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',finish);handle.addEventListener('lostpointercapture',finish);
+}
+function resizeRecordByKey(event:KeyboardEvent) {
+  const delta=event.shiftKey?40:16;
+  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;
+  event.preventDefault();setRecordSize(recordEditorSize.width+(event.key==='ArrowRight'?delta:event.key==='ArrowLeft'?-delta:0),recordEditorSize.height+(event.key==='ArrowDown'?delta:event.key==='ArrowUp'?-delta:0));
+}
+watch(recordEditor,editor=>{if(!editor)stopRecordResize?.();});
 async function saveRecordEditor() {
   const editor=recordEditor.value;if(!editor||saving.value)return;
   try {
@@ -367,18 +390,19 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
       </table>
       <div v-if="!rows.length" class="empty-grid"><Icon icon="lucide:database-zap" /><span>没有数据</span></div>
     </div>
-    <WorkbenchModal v-if="recordEditor" visible :width="860" :footer="false" hide-title :closable="false" :mask-closable="false" :modal-style="{maxWidth:'calc(100vw - 32px)'}" :body-style="{padding:'0',maxHeight:'none',overflow:'hidden'}" @cancel="!saving && (recordEditor=undefined)">
+    <WorkbenchModal v-if="recordEditor" visible :width="recordEditorSize.width" :top="32" :align-center="false" :footer="false" hide-title :closable="false" :mask-closable="false" :modal-style="{maxWidth:'calc(100vw - 32px)',height:`min(${recordEditorSize.height}px,calc(100dvh - 64px))`}" :body-style="{padding:'0',height:'100%',maxHeight:'none',overflow:'hidden'}" @cancel="!saving && (recordEditor=undefined)">
       <section class="grid-value-dialog grid-record-dialog" role="dialog" :aria-label="recordEditable?'编辑记录':'查看记录'">
         <header><strong>{{ recordEditable?'编辑记录':'查看记录' }}</strong><span>第 {{ recordEditor.row+1 }} 条 · {{ columns.length }} 个字段</span></header>
         <p v-if="error" role="alert" class="grid-error">{{ error }}</p>
         <div class="grid-record-fields">
           <div v-for="column in columns" :key="column.name" class="grid-record-field">
             <div class="grid-record-label"><strong>{{ column.name }}</strong><small>{{ columnType(column) }}<template v-if="primaryKey.includes(column.name)"> · 主键只读</template><template v-else-if="!canEdit(column.name)"> · 只读</template></small></div>
-            <div class="grid-record-input"><CellValueInput v-model="recordEditor.fields[column.name].value" :column="column" :label="`记录字段 ${column.name}`" :disabled="recordEditor.fields[column.name].nullValue||!canEdit(column.name)||saving" /><WorkbenchCheckbox v-model="recordEditor.fields[column.name].nullValue" :disabled="!canEdit(column.name)||column.nullable===false||saving" :aria-label="`${column.name} 设为数据库 NULL`">NULL</WorkbenchCheckbox></div>
+            <div class="grid-record-input"><CellValueInput v-model="recordEditor.fields[column.name].value" :column="column" :label="`记录字段 ${column.name}`" resizable :disabled="recordEditor.fields[column.name].nullValue||!canEdit(column.name)||saving" /><WorkbenchCheckbox v-model="recordEditor.fields[column.name].nullValue" :disabled="!canEdit(column.name)||column.nullable===false||saving" :aria-label="`${column.name} 设为数据库 NULL`">NULL</WorkbenchCheckbox></div>
           </div>
         </div>
         <p class="grid-value-hint">仅保存修改过的字段。空字符串与 NULL 分开保存，大整数和小数保留原始精度。</p>
         <footer><span class="grow" /><a-button :disabled="saving" @click="recordEditor=undefined">取消</a-button><a-button v-if="recordEditable" type="primary" :loading="saving" @click="saveRecordEditor">保存记录</a-button></footer>
+        <button type="button" class="grid-record-resize" aria-label="调整记录编辑窗口大小" title="拖动调整窗口大小；也可用方向键调整" @pointerdown="resizeRecord" @keydown="resizeRecordByKey"><Icon icon="lucide:move-diagonal" /></button>
       </section>
     </WorkbenchModal>
     <WorkbenchModal v-if="pastePreview" visible :width="760" :footer="false" hide-title :closable="false" :mask-closable="false" @cancel="pastePreview=undefined"><section class="grid-value-dialog" role="dialog" aria-label="确认粘贴数据"><header><strong>确认粘贴数据</strong><span>{{ pastePreview.edits.length }} 行 · {{ pastePreview.count }} 个单元格</span></header><p>将覆盖选中位置起的已有单元格。所有修改在同一事务中保存；失败时整体回滚。\N 表示 NULL，空白表示空字符串。</p><p v-if="error" role="alert" class="grid-error">{{ error }}</p><div class="grid-paste-preview"><table><thead><tr><th>记录</th><th>字段</th><th>原值</th><th>新值</th></tr></thead><tbody><template v-for="pasteEdit in pastePreview.edits.slice(0,30)" :key="pasteEdit.rowIndex"><tr v-for="(value,name) in pasteEdit.changes" :key="name"><td>{{ pasteEdit.rowIndex+1 }}</td><td>{{ name }}</td><td>{{ display(rows[pasteEdit.rowIndex]?.[name]) }}</td><td>{{ display(value) }}</td></tr></template></tbody></table></div><footer><span>预览前 30 行，共 {{ pastePreview.edits.length }} 行</span><span class="grow" /><a-button :disabled="saving" @click="pastePreview=undefined">取消</a-button><a-button type="primary" :loading="saving" @click="applyPaste">确认并保存</a-button></footer></section></WorkbenchModal>
@@ -427,14 +451,18 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
 .grid-text-view { width:100%; resize:none; border:0; outline:0; font:13px/1.6 ui-monospace,monospace; white-space:pre; }
 .grid-value-dialog { padding:20px; }.grid-value-dialog header { display:flex; gap:12px; align-items:center; margin-bottom:16px; }.grid-value-dialog header span,.grid-value-hint { color:#8793a3; font-size:12px; }.grid-value-dialog footer { display:flex; gap:8px; align-items:center; margin-top:18px; }.grid-value-dialog :deep(.arco-checkbox) { margin-bottom:12px; }
 .grid-paste-preview { max-height:360px; overflow:auto; }.grid-paste-preview table { width:100%; border-collapse:collapse; font-size:12px; }.grid-paste-preview th,.grid-paste-preview td { padding:6px; border:1px solid #e2e7ef; white-space:pre-wrap; overflow-wrap:anywhere; max-width:240px; }
-.grid-record-dialog { display:flex; flex-direction:column; max-height:calc(100dvh - 160px); box-sizing:border-box; }
-.grid-record-fields { min-height:0; overflow:auto; border-top:1px solid var(--color-border-2); }
+.grid-record-dialog { position:relative; display:flex; flex-direction:column; height:100%; min-height:0; box-sizing:border-box; font-size:12px; }
+.grid-record-dialog :deep(.arco-input-wrapper),.grid-record-dialog :deep(.arco-input-wrapper .arco-input),.grid-record-dialog :deep(.arco-textarea-wrapper),.grid-record-dialog :deep(.arco-textarea-wrapper .arco-textarea),.grid-record-dialog :deep(.arco-select),.grid-record-dialog :deep(.arco-select-view-value),.grid-record-dialog :deep(.arco-checkbox .arco-checkbox-label),.grid-record-dialog :deep(.arco-btn) { font-size:12px; }
+.grid-record-dialog header span,.grid-record-dialog .grid-value-hint { font-size:10px; }
+.grid-record-fields { flex:1; min-height:0; overflow:auto; border-top:1px solid var(--color-border-2); }
 .grid-record-field { display:grid; grid-template-columns:180px minmax(0,1fr); gap:16px; padding:12px 4px; border-bottom:1px solid var(--color-border-2); }
 .grid-record-label { min-width:0; overflow-wrap:anywhere; }.grid-record-label small { display:block; margin-top:5px; color:var(--color-text-3); }
 .grid-record-input { min-width:0; display:flex; align-items:flex-start; gap:12px; }.grid-record-input>:first-child { flex:1; min-width:0; }
 .grid-record-input :deep(.arco-checkbox) { flex:none; margin:5px 0 0; }
 .grid-record-dialog header,.grid-record-dialog footer,.grid-record-dialog>.grid-value-hint,.grid-record-dialog>.grid-error { flex:none; }
-@media(max-width:600px){.grid-record-field{grid-template-columns:minmax(0,1fr);gap:8px}.grid-record-dialog{padding:14px;max-height:calc(100dvh - 48px)}}
+.grid-record-resize { position:absolute; right:2px; bottom:2px; display:grid; place-items:center; width:18px; height:18px; padding:0; border:0; color:var(--color-text-3); background:transparent; cursor:nwse-resize; touch-action:none; }
+.grid-record-resize svg { width:14px; height:14px; }.grid-record-resize:focus-visible { outline:2px solid rgb(var(--primary-6)); }
+@media(max-width:600px){.grid-record-field{grid-template-columns:minmax(0,1fr);gap:8px}.grid-record-dialog{padding:14px}}
 @media print {
   .grid-tools,.grid-error { display:none; }
   .editable-grid-frame { display:block; height:auto; overflow:visible; border:0; }

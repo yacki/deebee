@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { columnType, enumOptions, isBinary, type CellColumn } from '../cellValues';
-const props = defineProps<{ modelValue: string; column: CellColumn; disabled?: boolean; label: string; compact?: boolean }>();
+const props = defineProps<{ modelValue: string; column: CellColumn; disabled?: boolean; label: string; compact?: boolean; resizable?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 const options = computed(() => enumOptions(props.column));
 const kind = computed(() => columnType(props.column));
@@ -11,6 +11,9 @@ const hint = computed(() => isBinary(props.column) ? '0x 开头的十六进制�
 </script>
 <template>
   <WorkbenchSelect v-if="options.length || boolean" :model-value="modelValue" :aria-label="label" :disabled="disabled" @update:model-value="emit('update:modelValue', String($event))"><a-option v-if="boolean" value="1">true / 1</a-option><a-option v-if="boolean" value="0">false / 0</a-option><a-option v-for="option in options" :key="option" :value="option">{{ option }}</a-option></WorkbenchSelect>
-  <a-textarea v-else-if="multiline" :model-value="modelValue" :textarea-attrs="{'aria-label':label}" :disabled="disabled" :placeholder="hint" :auto-size="{minRows:6,maxRows:18}" @update:model-value="emit('update:modelValue', $event)" />
+  <a-textarea v-else-if="multiline" :class="{'resizable-value':resizable}" :model-value="modelValue" :textarea-attrs="{'aria-label':label}" :disabled="disabled" :placeholder="hint" :auto-size="resizable?false:{minRows:6,maxRows:18}" @update:model-value="emit('update:modelValue', $event)" />
   <WorkbenchInput v-else :model-value="modelValue" :aria-label="label" :disabled="disabled" :placeholder="hint" @update:model-value="emit('update:modelValue', String($event))" />
 </template>
+<style scoped>
+.resizable-value :deep(textarea) { resize:both; height:140px; min-height:80px; max-height:70dvh; min-width:min(200px,100%); max-width:100%; overflow:auto; }
+</style>
