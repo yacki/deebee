@@ -8,6 +8,13 @@ export type SqlCompletionContext = {
   references: SqlTableReference[];
   qualifier?: string;
   tableContext: boolean;
+  position: "statement" | "table" | "clause" | "expression" | "none";
+  clause: string;
+  previous: string;
+  prefix: string;
+  replaceStart: number;
+  replaceEnd: number;
+  quoted: boolean;
 };
 
 type TokenKind = "word" | "identifier" | "string" | "number" | "symbol";
@@ -29,10 +36,11 @@ const CLAUSE_KEYWORDS = new Set([
 function isWordStart(char: string) { return /[A-Za-z_$\u0080-\uFFFF]/.test(char); }
 function isWordPart(char: string) { return /[A-Za-z0-9_$\u0080-\uFFFF]/.test(char); }
 
-function tokenize(sql: string): { tokens: Token[]; cursorDepth: number } {
+function tokenize(sql: string): { tokens: Token[]; cursorDepth: number; suppressed: boolean } {
   const tokens: Token[] = [];
   let index = 0;
   let depth = 0;
+  let suppressed = false;
   while (index < sql.length) {
     const char = sql[index];
     const next = sql[index + 1];
@@ -40,20 +48,24 @@ function tokenize(sql: string): { tokens: Token[]; cursorDepth: number } {
     if ((char === "-" && next === "-") || char === "#") {
       index += char === "#" ? 1 : 2;
       while (index < sql.length && sql[index] !== "\n") index += 1;
+      suppressed = index === sql.length;
       continue;
     }
     if (char === "/" && next === "*") {
       const end = sql.indexOf("*/", index + 2);
+      suppressed = end < 0;
       index = end < 0 ? sql.length : end + 2;
       continue;
     }
     if (char === "'") {
       const start = index++;
+      let closed = false;
       while (index < sql.length) {
         if (sql[index] === "\\") { index += 2; continue; }
         if (sql[index] === "'" && sql[index + 1] === "'") { index += 2; continue; }
-        if (sql[index++] === "'") break;
+        if (sql[index++] === "'") { closed = true; break; }
       }
+      suppressed = !closed;
       tokens.push({ value: sql.slice(start, index), upper: "", kind: "string", start, end: index, depth });
       continue;
     }
@@ -61,13 +73,14 @@ function tokenize(sql: string): { tokens: Token[]; cursorDepth: number } {
       const marker = sql.slice(index).match(/^\$(?:[A-Za-z_][\w$]*)?\$/)?.[0];
       if (marker) {
         const start = index; const end = sql.indexOf(marker, index + marker.length);
+        suppressed = end < 0;
         index = end < 0 ? sql.length : end + marker.length;
         tokens.push({ value: sql.slice(start, index), upper: "", kind: "string", start, end: index, depth });
         continue;
       }
     }
-    if (char === "`" || char === '"') {
-      const quote = char; const start = index++; let value = "";
+    if (char === "`" || char === '"' || char === "[") {
+      const quote = char === "[" ? "]" : char; const start = index++; let value = "";
       while (index < sql.length) {
         if (sql[index] === quote && sql[index + 1] === quote) { value += quote; index += 2; continue; }
         if (sql[index] === quote) { index += 1; break; }
@@ -95,11 +108,11 @@ function tokenize(sql: string): { tokens: Token[]; cursorDepth: number } {
     if (char === "(") depth += 1;
     index += 1;
   }
-  return { tokens, cursorDepth: depth };
+  return { tokens, cursorDepth: depth, suppressed };
 }
 
 function identifier(token?: Token) {
-  return token && (token.kind === "word" || token.kind === "identifier") && !RESERVED.has(token.upper);
+  return token && (token.kind === "identifier" || (token.kind === "word" && !RESERVED.has(token.upper)));
 }
 
 function readReference(tokens: Token[], start: number, depth: number): { reference?: SqlTableReference; next: number; derived: boolean } {
@@ -163,26 +176,62 @@ export function currentSqlBeforeCursor(sql: string, offset: number) {
   return before.slice(start);
 }
 
-export function completionContext(sqlBeforeCursor: string): SqlCompletionContext {
-  const { tokens, cursorDepth } = tokenize(sqlBeforeCursor);
-  const sameDepth = tokens.filter(token => token.depth === cursorDepth);
-  const { references } = referencesAtDepth(tokens, cursorDepth);
-  let qualifier: string | undefined;
-  const last = sameDepth.at(-1);
-  const previous = sameDepth.at(-2);
-  const third = sameDepth.at(-3);
-  if (last?.value === "." && identifier(previous)) qualifier = previous!.value;
-  else if (identifier(last) && previous?.value === "." && identifier(third)) qualifier = third!.value;
+export function completionContext(sql: string, offset = sql.length): SqlCompletionContext {
+  const before = currentSqlBeforeCursor(sql, offset);
+  const start = offset - before.length;
+  const { tokens: beforeTokens, cursorDepth, suppressed } = tokenize(before);
+  const statement = tokenize(sql.slice(start)).tokens;
+  const end = statement.find(token => token.value === ";" && token.depth === 0 && token.start >= before.length)?.start ?? sql.length - start;
+  const tokens = statement.filter(token => token.start < end);
+  const last = beforeTokens.at(-1);
+  const editingWord = last?.end === before.length && (last.kind === "word" || last.kind === "identifier");
+  const quoted = Boolean(editingWord && last.kind === "identifier");
+  const prefix = editingWord ? last.value : "";
+  const fullWord = editingWord ? tokens.find(token => token.start === last.start) : undefined;
+  const closingQuote = fullWord && fullWord.end > fullWord.start + 1 && ["`", '"', "]"].includes(sql[start + fullWord.end - 1]);
+  const replaceStart = editingWord ? start + last.start + (quoted ? 1 : 0) : offset;
+  const replaceEnd = fullWord ? start + fullWord.end - (quoted && closingQuote ? 1 : 0) : offset;
+  const structural = editingWord ? beforeTokens.slice(0, -1) : beforeTokens;
 
-  let boundary = -1;
-  for (let index = sameDepth.length - 1; index >= 0; index -= 1) {
-    const token = sameDepth[index];
-    if (SOURCE_KEYWORDS.has(token.upper) || CLAUSE_KEYWORDS.has(token.upper) || token.value === "," || token.upper === "SELECT") { boundary = index; break; }
+  // Find the enclosing query, skipping function parentheses and sibling subqueries.
+  let scope: Token[] = [];
+  let depth = cursorDepth;
+  const opens: Token[] = [];
+  for (const token of beforeTokens) {
+    if (token.value === "(") opens.push(token);
+    if (token.value === ")") opens.pop();
   }
-  const boundaryToken = sameDepth[boundary];
-  const tail = sameDepth.slice(boundary + 1);
-  const tableContext = Boolean(boundaryToken && (SOURCE_KEYWORDS.has(boundaryToken.upper) || boundaryToken.value === ",") && tail.every(token => identifier(token) || token.value === "."));
-  return { references, qualifier, tableContext };
+  for (; depth >= 0; depth--) {
+    const opening = opens.find(token => token.depth === depth - 1);
+    const lower = opening?.end ?? 0;
+    const upper = tokens.find(token => token.start >= before.length && token.value === ")" && token.depth === depth - 1)?.start ?? end;
+    const atDepth = tokens.filter(token => token.depth === depth && token.start >= lower && token.start < upper);
+    const previousUnion = atDepth.filter(token => ["UNION", "EXCEPT", "INTERSECT"].includes(token.upper) && token.start < before.length).at(-1)?.end ?? lower;
+    const nextUnion = atDepth.find(token => ["UNION", "EXCEPT", "INTERSECT"].includes(token.upper) && token.start >= before.length)?.start ?? upper;
+    scope = tokens.filter(token => token.start >= previousUnion && token.start < nextUnion);
+    if (scope.some(token => token.depth === depth && ["SELECT", "UPDATE", "INSERT", "DELETE"].includes(token.upper))) break;
+  }
+  depth = Math.max(0, depth);
+  const { references } = referencesAtDepth(scope, depth);
+  const scopeStarts = new Set(scope.map(token => token.start));
+  const sameDepth = structural.filter(token => token.depth === depth && scopeStarts.has(token.start));
+  const tail = structural.at(-1);
+  const qualifier = tail?.value === "." && identifier(structural.at(-2)) ? structural.at(-2)!.value : undefined;
+  const boundary = sameDepth.findLastIndex(token => SOURCE_KEYWORDS.has(token.upper) || CLAUSE_KEYWORDS.has(token.upper) || token.upper === "SELECT");
+  const clause = sameDepth[boundary]?.upper ?? "";
+  const clauseTail = sameDepth.slice(boundary + 1);
+  const comma = clauseTail.findLastIndex(token => token.value === ",");
+  const sourceTail = comma < 0 ? clauseTail : clauseTail.slice(comma + 1);
+  // A completed table (and optional alias) ends the table slot. Only an empty
+  // slot or a namespace followed by '.' still expects a table name.
+  const tableContext = SOURCE_KEYWORDS.has(clause) && (sourceTail.length === 0 ||
+    (sourceTail.at(-1)?.value === "." && sourceTail.every(token => identifier(token) || token.value === ".")));
+  let position: SqlCompletionContext["position"] = "expression";
+  if (suppressed) position = "none";
+  else if (tableContext) position = "table";
+  else if (!sameDepth.length) position = "statement";
+  else if (SOURCE_KEYWORDS.has(clause) && !qualifier) position = "clause";
+  return { references, qualifier, tableContext, position, clause, previous: tail?.upper ?? "", prefix, replaceStart, replaceEnd, quoted };
 }
 
 export function splitSqlStatements(sql: string) {

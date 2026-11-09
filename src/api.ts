@@ -36,8 +36,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function download(path: string, filename: string) {
-  const response = await fetch(path, { headers: { Authorization: `Bearer ${authToken()}` } });
+export async function download(path: string, filename: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${authToken()}`);
+  if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  const response = await fetch(path, { ...init, headers });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.error?.message || "下载失败");
   const url = URL.createObjectURL(await response.blob());
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click();

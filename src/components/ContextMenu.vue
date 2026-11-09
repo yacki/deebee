@@ -1,49 +1,39 @@
 <script setup lang="ts">
-import { Icon } from "@iconify/vue";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { MenuItem, MenuState } from "../types";
-
-const props = defineProps<{ menu: MenuState | null }>();
-const emit = defineEmits<{ close: [] }>();
-const root = ref<HTMLElement>();
-const active = ref(-1);
-const submenu = ref<string>();
-const position = computed(() => ({ left: `${Math.min(props.menu?.x || 0, innerWidth - 306)}px`, top: `${Math.min(props.menu?.y || 0, innerHeight - 420)}px` }));
-const enabledItems = computed(() => props.menu?.items.filter(item => !item.separator && !item.disabled) || []);
-
-watch(() => props.menu, async () => { active.value = -1; submenu.value = undefined; await nextTick(); root.value?.focus(); });
-function closeOutside(event: PointerEvent) { if (props.menu && !root.value?.contains(event.target as Node)) emit("close"); }
-function key(event: KeyboardEvent) {
-  if (!props.menu) return;
-  if (event.key === "Escape") return emit("close");
-  if (event.key === "ArrowDown") { event.preventDefault(); active.value = (active.value + 1) % Math.max(1, enabledItems.value.length); }
-  if (event.key === "ArrowUp") { event.preventDefault(); active.value = active.value <= 0 ? enabledItems.value.length - 1 : active.value - 1; }
-  if (event.key === "Enter") void activate(enabledItems.value[active.value]);
-}
-async function activate(item?: MenuItem) {
-  if (!item || item.disabled) return;
-  if (item.children?.length) { submenu.value = submenu.value === item.id ? undefined : item.id; return; }
-  emit("close"); await item.action?.();
-}
-onMounted(() => document.addEventListener("pointerdown", closeOutside, true));
-onBeforeUnmount(() => document.removeEventListener("pointerdown", closeOutside, true));
+import { Icon } from '@iconify/vue';
+import { computed, onBeforeUnmount, onMounted, watch, nextTick, ref } from 'vue';
+import type { MenuItem, MenuState } from '../types';
+const props=defineProps<{menu:MenuState|null}>();
+const emit=defineEmits<{close:[]}>();
+const anchor=ref<HTMLElement>();
+const popupHeight=ref(Math.max(120,window.innerHeight-24));
+const viewportWidth=ref(window.innerWidth);
+const anchorPosition=computed(()=>{
+  const height=Math.min((props.menu?.items||[]).reduce((sum,item)=>sum+(item.separator?9:36),0),popupHeight.value)+10;
+  return {left:`${Math.max(8,Math.min(props.menu?.x||0,viewportWidth.value-288))}px`,top:`${Math.max(8,Math.min(props.menu?.y||0,window.innerHeight-height-8))}px`};
+});
+function resize(){popupHeight.value=Math.max(120,window.innerHeight-24);viewportWidth.value=window.innerWidth;}
+async function activate(item:MenuItem){if(item.disabled)return;emit('close');await item.action?.();}
+function escape(event:KeyboardEvent){if(event.key==='Escape')emit('close');}
+watch(()=>props.menu,()=>void nextTick(()=>anchor.value?.focus()));
+window.addEventListener('keydown',escape);
+onMounted(()=>window.addEventListener('resize',resize));
+onBeforeUnmount(()=>{window.removeEventListener('keydown',escape);window.removeEventListener('resize',resize);});
 </script>
-
 <template>
-  <div v-if="menu" ref="root" class="context-menu" :style="position" role="menu" :aria-label="menu.title" tabindex="-1" @keydown="key">
-    <template v-for="item in menu.items" :key="item.id">
-      <div v-if="item.separator" class="menu-separator" />
-      <div v-else class="menu-slot" @mouseenter="active = enabledItems.findIndex(enabled => enabled.id === item.id); submenu = item.children ? item.id : undefined">
-        <button role="menuitem" :class="{ active: enabledItems[active]?.id === item.id, danger: item.danger }" :disabled="item.disabled" @click="activate(item)">
-          <Icon :icon="item.icon || 'lucide:circle'" class="menu-icon" />
-          <span>{{ item.label }}</span><kbd>{{ item.shortcut }}</kbd><Icon v-if="item.children" icon="lucide:chevron-right" />
-        </button>
-        <div v-if="item.children && submenu === item.id" class="context-submenu" role="menu">
-          <button v-for="child in item.children" :key="child.id" role="menuitem" :class="{ danger: child.danger }" @click="activate(child)">
-            <Icon :icon="child.icon || 'lucide:circle'" class="menu-icon" /><span>{{ child.label }}</span><kbd>{{ child.shortcut }}</kbd>
-          </button>
-        </div>
+  <a-dropdown v-if="menu" :key="`${menu.x}:${menu.y}`" :popup-visible="true" :popup-max-height="popupHeight" popup-class="workbench-context-popup" animation-name="" trigger="click" position="bl" @popup-visible-change="visible=>{if(!visible)emit('close')}">
+    <span ref="anchor" tabindex="-1" class="context-menu-anchor" :style="anchorPosition" />
+    <template #content>
+      <div class="workbench-context-menu" role="menu" :aria-label="menu.title">
+        <template v-for="item in menu.items" :key="item.id">
+          <a-divider v-if="item.separator" :margin="4" />
+          <a-dsubmenu v-else-if="item.children" trigger="hover" popup-class="workbench-context-popup" animation-name="" :option-props="{role:'menuitem','aria-label':item.label,tabindex:0,'aria-haspopup':'menu','aria-disabled':!!item.disabled}" :disabled="item.disabled" :value="item.id"><template #default><Icon :icon="item.icon||'lucide:folder'" /> {{ item.label }}</template><template #content><a-doption v-for="child in item.children" :key="child.id" role="menuitem" tabindex="0" :disabled="child.disabled" @keydown.enter.prevent="activate(child)" @keydown.space.prevent="activate(child)" @click="activate(child)"><Icon :icon="child.icon||'lucide:circle'" /> {{ child.label }}</a-doption></template></a-dsubmenu>
+          <a-doption v-else role="menuitem" :aria-label="item.label" tabindex="0" :disabled="item.disabled" :class="{'danger-action':item.danger}" @keydown.enter.prevent="activate(item)" @keydown.space.prevent="activate(item)" @click="activate(item)"><Icon :icon="item.icon||'lucide:circle'" /><span>{{ item.label }}</span><kbd v-if="item.shortcut">{{ item.shortcut }}</kbd></a-doption>
+        </template>
       </div>
     </template>
-  </div>
+  </a-dropdown>
 </template>
+<style scoped>
+.context-menu-anchor{position:fixed;width:0;height:0;pointer-events:none;outline:none}.workbench-context-menu{width:278px}.workbench-context-menu :deep(.arco-dropdown-option-content){display:flex;align-items:center;gap:9px}.workbench-context-menu :deep(svg){width:16px;height:16px;flex:none}.workbench-context-menu kbd{margin-left:auto;color:var(--color-text-3);font:11px ui-monospace,monospace}.workbench-context-menu :deep(.danger-action){color:rgb(var(--danger-6))}
+:global(.workbench-context-popup .arco-dropdown-option-content){display:flex;align-items:center;gap:9px}:global(.workbench-context-popup .arco-dropdown-option-content>svg){width:16px;height:16px;flex:none}
+</style>

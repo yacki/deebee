@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
-from fastapi import APIRouter, Depends, FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Query
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from ..config import settings
 from ..security import verify_token
 from .auth import PASSWORDS
+from .approvals import Decision, RuleChange, TEMPLATES
 from .executions import ExecutionManager
 from .models import AccessError, AuthContext, ExecutionInput, KINDS, SCOPES
 from .operations import KubernetesInput, SSHInspectInput
@@ -38,7 +39,7 @@ def headers_for(request: Request) -> dict:
     return {k: request.headers[k] for k in ("authorization", "x-deebee-api-key", "x-deebee-identity-source") if k in request.headers}
 
 
-def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
+def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None, session_handlers=None):
     store = AccessStore(directory or Path(os.getenv("DEEBEE_ACCESS_DIR", str(settings.connections_file.parent / "access-v1"))))
     service = AccessService(store)
     if legacy is not None:
@@ -119,18 +120,105 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
             if session["expires"] <= time.time():
                 browser_sessions.pop(cookie, None)
                 raise AccessError("TOKEN_EXPIRED", "OIDC 会话已到期，请重新登录", 401)
-            if request.method not in {"GET", "HEAD", "OPTIONS"} and not secrets.compare_digest(request.headers.get("x-csrf-token", ""), session["csrf"]):
+            if getattr(request, "method", "GET") not in {"GET", "HEAD", "OPTIONS"} and not secrets.compare_digest(request.headers.get("x-csrf-token", ""), session["csrf"]):
                 raise AccessError("CSRF_REJECTED", "会话校验失败", 403)
             ctx = await service.auth.authenticate(session["headers"])
         else:
             ctx = await service.auth.authenticate(headers, session_token=cookie, allow_session=True)
-            if cookie and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            if cookie and getattr(request, "method", "GET") not in {"GET", "HEAD", "OPTIONS"}:
                 service.auth.csrf(cookie, request.headers.get("x-csrf-token", ""))
-        service.auth.rate("request:" + ctx.credential_id, 240)
+        if request.scope["type"] == "http":
+            service.auth.rate("request:" + ctx.credential_id, 240)
         set_context_identity(request, ctx)
         return ctx
 
+    if session_handlers:
+        from .sessions import install_sessions
+        install_sessions(app, service, context, session_handlers, public_url)
+
+    from ..ai import install_ai
+    install_ai(app, service, admin, context)
+
     management = APIRouter(prefix="/api/admin/v1", dependencies=[Depends(admin)])
+
+    @management.get("/approval-templates")
+    async def approval_templates():
+        return {"items": TEMPLATES}
+
+    @management.get("/approval-rules")
+    async def approval_rules():
+        return {"items": service.approvals.rules()}
+
+    @management.post("/approval-rules", status_code=201)
+    async def create_approval_rule(body: RuleChange, actor: str = Depends(admin)):
+        return service.approvals.save(body.model_dump(exclude={"expected_version"}), actor)
+
+    @management.patch("/approval-rules/{rule_id}")
+    async def update_approval_rule(rule_id: str, body: dict, actor: str = Depends(admin)):
+        return service.approvals.save(body, actor, rule_id)
+
+    @management.delete("/approval-rules/{rule_id}")
+    async def delete_approval_rule(rule_id: str, body: dict, actor: str = Depends(admin)):
+        return service.approvals.delete(rule_id, body.get("expected_version"), actor)
+
+    @management.get("/approvals")
+    async def approvals(status: str = "", resource_id: str = "", owner: str = "",
+                        offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):
+        clauses = ["json_extract(body,'$.approval') IS NOT NULL"]
+        params: list[Any] = []
+        for field, value in (("status", status), ("resource_id", resource_id), ("owner", owner)):
+            if value:
+                clauses.append(f"json_extract(body,'$.{field}')=?")
+                params.append(value)
+        where = " AND ".join(clauses)
+        with store.lock:
+            total = store.db.execute("SELECT count(*) FROM executions WHERE " + where, params).fetchone()[0]
+            rows = store.db.execute("SELECT id FROM executions WHERE " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()
+        return {"items": [executions.get_body(row[0]) for row in rows], "total": total}
+
+    @management.post("/approvals/{execution_id}/decision")
+    async def approval_decision(execution_id: str, body: Decision, actor: str = Depends(admin)):
+        return await executions.decide(execution_id, body, actor)
+
+    from ..recordings import RecordingStore
+    from ..mysql import DeeBeeError
+    app.state.recordings = RecordingStore(
+        Path(os.getenv('DEEBEE_RECORDINGS_DIR', str(settings.connections_file.parent / 'recordings'))),
+        quota=int(os.getenv('DEEBEE_RECORDINGS_QUOTA_MB', '5120')) * 1024**2,
+        session_limit=int(os.getenv('DEEBEE_RECORDINGS_SESSION_MB', '128')) * 1024**2,
+        retention_days=int(os.getenv('DEEBEE_RECORDINGS_RETENTION_DAYS', '30')),
+    )
+
+    @management.get('/session-recordings')
+    async def session_recordings(protocol: str = '', q: str = Query(default='', max_length=200),
+                                 status: str = '', after: float = 0, before: float = 0,
+                                 offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):
+        return await asyncio.to_thread(app.state.recordings.list, protocol=protocol, q=q, status=status,
+                                       after=after, before=before, offset=offset, limit=limit)
+
+    def saved_recording(recording_id: str):
+        try:
+            row = app.state.recordings.get(recording_id)
+        except DeeBeeError:
+            raise AccessError('NOT_FOUND', '录像不存在或已过期', 404)
+        if row['status'] == 'recording':
+            raise AccessError('RECORDING_ACTIVE', '会话仍在录制，请结束会话后回放', 409)
+        if not row['stored_bytes']:
+            raise AccessError('RECORDING_EMPTY', '此会话未产生可回放内容', 409)
+        return row
+
+    @management.get('/session-recordings/{recording_id}/content')
+    async def recording_content(recording_id: str):
+        saved_recording(recording_id)
+        return StreamingResponse(app.state.recordings.content(recording_id), media_type='application/octet-stream',
+                                 headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+    @management.get('/session-recordings/{recording_id}/download')
+    async def recording_download(recording_id: str):
+        row = saved_recording(recording_id)
+        extension = 'cast' if row['protocol'] == 'ssh' else 'guac'
+        return FileResponse(app.state.recordings.path(recording_id), media_type='application/gzip',
+                            filename=f"{recording_id}.{extension}.gz", headers={'Cache-Control': 'no-store'})
 
     @management.get("/legacy-connections/preview")
     async def legacy_preview():
@@ -230,12 +318,12 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
 
     # Configuration names in the public API remain descriptive; storage uses short internal names.
     names = {"identity-sources": "sources", "identity-bindings": "bindings", "access-grants": "grants",
-             "principals": "principals", "resources": "resources", "accounts": "accounts"}
+             "principals": "principals", "roles": "roles", "role-memberships": "memberships", "resources": "resources", "accounts": "accounts", "approval-rules": "approval_rules"}
 
     @management.get("/access-config/export")
     async def export_config(actor: str = Depends(admin)):
         store.audit(actor, "config.export", "access")
-        return {"version": 1, **{name: [public_entity(v) for v in store.list(kind) if not v.get("deleted_at")] for name, kind in names.items()}}
+        return {"version": 2, **{name: [public_entity(v) for v in store.list(kind) if not v.get("deleted_at")] for name, kind in names.items()}}
 
     @management.post("/access-config/import-preview")
     async def import_preview(body: dict, actor: str = Depends(admin)):
@@ -246,6 +334,60 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     async def import_config(body: dict, actor: str = Depends(admin)):
         from .configuration import import_configuration
         return await import_configuration(service, body, actor, preview=False)
+
+    @management.post("/roles/{role_id}/members")
+    async def assign_members(role_id: str, body: dict, actor: str = Depends(admin)):
+        return await service.assign_members(role_id, body, actor)
+
+    @management.get("/roles/{role_id}/activities")
+    async def role_activities(role_id: str, before: int | None = None):
+        store.get("roles", role_id)
+        ids = [role_id] + [item["id"] for kind in ("memberships", "grants") for item in store.list(kind) if item.get("role_id") == role_id]
+        items = store.audits(100, before, object_ids=ids)
+        return {"items": items, "next_before": items[-1]["id"] if len(items) == 100 else None}
+
+    @management.post("/role-memberships/batch")
+    async def batch_memberships(body: dict, actor: str = Depends(admin)):
+        from .models import Membership, Model
+        from pydantic import Field
+
+        class Change(Membership):
+            expected_version: int | None = None
+
+        class Batch(Model):
+            changes: list[Change] = Field(min_length=1, max_length=500)
+
+        changes = Batch.model_validate(body).changes
+        with store.transaction():
+            items = []
+            for change in changes:
+                old = next((m for m in store.list("memberships") if m["role_id"] == change.role_id and m["principal_id"] == change.principal_id), None)
+                fields = change.model_dump()
+                if not old:
+                    fields.pop("expected_version")
+                items.append(await service.save("memberships", fields, actor, old["id"] if old else None))
+        return {"items": items}
+
+    @management.post("/roles/{role_id}/clone", status_code=201)
+    async def clone_role(role_id: str, body: dict, actor: str = Depends(admin)):
+        return await service.clone_role(role_id, body, actor)
+
+    @management.delete("/roles/{role_id}")
+    async def delete_role(role_id: str, body: dict, actor: str = Depends(admin)):
+        return service.delete_role(role_id, body, actor)
+
+    @management.post("/access-grants/batch", status_code=201)
+    async def batch_grants(body: dict, actor: str = Depends(admin)):
+        from .models import Grant, Model
+        from pydantic import Field
+
+        class Batch(Model):
+            grants: list[Grant] = Field(min_length=1, max_length=100)
+
+        batch = Batch.model_validate(body)
+        with store.transaction():
+            items = [await service.save("grants", grant.model_dump(), actor) for grant in batch.grants]
+        return {"items": items}
 
     @management.get("/{collection}")
     async def list_entities(collection: str):
@@ -314,8 +456,8 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
         return service.projected(ctx, resource_id)
 
     @data.get("/resources/{resource_id}/schema")
-    async def schema(resource_id: str, mode: str = "normal", cursor: str = "", table: str = "", ctx: AuthContext = Depends(context)):
-        return await executions.schema(ctx, resource_id, mode, cursor, table)
+    async def schema(resource_id: str, mode: str = "normal", cursor: str = "", table: str = "", access_option_id: str = "", ctx: AuthContext = Depends(context)):
+        return await executions.schema(ctx, resource_id, mode, cursor, table, access_option_id)
 
     @data.post("/ssh/executions", status_code=202)
     async def ssh(body: ExecutionInput, ctx: AuthContext = Depends(context)):
@@ -344,6 +486,13 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     @data.get("/executions/{execution_id}")
     async def execution(execution_id: str, cursor: str = "", ctx: AuthContext = Depends(context)):
         return executions.get(ctx, execution_id, cursor)
+
+    @data.get("/executions")
+    async def own_executions(ctx: AuthContext = Depends(context)):
+        with store.lock:
+            rows = store.db.execute("SELECT body FROM executions WHERE owner=? AND binding_id=? ORDER BY created_at DESC LIMIT 100", (ctx.principal_id, ctx.binding_id)).fetchall()
+        import json
+        return {"items": [executions.public(json.loads(row[0])) for row in rows]}
 
     @data.post("/executions/{execution_id}/cancel")
     async def cancel(execution_id: str, ctx: AuthContext = Depends(context)):
@@ -458,15 +607,15 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
     text_prop = {"type": "string"}
     definitions = {
         "identity.me": ("返回经过验证的 DeeBee 系统账号与凭据上限。", {}),
-        "resources.list": ("列出获准 SSH/Linux、MySQL/PostgreSQL、Kubernetes 资源，包含 environment、project_groups、tags、namespace 和账号动作。不返回秘密。若宿主提供 operations Skill，在选择目标前加载其工作流。先发现真实资源，再按用户语义选择资源 ID；同名或环境不明确时询问用户，不按列表顺序猜测。继续读取 next_cursor 以免漏掉候选。", {"cursor": text_prop, "type": {"type": "string", "enum": ["", "ssh", "mysql", "postgresql", "k8s"], "description": "仅当用户明确指定资源协议类型时筛选；没有指定请省略，不能假设数据库是 MySQL。"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}),
+        "resources.list": ("列出获准 SSH/Linux、MySQL/PostgreSQL、Kubernetes 资源，包含 environment、project_groups、tags、namespace 和账号动作。不返回秘密。若宿主提供 operations Skill，在选择目标前加载其工作流。先发现真实资源，再按用户语义选择资源 ID；同名或环境不明确时询问用户，不按列表顺序猜测。继续读取 next_cursor 以免漏掉候选。", {"cursor": text_prop, "type": {"type": "string", "enum": ["", "ssh", "mysql", "postgresql", "k8s", "rdp"], "description": "仅当用户明确指定资源协议类型时筛选；没有指定请省略，不能假设数据库是 MySQL。"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}),
         "resources.get": ("读取一个获准资源的可用账号模式。", {"resource_id": text_prop}),
-        "db.schema": ("读取获准数据库的结构。", {"resource_id": text_prop, "mode": {"enum": ["normal", "privileged"]}, "cursor": text_prop, "table": text_prop}),
+        "db.schema": ("读取获准数据库的结构。", {"resource_id": text_prop, "mode": {"enum": ["normal", "privileged"]}, "cursor": text_prop, "table": text_prop, "access_option_id": text_prop}),
         "executions.get": ("查询自己的执行状态和分页结果。unknown 表示需核实远端状态，不能自动重放变更。", {"execution_id": text_prop, "cursor": text_prop}),
         "executions.cancel": ("请求终止自己的执行；不保证已提交修改回滚或 SSH 子进程停止。", {"execution_id": text_prop}),
     }
     for tool, desc in (("ssh.exec", "任意 SSH shell 命令（可能修改主机）。磁盘、inode、内存、进程、网络的只读 Linux 诊断请使用 ssh.inspect，无需调用本工具。显式 privileged 才使用已授权特权账号。"),
                        ("db.query", "以真正只读账号和只读事务执行受支持的单条 SELECT，使用命名参数。"),
-                       ("db.execute", "以已授权特权账号执行单条业务数据或表结构变更；可能产生不可逆修改，无逐次人工审批。")):
+                       ("db.execute", "以已授权特权账号执行单条业务数据或表结构变更；命中审批规则时返回 pending_approval，管理员通过前不会执行。通过后仍核验原授权；拒绝、过期或取消不得自动重提。")):
         schema = ExecutionInput.model_json_schema()
         properties = schema["properties"].copy()
         if tool == "ssh.exec":
@@ -477,7 +626,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
             properties.pop("command")
             properties.pop("elevation")
         properties["resource_id"]["description"] = "必须先 resources.list，使用返回的真实资源 id；不得把显示名称当 ID。"
-        definitions[tool] = (desc, properties)
+        definitions[tool] = (desc + " 命中管理员审批规则时返回 pending_approval，使用 executions.get 查看审批和执行结果；等待期间原命令尚未执行，不得换幂等键重复提交或绕过审核。" if tool == "ssh.exec" else desc, properties)
 
     for name, model, description in (
         ("ssh.inspect", SSHInspectInput, "SSH Linux 主机只读诊断，磁盘容量/inode、内存、进程、网络检查；disk df、memory free、processes ps、network ss/netstat、overview。使用固定检查，无任意 shell。先 resources.list 选准主机；返回 queued 后必须用 executions.get 等到终态并读取结果。"),
@@ -504,6 +653,8 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
                 required.append("command")
             elif name in {"db.query", "db.execute"}:
                 required.append("sql")
+            if "access_option_id" in properties:
+                properties["access_option_id"]["description"] = "使用 resources.list/get 返回的访问方式 ID；存在多个授权时必须指定，不得拼接不同用户组的账号与操作。"
             if "idempotency_key" in properties:
                 properties["idempotency_key"]["description"] = (
                     "标识一次逻辑提交。每次新的查询/检查（包括变更后的复查）使用新键；"
@@ -586,6 +737,7 @@ def install_access(app: FastAPI, directory: Path | None = None, *, legacy=None):
                 await asyncio.to_thread(app.state.connection_pool.sync)
                 pool_task = asyncio.create_task(reconcile_connections())
             store.recover_executions()
+            await asyncio.to_thread(app.state.recordings.recover)
             store.cleanup()
             await executions.start()
             async with manager.run():

@@ -4,20 +4,30 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { Icon } from "@iconify/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import "../remoteSessions.css";
 import { API_BASE, authToken } from "../api";
+import { createAccessSocket, type AccessSession } from '../accessSession';
+import SqlEditor from './SqlEditor.vue';
 
-const props = defineProps<{ profileId: string; title: string; active: boolean }>();
+const props = defineProps<{ profileId: string; title: string; active: boolean; access?: AccessSession }>();
 const emit = defineEmits<{ state: [value: "online" | "checking" | "offline"] }>();
 type SessionState = "connecting" | "connected" | "closed" | "error";
 
 const host = ref<HTMLElement>();
 const state = ref<SessionState>("connecting");
 const message = ref("");
+const aiDraftOpen = ref(false), aiDraft = ref(''), draftMessage = ref('');
+async function copyDraft() {
+  try { await navigator.clipboard.writeText(aiDraft.value); draftMessage.value = '已复制命令，可在终端粘贴并检查后执行'; }
+  catch { draftMessage.value = '复制失败，请在编辑器中选择并复制命令'; }
+}
 let terminal: Terminal | undefined;
 let fit: FitAddon | undefined;
 let socket: WebSocket | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let dataDisposable: { dispose: () => void } | undefined;
+let generation = 0;
+let disposed = false;
 
 function socketUrl() {
   const url = new URL(`${API_BASE}/connections/${encodeURIComponent(props.profileId)}/ssh`, window.location.href);
@@ -38,14 +48,23 @@ function resize() {
   send({ type: "resize", cols: terminal.cols, rows: terminal.rows });
 }
 
-function connect() {
+async function connect() {
+  const currentGeneration = ++generation;
   socket?.close();
   state.value = "connecting";
   message.value = "正在建立 SSH 会话";
   emit("state", "checking");
   terminal?.reset();
   terminal?.writeln("\x1b[38;5;75m正在连接 " + props.title + "…\x1b[0m");
-  socket = new WebSocket(socketUrl());
+  let url: string;
+  try {
+    url = props.access ? await createAccessSocket(props.access) : socketUrl();
+  } catch (e) {
+    if (disposed || currentGeneration !== generation) return;
+    state.value = 'error'; message.value = e instanceof Error ? e.message : '会话授权失败'; emit('state', 'offline'); return;
+  }
+  if (disposed || currentGeneration !== generation) return;
+  socket = new WebSocket(url);
   socket.onmessage = event => {
     const payload = JSON.parse(String(event.data)) as { type: string; state?: SessionState; data?: string; message?: string };
     if (payload.type === "data") terminal?.write(payload.data || "");
@@ -107,6 +126,7 @@ onMounted(async () => {
 
 watch(() => props.active, active => { if (active) nextTick(() => { resize(); terminal?.focus(); }); });
 onBeforeUnmount(() => {
+  disposed = true; generation += 1;
   send({ type: "close" });
   socket?.close();
   resizeObserver?.disconnect();
@@ -118,14 +138,23 @@ onBeforeUnmount(() => {
 <template>
   <section class="view remote-session ssh-session">
     <header class="remote-toolbar">
-      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span>{{ message }}</span></div>
+      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
-        <button @click="copySelection"><Icon icon="lucide:copy" />复制</button>
-        <button @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</button>
-        <button @click="terminal?.clear()"><Icon icon="lucide:eraser" />清屏</button>
-        <button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button>
+        <a-button type="text" :aria-expanded="aiDraftOpen" @click="aiDraftOpen=!aiDraftOpen"><Icon icon="lucide:sparkles" />自然语言写命令</a-button>
+        <a-button type="text" @click="copySelection"><Icon icon="lucide:copy" />复制</a-button>
+        <a-button type="text" @click="pasteClipboard"><Icon icon="lucide:clipboard-paste" />粘贴</a-button>
+        <a-button type="text" @click="terminal?.clear()"><Icon icon="lucide:eraser" />清屏</a-button>
+        <a-button type="text" @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</a-button>
       </nav>
     </header>
+    <section v-if="aiDraftOpen" class="ssh-ai-draft">
+      <header><strong>命令草稿</strong><span>{{ draftMessage || '写下需求，点击「自然语言转命令」' }}</span><a-button :disabled="!aiDraft" @click="copyDraft">复制命令</a-button><a-button @click="aiDraftOpen=false">关闭</a-button></header>
+      <div style="height:240px"><SqlEditor v-model="aiDraft" language="shell" :ai-access="access" :context-id="profileId" /></div>
+    </section>
     <div ref="host" class="terminal-host" @click="terminal?.focus()" />
   </section>
 </template>
+
+<style scoped>
+.ssh-ai-draft{flex:none;background:#fff;border-bottom:1px solid #dce2eb}.ssh-ai-draft>header{display:flex;align-items:center;gap:12px;padding:6px 12px;color:#59677d;font-size:12px}.ssh-ai-draft>header span{flex:1}
+</style>

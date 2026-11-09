@@ -25,6 +25,7 @@
 | 后台任务 | 导入、SQL 文件、数据生成的真实字节/语句进度、可收起执行、最近任务列表、失败信息和取消 | `test_background_jobs_report_progress_results_and_cancellation`；`test_sql_import.py` |
 | 维护与权限 | CHECK、ANALYZE、OPTIMIZE、REPAIR；当前账户授权查看 | `test_database_object_and_completion_workflows` |
 | 安全 | 标识符引用、DDL 预览一致性、危险操作确认、登录令牌、会话清理、连接密码、SSH 私钥与 Kubeconfig 加密落盘且不返回前端、Kubernetes 临时文件 0600 并会话后删除、WebSocket URL 不携带登录令牌、SSH 主机密钥变化阻断、guacd 不暴露公网端口 | 后端完整工作流、连接仓库测试、远程连接测试、Kubernetes 真实集群及 DDL E2E |
+| 管理员操作审批 | MySQL/PostgreSQL 和 SSH 危险操作在执行前审批；七类默认模板、按资源自定义规则、通过/拒绝/取消/到期失效、原有授权重校验、幂等与审计；REST、MCP、人员入口统一控制；受控 SSH 使用逐条命令，RDP/K8s 保持原有行为 | `backend/tests/test_approvals.py`；`tests/e2e/approvals-live.spec.ts`；真实独立数据库与 SSH 目录验收，说明见 `OPERATION_APPROVALS.md` |
 | 布局 | 1280 和 1024 宽度、水平大表、固定对象树、菜单贴边、向导及结果区布局 | 集成浏览器视觉验收 |
 
 不属于 P0/P1/P2 的模型图、图表、自动化调度和打印模板仍作为后续独立模块，不在本矩阵中伪装为已完成。

@@ -46,7 +46,7 @@ OIDC Access Token → JWT/在线校验 ├→ (source_id, subject) → 显式绑
 
 一个来源中的 subject 只能绑定一个 Principal；同一个 Principal 可以绑定多个来源，但执行结果的读取与取消还绑定原来源绑定 ID，不能跨来源读取。一个 Principal 对同一 Resource 只有一份 Grant。
 
-普通账号、特权账号是**目标系统中的真实账号**，不是 DeeBee 管理员角色。默认普通；特权必须同时满足：后台勾选、特权账号已核验并启用、凭据有 `privilege:use`、Grant actions 包含该 scope、请求显式 `mode: privileged`。数据库写入另外需要 `db:write`。不自动提权、不自动 sudo、不把勾选变成 root 权限；V1 没有逐次审批。
+普通账号、特权账号是**目标系统中的真实账号**，不是 DeeBee 管理员角色。默认普通；特权必须同时满足：后台勾选、特权账号已核验并启用、凭据有 `privilege:use`、Grant actions 包含该 scope、请求显式 `mode: privileged`。数据库写入另外需要 `db:write`。不自动提权、不自动 sudo、不把勾选变成 root 权限。MySQL/PostgreSQL 和 SSH 命中危险操作规则后，还需管理员逐次审批；`pending_approval` 表示尚未执行。规则、终端边界和重启失效语义见 [操作审批说明](OPERATION_APPROVALS.md)。
 
 ## 管理员配置顺序
 

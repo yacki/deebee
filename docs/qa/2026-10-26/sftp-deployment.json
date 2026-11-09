@@ -1,0 +1,38 @@
+{
+  "release": "ssh-files-20261026-154810",
+  "status": "deployed_internal_verified_public_verification_blocked_by_connectivity",
+  "git_commit": "a16060508fe5c03e9016fc3dd952f7e56da0739a",
+  "git_pushed": true,
+  "image": "deebee-local:ssh-files-20261026-154810-a1606050",
+  "previous_image": "deebee-local:ui-completion-alignment-20261022-002521-ae7299fd",
+  "backup": "/data/deebee/releases/ssh-files-20261026-154810/backup",
+  "published_at_utc": "2026-10-26T07:54:28.092826+00:00",
+  "gracefully_closed_sessions": 1,
+  "connections_count": 3,
+  "resources_count": 5,
+  "recordings_count": 43,
+  "backend_delta": [
+    "main.py",
+    "sftp.py"
+  ],
+  "old_assets_preserved": true,
+  "guacd_unchanged": true,
+  "gateway_not_recreated": true,
+  "keys_config_recordings_preserved": true,
+  "health": true,
+  "sftp": {
+    "listed": true,
+    "items_count": 15
+  },
+  "public_verification": {
+    "completed": false,
+    "reason": "Subsequent HTTPS TLS handshake and Tailscale SSH connection timeouts from the operator machine; browser navigation also timed out.",
+    "tls_validation_disabled": false
+  },
+  "restart_explicitly_authorized": true,
+  "initial_cutover_rollback": {
+    "trigger": "Environment list ordering caused an overly strict hash comparison to fail.",
+    "actual_environment_values_changed": false,
+    "resolution": "Compared environment by key and value; retried and passed all internal checks."
+  }
+}

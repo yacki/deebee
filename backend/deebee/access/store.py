@@ -71,8 +71,17 @@ class AccessStore:
             CREATE INDEX IF NOT EXISTS entities_kind ON entities(kind);
             CREATE UNIQUE INDEX IF NOT EXISTS unique_binding ON entities(
                 json_extract(body,'$.source_id'),json_extract(body,'$.subject')) WHERE kind='bindings';
-            CREATE UNIQUE INDEX IF NOT EXISTS unique_grant ON entities(
-                json_extract(body,'$.principal_id'),json_extract(body,'$.resource_id')) WHERE kind='grants';
+            DROP INDEX IF EXISTS unique_grant;
+            CREATE UNIQUE INDEX IF NOT EXISTS unique_principal_grant ON entities(
+                json_extract(body,'$.principal_id'),json_extract(body,'$.resource_id'))
+                WHERE kind='grants' AND coalesce(json_extract(body,'$.role_id'),'')='';
+            CREATE UNIQUE INDEX IF NOT EXISTS unique_role_grant ON entities(
+                json_extract(body,'$.role_id'),json_extract(body,'$.resource_id'))
+                WHERE kind='grants' AND coalesce(json_extract(body,'$.role_id'),'')!='';
+            CREATE UNIQUE INDEX IF NOT EXISTS unique_membership ON entities(
+                json_extract(body,'$.principal_id'),json_extract(body,'$.role_id')) WHERE kind='memberships';
+            CREATE UNIQUE INDEX IF NOT EXISTS unique_role_name ON entities(lower(json_extract(body,'$.name')))
+                WHERE kind='roles' AND json_extract(body,'$.deleted_at') IS NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS unique_username ON entities(json_extract(body,'$.username'))
                 WHERE kind='principals' AND json_extract(body,'$.username') != '';
             CREATE TABLE IF NOT EXISTS entity_refs (
@@ -94,6 +103,7 @@ class AccessStore:
                 digest TEXT PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES entities(id),
                 expires_at REAL NOT NULL, csrf TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS executions_status ON executions(json_extract(body,'$.status'));
         """)
         self._migrate_audit()
         with self.transaction():
@@ -108,6 +118,10 @@ class AccessStore:
                 if body["status"] in {"queued", "running", "cancel_requested"}:
                     body.update(status="unknown", error={"code": "PROCESS_RESTARTED", "message": "服务重启，远端结果需核实，未自动重放"})
                     self.db.execute("UPDATE executions SET body=?,updated_at=? WHERE id=?", (encode(body), time.time(), row["id"]))
+                elif body["status"] == "pending_approval":
+                    body.update(status="expired", ended_at=time.time(), error={"code": "APPROVAL_RESTARTED", "message": "服务重启，审批申请已失效；请重新提交，原命令未执行"})
+                    self.db.execute("UPDATE executions SET body=?,updated_at=? WHERE id=?", (encode(body), time.time(), row["id"]))
+                    self.audit("system", "approval.expired", row["id"], {"reason": "APPROVAL_RESTARTED"})
 
     def cleanup(self):
         now = time.time()
@@ -115,8 +129,8 @@ class AccessStore:
             self.db.execute("DELETE FROM local_sessions WHERE expires_at<?", (now,))
             # Keep execution/idempotency tombstones for 90 days; clear sensitive
             # payloads/results after 7 days without making an old key executable.
-            self.db.execute("UPDATE executions SET payload_cipher='',result_cipher=NULL WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown')", (now - 7 * 86400,))
-            self.db.execute("DELETE FROM executions WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown')", (now - 90 * 86400,))
+            self.db.execute("UPDATE executions SET payload_cipher='',result_cipher=NULL WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown','rejected','expired')", (now - 7 * 86400,))
+            self.db.execute("DELETE FROM executions WHERE updated_at<? AND json_extract(body,'$.status') IN ('succeeded','failed','cancelled','unknown','rejected','expired')", (now - 90 * 86400,))
             # Audit previews are the durable management archive. Zero means keep
             # indefinitely; operators can explicitly opt into a retention limit.
             try:
@@ -171,9 +185,9 @@ class AccessStore:
                 else:
                     self.db.execute("INSERT INTO entities VALUES(?,?,?,1,?,?)", (entity_id, kind, encode(clean), now, now))
             except sqlite3.IntegrityError as exc:
-                raise AccessError("DUPLICATE_MAPPING", "用户名、身份绑定或资源授权已存在", 409) from exc
+                raise AccessError("DUPLICATE_MAPPING", "用户组名称、成员关系、用户名、身份绑定或资源授权已存在", 409) from exc
             refs = {key: value for key, value in clean.items() if key in {
-                "source_id", "principal_id", "resource_id", "normal_account_id", "privileged_account_id"
+                "source_id", "principal_id", "role_id", "resource_id", "normal_account_id", "privileged_account_id"
             } and value}
             self.db.execute("DELETE FROM entity_refs WHERE owner_id=?", (entity_id,))
             for key, value in refs.items():
@@ -278,6 +292,7 @@ class AccessStore:
         status_code: int | None = None,
         from_at: float | None = None,
         to_at: float | None = None,
+        object_ids: list[str] | None = None,
     ) -> list[dict]:
         clauses, values = ["id<?"], [before or 2**63 - 1]
         for column, value in (("actor", actor), ("operation", operation), ("surface", surface)):
@@ -293,6 +308,11 @@ class AccessStore:
         if to_at is not None:
             clauses.append("at<=?")
             values.append(to_at)
+        if object_ids is not None:
+            if not object_ids:
+                return []
+            clauses.append("object_id IN (" + ",".join("?" for _ in object_ids) + ")")
+            values.extend(object_ids)
         values.append(min(max(limit, 1), 500))
         with self.lock:
             rows = self.db.execute(

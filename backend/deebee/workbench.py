@@ -441,8 +441,13 @@ class DatabaseWorkbenches:
                     merged[secret] = current.get(secret, "")
             record = self._normalize_record(merged, profile_id=profile_id)
             previous = current
-            self._close_profile_sessions(profile_id)
-            transport_manager.close(profile_id)
+            # Display names do not change a connection or invalidate its sessions.
+            connection_changed = any(
+                record.get(key) != current.get(key) for key in record if key != "name"
+            )
+            if connection_changed:
+                self._close_profile_sessions(profile_id)
+                transport_manager.close(profile_id)
             self._records[profile_id] = record
             try:
                 self._store.replace(list(self._records.values()))
@@ -628,6 +633,14 @@ class DatabaseWorkbenches:
         changes: dict[str, Any], schema: str = "",
     ) -> dict[str, Any]:
         return self._schema_call(self._engine(profile_id), "update_row", profile_id, database, table, key, changes, schema=schema)
+
+    def update_rows(self, profile_id: str, database: str, table: str, edits: list[dict[str, Any]], schema: str = '') -> dict[str, Any]:
+        engine = self._engine(profile_id)
+        if not hasattr(engine, 'update_rows'):
+            if len(edits) == 1:
+                return self.update_row(profile_id, database, table, edits[0]['key'], edits[0]['changes'], schema)
+            raise DeeBeeError('该数据库驱动暂不支持事务批量粘贴')
+        return self._schema_call(engine, 'update_rows', profile_id, database, table, edits, schema=schema)
 
     def delete_row(self, profile_id: str, database: str, table: str, key: dict[str, Any], schema: str = "") -> dict[str, Any]:
         return self._schema_call(self._engine(profile_id), "delete_row", profile_id, database, table, key, schema=schema)

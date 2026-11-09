@@ -12,6 +12,7 @@ const documentStartShortcut = process.platform === "darwin" ? "Meta+ArrowUp" : "
 const alignmentTables = Array.from({ length: 12 }, (_, index) => `deebee_ui_align_${String(index).padStart(2, "0")}`);
 let api: APIRequestContext;
 let sessionId = "";
+let defaultConnection: {name:string;host:string;port:number};
 
 async function query(sql: string) {
   const response = await api.post(`sessions/${sessionId}/query`, { data: { sql, limit: 1000 } });
@@ -21,12 +22,14 @@ async function query(sql: string) {
 
 async function login(page: Page) {
   await page.goto("/");
-  await page.getByLabel("用户名").fill("admin");
-  await page.getByLabel("密码").fill("deebee");
+  await page.getByLabel("用户名",{exact:true}).fill("admin");
+  await page.getByLabel("密码",{exact:true}).fill("deebee");
   await page.getByRole("button", { name: "登录工作台" }).click();
   await expect(page.getByText("MySQL · root")).toBeVisible();
   await expect(page.locator(".monaco-editor textarea")).toBeVisible();
 }
+
+async function choose(page:Page,label:string,text:string){await page.getByRole("combobox",{name:label,exact:true}).click();await expect(page.locator(".arco-select-dropdown:visible")).toHaveCount(1);await page.locator(".arco-select-dropdown:visible").getByText(text,{exact:true}).click();}
 
 async function setSql(page: Page, sql: string) {
   const editor = page.locator(".monaco-editor textarea");
@@ -48,6 +51,7 @@ test.beforeAll(async () => {
   await context.dispose();
   context = await request.newContext({ baseURL: apiBase, extraHTTPHeaders: { Authorization: `Bearer ${token}` } });
   api = context;
+  defaultConnection = (await (await api.get("connections")).json()).find((c:{id:string})=>c.id==="mysql-default");
   const session = await api.post("sessions", { data: { profile_id: "mysql-default", database, autocommit: true } });
   expect(session.ok(), await session.text()).toBeTruthy();
   const sessionPayload = await session.json();
@@ -67,6 +71,11 @@ test.beforeAll(async () => {
   }
 });
 
+test.afterEach(async ({page}) => {
+  const id=await page.evaluate(()=>sessionStorage.getItem("deebee_workspace_id")).catch(()=>null);
+  if(id)await api.post("sessions/cleanup",{data:{workspace_id:id}});
+});
+
 test.afterAll(async () => {
   if (sessionId) {
     await query(`DROP DATABASE IF EXISTS \`${createdDatabase}\``);
@@ -78,14 +87,14 @@ test.afterAll(async () => {
   await api?.dispose();
 });
 
-test.describe.serial("DeeBee Vue MySQL workbench", () => {
+test.describe("DeeBee Vue MySQL workbench", () => {
   test("Vue/Iconify tree has reliable arrows and aligned icons with many tables", async ({ page }) => {
     await login(page);
     const server = page.locator(".server-node.active");
-    await expect(server).toContainText("db01.dev.idmesh.cn:3306");
-    await page.getByLabel(/收起连接 db01/).click();
+    await expect(server).toContainText(`${defaultConnection.host}:${defaultConnection.port}`);
+    await page.getByLabel("收起连接 "+defaultConnection.name,{exact:true}).click();
     await expect(page.locator(".db-node")).toHaveCount(0);
-    await page.getByLabel(/打开连接 db01/).click();
+    await page.getByLabel("打开连接 "+defaultConnection.name,{exact:true}).click();
     await expect(page.locator(".db-node").filter({ hasText: database })).toBeVisible();
     await expect(page.locator(".titlebar")).toHaveCount(0);
     const databaseNode = page.locator(".db-node").filter({ hasText: database });
@@ -105,7 +114,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     const toolbarIconBox = await toolbarButton.locator("svg").boundingBox();
     const toolbarTextBox = await toolbarButton.locator("span").boundingBox();
     expect(toolbarIconBox!.x).toBeLessThan(toolbarTextBox!.x);
-    const firstTab = page.locator(".tab").first();
+    const firstTab = page.locator(".workspace-tabs .arco-tabs-tab").first();
     const tabBox = await firstTab.boundingBox();
     const closeBox = await firstTab.getByRole("button", { name: /关闭/ }).boundingBox();
     expect(Math.abs((tabBox!.x + tabBox!.width) - (closeBox!.x + closeBox!.width))).toBeLessThanOrEqual(10);
@@ -116,7 +125,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.locator(".toolbar").getByRole("button", { name: "新建数据库", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "新建数据库" });
     await dialog.getByLabel("数据库名称").fill(createdDatabase);
-    await dialog.getByLabel("数据库字符集").selectOption("utf8mb4");
+    await choose(page,"数据库字符集","utf8mb4");
     await dialog.getByRole("button", { name: "创建", exact: true }).click();
     await expect(page.getByText(`数据库 ${createdDatabase} 已创建`)).toBeVisible();
     await expect(page.locator(".db-node").filter({ hasText: createdDatabase })).toBeVisible();
@@ -136,12 +145,12 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
   test("changing the query database changes the real backend session", async ({ page }) => {
     await login(page);
     const selector = page.getByLabel("查询数据库");
-    await selector.selectOption(switchDatabase);
+    await selector.click();await page.locator(".arco-select-dropdown:visible").getByText(switchDatabase,{exact:true}).click();
     await expect(page.getByText(`查询标签已切换到 ${switchDatabase}`)).toBeVisible();
     let editor = await setSql(page, "SELECT DATABASE() AS current_database;");
     await editor.press(runShortcut);
     await expect(page.getByRole("cell", { name: switchDatabase, exact: true })).toBeVisible();
-    await selector.selectOption(database);
+    await selector.click();await page.locator(".arco-select-dropdown:visible").getByText(database,{exact:true}).click();
     await expect(page.getByText(`查询标签已切换到 ${database}`)).toBeVisible();
     editor = await setSql(page, "SELECT DATABASE() AS current_database;");
     await editor.press(runShortcut);
@@ -181,7 +190,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.unroute("**/api/sessions/*/query");
 
     const rebuiltSessionId = (await (await rebuiltSession).json()).id;
-    const autocommit = page.locator(".query-bar").getByRole("button", { name: "自动提交" });
+    const autocommit = page.getByRole("switch", { name: "自动提交" });
     await autocommit.click();
     await expect(autocommit).not.toHaveClass(/on/);
     const removed = await api.delete(`sessions/${rebuiltSessionId}`);
@@ -235,17 +244,17 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await login(page);
     await setSql(page, "SELECT 'first-draft-marker' AS draft;");
     await page.getByRole("button", { name: "新建查询标签" }).click();
-    await expect(page.getByRole("tab")).toHaveCount(2);
+    await expect(page.locator(".workspace-tabs").getByRole("tab")).toHaveCount(2);
     await setSql(page, "SELECT 'second-draft-marker' AS draft;");
     page.once("dialog", dialog => dialog.accept());
     await page.reload();
     await expect(page.locator(".monaco-editor textarea")).toBeVisible();
-    await expect(page.getByRole("tab")).toHaveCount(2);
+    await expect(page.locator(".workspace-tabs").getByRole("tab")).toHaveCount(2);
     await expect(page.locator(".view-lines")).toContainText("second-draft-marker");
-    const activeTab = page.getByRole("tab", { selected: true });
-    page.once("dialog", dialog => dialog.dismiss());
+    const activeTab = page.locator(".workspace-tabs").getByRole("tab", { selected: true });
     await activeTab.getByRole("button", { name: /关闭/ }).click();
-    await expect(page.getByRole("tab")).toHaveCount(2);
+    await page.getByRole("dialog").getByRole("button",{name:"取消",exact:true}).click();
+    await expect(page.locator(".workspace-tabs").getByRole("tab")).toHaveCount(2);
   });
 
   test("SQL intelligence completes real tables and alias-qualified columns", async ({ page }) => {
@@ -276,7 +285,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await expect(page.locator(".view-lines")).toContainText("SELECT");
     await expect(page.locator(".view-lines")).toContainText("FROM");
     await editor.press(runShortcut);
-    await expect(page.getByRole("button", { name: /结果 1 3/ })).toBeVisible();
+    await expect(page.locator(".result-tabs").getByRole("tab", { name: "结果 1 (3)", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Alpha", exact: true })).toBeVisible();
     await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "复制为", exact: true }).hover();
@@ -321,7 +330,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
 
     await setSql(page, `SELECT * FROM ${table};`);
     await editor.press(runShortcut);
-    await page.locator(".query-bar").getByRole("button", { name: "自动提交" }).click();
+    await page.getByRole("switch", { name: "自动提交" }).click();
     await expect(page.getByText("已进入手动事务模式")).toBeVisible();
     await page.getByRole("cell", { name: "Gamma", exact: true }).dblclick();
     await expect(page.getByLabel("编辑 name")).toHaveCount(0);
@@ -335,7 +344,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     expect((await initialDataRequest).postDataJSON()).toMatchObject({ limit: 1000, page_size: 100 });
     await expect(page.getByText(`${database} · 双击单元格原地编辑`)).toHaveCount(0);
     await expect(page.locator(".data-view>.view-header")).toHaveCount(0);
-    await expect(page.locator(".editable-grid-shell thead small")).toHaveCount(0);
+    await expect(page.locator(".grid-header thead small")).toHaveCount(0);
     await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "复制为", exact: true }).hover();
     await page.getByRole("menuitem", { name: "INSERT Statement", exact: true }).click();
@@ -376,9 +385,9 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.getByRole("button", { name: "刷新", exact: true }).last().click();
     await expect(page.getByRole("cell", { name: "Alpha edited inline", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "添加记录", exact: true }).click();
-    await page.getByLabel("记录字段 name 写入方式").selectOption("value");
-    await page.getByLabel("记录字段 status 写入方式").selectOption("value");
-    await page.getByLabel("记录字段 amount 写入方式").selectOption("value");
+    await choose(page,"记录字段 name 写入方式","输入值");
+    await choose(page,"记录字段 status 写入方式","输入值");
+    await choose(page,"记录字段 amount 写入方式","输入值");
     await page.getByRole("textbox", { name: "记录字段 name", exact: true }).fill("Browser inserted row");
     await page.getByRole("textbox", { name: "记录字段 status", exact: true }).fill("active");
     await page.getByRole("textbox", { name: "记录字段 amount", exact: true }).fill("31.25");
@@ -388,10 +397,10 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await page.getByRole("row").filter({ has: insertedCell }).click();
     const deleteButton = page.getByRole("button", { name: "删除", exact: true });
     await expect(deleteButton).toBeEnabled();
-    page.once("dialog", dialog => dialog.accept());
     await deleteButton.click();
+    await page.getByRole("dialog").getByRole("button",{name:"确认",exact:true}).click();
     await expect(page.getByRole("cell", { name: "Browser inserted row", exact: true })).toHaveCount(0);
-    await page.getByLabel("筛选字段").selectOption("status");
+    await choose(page,"筛选字段","status");
     await page.getByLabel("筛选值").fill("pending");
     await page.getByRole("button", { name: "应用" }).click();
     await expect(page.getByRole("cell", { name: "Beta", exact: true })).toBeVisible();
@@ -416,30 +425,32 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await menu.getByRole("menuitem", { name: "全选", exact: true }).click();
     await expect(page.locator(".editable-grid-shell tbody tr.selected")).toHaveCount(3);
     await page.getByRole("cell", { name: "Alpha", exact: true }).click({ button: "right" });
-    page.once("dialog", dialog => dialog.accept("24"));
     await page.getByRole("menuitem", { name: "设置当前列宽…", exact: true }).click();
+    await page.getByLabel("列宽（24-600 像素）",{exact:true}).fill("24");
+    await page.getByRole("dialog").getByRole("button",{name:"确认",exact:true}).click();
     await expect.poll(async () => (await page.getByRole("columnheader").filter({ hasText: "name" }).boundingBox())?.width).toBeLessThan(80);
     for (const tabName of ["消息", "摘要", "Profile", "状态"]) {
-      await page.locator(".result-tabs").getByRole("button", { name: tabName, exact: true }).click();
-      await expect(page.locator(".result-tabs").getByRole("button", { name: tabName, exact: true })).toHaveClass(/current/);
+      await page.locator(".result-tabs").getByRole("tab", { name: tabName, exact: true }).click();
+      await expect(page.locator(".result-tabs").getByRole("tab", { name: tabName, exact: true })).toHaveAttribute("aria-selected","true");
     }
   });
 
   test("query tabs, history, saved queries and transaction controls work", async ({ page }) => {
     await login(page);
     await page.getByRole("button", { name: "新建查询标签" }).click();
-    await expect(page.getByRole("tab")).toHaveCount(2);
+    await expect(page.locator(".workspace-tabs").getByRole("tab")).toHaveCount(2);
     const editor = await setSql(page, "SELECT 42 AS answer;");
     await editor.press(runShortcut);
     await page.locator(".query-bar").getByRole("button", { name: "历史" }).click();
-    await expect(page.getByText("SELECT 42 AS answer;", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button",{name:"SELECT 42 AS answer;",exact:true})).toBeVisible();
     await page.keyboard.press("Escape");
-    await page.getByRole("tab", { selected: true }).click({ button: "right" });
+    await page.locator(".workspace-tabs").getByRole("tab", { selected: true }).click({ button: "right" });
     for (const label of ["关闭", "关闭其他标签", "关闭右侧标签", "复制标签", "保存查询…"]) await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
-    page.once("dialog", dialog => dialog.accept("saved_e2e_query"));
     await page.getByRole("menuitem", { name: "保存查询…" }).click();
+    await page.getByLabel("查询名称",{exact:true}).fill("saved_e2e_query");
+    await page.getByRole("dialog").getByRole("button",{name:"确认",exact:true}).click();
     await expect(page.getByText("查询 saved_e2e_query 已保存")).toBeVisible();
-    await page.locator(".query-bar").getByRole("button", { name: "自动提交" }).click();
+    await page.getByRole("switch", { name: "自动提交" }).click();
     await expect(page.getByText("已进入手动事务模式")).toBeVisible();
     await page.locator(".query-bar").getByRole("button", { name: "提交", exact: true }).click();
     await expect(page.getByText("事务已提交")).toBeVisible();
@@ -451,11 +462,11 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await login(page);
     await tableNode(page).click({ button: "right" });
     await page.getByRole("menuitem", { name: "设计表", exact: true }).click();
-    for (const tabName of [/字段/, /索引/, /外键/, /约束/, /DDL 预览/]) await expect(page.locator(".designer-tabs").getByRole("button", { name: tabName })).toBeVisible();
+    for (const tabName of [/字段/, /索引/, /外键/, /约束/, /DDL 预览/]) await expect(page.locator(".designer-tabs").getByRole("tab", { name: tabName })).toBeVisible();
     await expect(page.getByText("引擎")).toBeVisible();
     await page.getByRole("button", { name: "生成 DDL" }).click();
     await expect(page.getByText(/尚未生成 DDL|语句 1/)).toBeVisible();
-    await page.getByRole("tab").first().click();
+    await page.locator(".workspace-tabs").getByRole("tab").first().click();
     for (const [menuName, title] of [["导入向导…", "数据导入向导"], ["导出向导…", "数据导出向导"], ["数据生成…", "测试数据生成器"], ["转储 SQL 文件…", "SQL 转储向导"]] as const) {
       await tableNode(page).click({ button: "right" });
       await page.getByRole("menuitem", { name: menuName, exact: true }).click();
@@ -487,7 +498,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await login(page);
     await tableNode(page).click({ button: "right" });
     await page.getByRole("menuitem", { name: "查看权限…", exact: true }).click();
-    await expect(page.locator(".inspector")).toContainText("账户：");
+    await expect(page.locator(".inspector-details")).toContainText("账户：");
     await expect(page.getByText(/r\.map is not a function/)).toHaveCount(0);
     const triggerNode = page.locator(".object-node").filter({ hasText: trigger }).first();
     await expect(triggerNode).toBeVisible();
@@ -526,7 +537,7 @@ test.describe.serial("DeeBee Vue MySQL workbench", () => {
     await login(page);
     await tableNode(page).click({ button: "right" });
     await page.getByRole("menuitem", { name: "导出向导…", exact: true }).click();
-    await page.getByLabel("文件格式").selectOption("json");
+    await choose(page,"文件格式","JSON");
     await page.getByRole("button", { name: "下一步" }).click();
     const exportDownload = page.waitForEvent("download");
     await page.getByRole("button", { name: "开始执行" }).click();

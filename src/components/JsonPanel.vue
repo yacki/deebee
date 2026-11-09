@@ -20,7 +20,7 @@ function format(next: string) {
     <div class="json-toolbar"><span>{{ label || 'JSON / 原文' }}</span><a-space size="mini"><a-button size="mini" @click="format('formatted')">格式化</a-button><a-button size="mini" @click="format('compact')">压缩</a-button><a-button v-if="!editable" size="mini" @click="mode='raw'">原文</a-button></a-space></div>
     <a-alert v-if="truncated" type="warning">已达到归档上限，以下内容不完整；不能恢复已截断部分。</a-alert>
     <a-alert v-if="warning" type="warning">{{ warning }}</a-alert>
-    <a-textarea v-if="editable" :model-value="modelValue" :aria-label="label || 'JSON 编辑器'" :auto-size="{minRows:5,maxRows:20}" @update:model-value="emit('update:modelValue',$event)" />
+    <a-textarea v-if="editable" :model-value="modelValue" :textarea-attrs="{'aria-label':label || 'JSON 编辑器'}" :auto-size="{minRows:5,maxRows:20}" @update:model-value="emit('update:modelValue',$event)" />
     <pre v-else tabindex="0">{{ display || '无内容' }}</pre>
   </div>
 </template>

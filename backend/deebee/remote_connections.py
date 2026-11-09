@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import time
 from dataclasses import dataclass, field
@@ -11,6 +12,9 @@ import asyncssh
 from .config import settings
 from .mysql import DeeBeeError
 from .kubernetes import test_kubernetes
+
+
+RDP_KEEPALIVE_INTERVAL = 5.0
 
 
 @dataclass
@@ -119,9 +123,10 @@ async def test_ssh(profile: RemoteProfile) -> dict[str, Any]:
 def encode_instruction(*elements: str) -> bytes:
     encoded: list[bytes] = []
     for index, element in enumerate(elements):
-        raw = str(element).encode("utf-8")
+        value = str(element)
+        raw = value.encode("utf-8")
         delimiter = b";" if index == len(elements) - 1 else b","
-        encoded.append(str(len(raw)).encode("ascii") + b"." + raw + delimiter)
+        encoded.append(str(len(value)).encode("ascii") + b"." + raw + delimiter)
     return b"".join(encoded)
 
 
@@ -140,14 +145,25 @@ async def read_instruction(reader: asyncio.StreamReader) -> tuple[str, list[str]
             length_bytes.extend(char)
         if not length_bytes:
             raise DeeBeeError("RDP 网关返回了无效的 Guacamole 指令")
-        value = await reader.readexactly(int(length_bytes))
+        length = int(length_bytes)
+        value = bytearray()
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        chunks: list[str] = []
+        remaining = length
+        try:
+            while remaining:
+                chunk = await reader.readexactly(remaining)
+                value.extend(chunk)
+                decoded = decoder.decode(chunk)
+                chunks.append(decoded)
+                remaining -= len(decoded)
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError as exc:
+            raise DeeBeeError("RDP 网关返回了无法解码的指令") from exc
         delimiter = await reader.readexactly(1)
         raw_instruction.extend(value)
         raw_instruction.extend(delimiter)
-        try:
-            elements.append(value.decode("utf-8"))
-        except UnicodeDecodeError as exc:
-            raise DeeBeeError("RDP 网关返回了无法解码的指令") from exc
+        elements.append("".join(chunks))
         if delimiter == b";":
             break
         if delimiter != b",":
@@ -170,9 +186,10 @@ def _rdp_parameter(profile: RemoteProfile, name: str, width: int, height: int, d
         "dpi": str(dpi),
         "color-depth": str(options.get("color_depth", 24)),
         "resize-method": "display-update",
-        "enable-wallpaper": "true",
-        "enable-font-smoothing": "true",
-        "enable-desktop-composition": "true",
+        # Keep Guacamole's bandwidth-saving defaults for remote sessions.
+        "enable-wallpaper": "false",
+        "enable-font-smoothing": "false",
+        "enable-desktop-composition": "false",
         "disable-audio": "false",
         "enable-audio-input": "false",
         "read-only": "false",
@@ -250,26 +267,63 @@ class GuacdTunnel:
                 await self.writer.wait_closed()
 
 
+def rdp_error_message(message: str) -> str:
+    lowered = message.lower()
+    if any(marker in lowered for marker in ("certificate", "self-signed", "ssl/tls")):
+        return "RDP 服务器证书校验失败，请核对并信任服务器证书后重试"
+    if "authentication failure" in lowered or "invalid credentials" in lowered:
+        return "RDP 登录失败，请检查用户名、密码和域"
+    return message or "RDP 认证或连接失败"
+
+
 async def test_rdp(profile: RemoteProfile) -> dict[str, Any]:
     started = time.perf_counter()
     tunnel = await GuacdTunnel.connect(profile, width=800, height=600)
-    try:
+
+    async def keepalive() -> None:
+        # Match Guacamole.Client: guacd also expects input while Windows is
+        # still signing in and has not produced a frame to acknowledge yet.
         while True:
-            opcode, arguments, _ = await asyncio.wait_for(
-                read_instruction(tunnel.reader), timeout=20
-            )
-            if opcode == "error":
-                raise DeeBeeError(arguments[0] if arguments else "RDP 认证或连接失败")
-            if opcode == "sync" and arguments:
-                tunnel.writer.write(encode_instruction("sync", arguments[0]))
-                await tunnel.writer.drain()
-            if opcode == "size" and len(arguments) >= 3 and arguments[0] == "0":
-                return {
-                    "ok": True,
-                    "latency_ms": round((time.perf_counter() - started) * 1000, 1),
-                    "version": "RDP via Apache Guacamole",
-                }
+            await asyncio.sleep(RDP_KEEPALIVE_INTERVAL)
+            tunnel.writer.write(encode_instruction("nop"))
+            await tunnel.writer.drain()
+
+    keepalive_task = asyncio.create_task(keepalive())
+    try:
+        desktop_sized = False
+        first_sync: int | None = None
+        async with asyncio.timeout(30):
+            while True:
+                opcode, arguments, _ = await read_instruction(tunnel.reader)
+                if opcode == "error":
+                    raise DeeBeeError(rdp_error_message(arguments[0] if arguments else ""))
+                if opcode == "disconnect":
+                    raise DeeBeeError("RDP 会话在登录完成前断开")
+                if opcode == "size" and len(arguments) >= 3 and arguments[0] == "0":
+                    desktop_sized = int(arguments[1]) > 0 and int(arguments[2]) > 0
+                # guacd may synchronize its blank display before authenticating.
+                # A later frame with a new timestamp comes from the RDP render
+                # loop, which only runs after freerdp_connect() succeeds.
+                if opcode == "sync" and arguments:
+                    tunnel.writer.write(encode_instruction("sync", arguments[0]))
+                    await tunnel.writer.drain()
+                    timestamp = int(arguments[0])
+                    if first_sync is None:
+                        first_sync = timestamp
+                    elif desktop_sized and timestamp > first_sync:
+                        return {
+                            "ok": True,
+                            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                            "version": "RDP via Apache Guacamole",
+                        }
+    except TimeoutError as exc:
+        raise DeeBeeError("RDP 登录超时，尚未收到远程桌面画面") from exc
+    except asyncio.IncompleteReadError as exc:
+        raise DeeBeeError("RDP 会话在登录完成前断开") from exc
     finally:
+        keepalive_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await keepalive_task
         await tunnel.close()
 
 

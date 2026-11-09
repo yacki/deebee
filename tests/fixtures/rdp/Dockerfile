@@ -20,4 +20,4 @@ RUN apt-get -o Acquire::Retries=5 update \
 
 EXPOSE 3389
 
-CMD ["/bin/bash", "-lc", "mkdir -p /run/xrdp && /usr/sbin/xrdp-sesman && exec /usr/sbin/xrdp --nodaemon"]
+CMD ["/bin/bash", "-lc", "mkdir -p /run/xrdp && rm -f /run/xrdp/xrdp.pid /run/xrdp/xrdp-sesman.pid && /usr/sbin/xrdp-sesman && exec /usr/sbin/xrdp --nodaemon"]

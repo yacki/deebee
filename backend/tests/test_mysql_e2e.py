@@ -274,3 +274,24 @@ def test_workspace_session_cleanup():
     assert workbench.cleanup_workspace("pytest-workspace") == 2
     assert first["id"] not in workbench.sessions
     assert second["id"] not in workbench.sessions
+
+
+def test_workspace_cleanup_does_not_corrupt_an_inflight_query():
+    profile_id = workbench.list_profiles()[0]["id"]
+    session = workbench.create_session(profile_id, DATABASE, True, "pytest-cleanup-race")
+    errors = []
+    def execute():
+        try:
+            workbench.execute(session['id'], 'SELECT SLEEP(0.3) AS waited')
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=execute)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while not workbench.sessions[session['id']].running_thread_id and time.monotonic() < deadline:
+        time.sleep(.005)
+    try:
+        assert workbench.cleanup_workspace("pytest-cleanup-race") == 1
+    finally:
+        thread.join(timeout=3)
+    assert not thread.is_alive() and not errors

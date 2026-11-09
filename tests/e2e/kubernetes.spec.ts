@@ -48,15 +48,16 @@ test.describe("Kubernetes workspace", () => {
     await api.dispose();
 
     await page.goto("/");
-    await page.getByLabel("用户名").fill("admin");
-    await page.getByLabel("密码").fill("deebee");
+    await page.getByLabel("用户名", { exact: true }).fill("admin");
+    await page.getByLabel("密码", { exact: true }).fill("deebee");
     await page.getByRole("button", { name: "登录工作台" }).click();
-    await page.getByRole("button", { name: "打开会话" }).click();
-    await expect(page.locator(".k8s-workspace")).toBeVisible();
-    await expect(page.locator(".k8s-row.depth-one").first()).toBeVisible();
-    await expect(page.locator(".k8s-row.depth-one")).not.toHaveCount(0);
+    await page.getByLabel("打开连接 Kubernetes E2E", { exact: true }).click();
+    const workspace = page.locator(".k8s-workspace:visible");
+    await expect(workspace).toBeVisible();
+    await expect(workspace.locator(".k8s-row.depth-one").first()).toBeVisible();
+    await expect(workspace.locator(".k8s-row.depth-one")).not.toHaveCount(0);
 
-    await page.getByTitle("集群终端").click();
+    await workspace.getByTitle("集群终端").click();
     const terminal = page.locator(".k8s-terminal:visible .xterm-helper-textarea");
     await expect(terminal).toBeVisible();
     await terminal.focus();

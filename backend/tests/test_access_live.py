@@ -265,7 +265,7 @@ def test_real_legacy_reference_import_does_not_modify_original(lab):
     admin = lab["admin"]
     before = admin.get("/api/connections").json()
     candidates = admin.get("/api/admin/v1/legacy-connections/preview").json()["items"]
-    candidate = next(c for c in candidates if c["type"] == "mysql")
+    candidate = next(c for c in candidates if c["type"] == "mysql" and c["username"] == "lab_operator")
     response = admin.post("/api/admin/v1/legacy-connections/import", json={"profile_id": candidate["id"], "fingerprint": candidate["fingerprint"]})
     assert response.is_success, response.text
     imported = response.json()

@@ -1,0 +1,48 @@
+:root{--primary-6:36,112,205;--primary-5:64,135,221;--primary-7:24,88,171;--border-radius-small:4px;--border-radius-medium:6px;--deebee-font-size:12px;font-synthesis:none}
+body{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;font-size:var(--deebee-font-size);color:var(--color-text-1)}
+.arco-btn svg{width:16px;height:16px;flex-shrink:0}.arco-btn{gap:6px}.arco-btn:focus-visible{outline:2px solid rgb(var(--primary-5));outline-offset:2px}.arco-select,.arco-input-wrapper,.arco-textarea-wrapper,.arco-picker{min-width:0}.arco-modal{max-width:calc(100vw - 32px)}.arco-modal-body{max-height:calc(100dvh - 160px);overflow:auto}.arco-table-cell{overflow-wrap:anywhere}.arco-form{min-width:0}
+.workbench-dialog .arco-modal-body{padding:0;max-height:calc(100dvh - 64px)}.workbench-dialog .modal{width:100%;max-width:none;max-height:none;box-shadow:none;border:0;margin:0;border-radius:0}.workbench-dialog .arco-form{display:flex;flex-direction:column;align-items:stretch}.workbench-dialog .connection-modal{width:100%}.workbench-dialog .connection-form-grid>label{min-width:0}.workbench-dialog .arco-select{width:100%}.workbench-dialog .arco-checkbox{display:inline-flex;align-items:center;gap:6px}.workbench-dialog .arco-checkbox-label{line-height:1.5}.workbench-dialog .private-key-field>.workbench-input{min-height:130px}
+.app-shell .workspace-tabs{flex:none;min-height:40px;background:var(--color-fill-1)}.workspace-tabs>.arco-tabs-content,.component-tabs>.arco-tabs-content{display:none}.workspace-tabs .arco-tabs-nav{margin:0}.workspace-tab-label{display:inline-flex;align-items:center;gap:7px;max-width:200px;white-space:nowrap}.workspace-tab-label>span{overflow:hidden;text-overflow:ellipsis}.workspace-tab-label>svg{width:16px;height:16px;flex-shrink:0}.app-shell .result-tabs{display:block;height:auto;min-height:36px;padding:0 12px;background:var(--color-bg-1)}.result-tabs .arco-tabs-nav{margin:0}.workbench-dialog .connection-sections{display:block;padding:0 18px;background:var(--color-bg-1)}.connection-sections .arco-tabs-nav{margin:0}.app-shell .autocommit-control{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px}.app-shell .database-switch{border:0;background:transparent}.app-shell .database-switch .arco-select{min-width:100px;max-width:180px}.app-shell .profile-switch .arco-select{min-width:160px}.app-shell .tree-search{border:0;padding:0;background:transparent}.app-shell .tree-search>.iconify{display:none}.app-shell .tree-node .node-label{display:block}.app-shell .tree-node.server-node .node-label{display:flex}.app-shell .toolbar .arco-btn{font-size:12px}.app-shell .query-bar{min-height:44px;gap:8px}.app-shell .query-bar .arco-btn{flex-shrink:0}.data-toolbar .workbench-input{width:160px}.data-toolbar .arco-select{width:140px}.designer-tabs{display:block;height:auto;padding:0 12px}.designer-tabs .arco-tabs-nav{margin:0}.structure-table .arco-input-wrapper{min-width:80px}.structure-table .arco-table-td{padding:6px}.structure-table .arco-table-cell{padding:0}.structure-table .arco-table-th .arco-table-cell{padding:6px}.table-options .arco-select{width:140px}.table-options .workbench-input{max-width:220px}.object-table .arco-table{height:100%}.editable-grid-shell .workbench-input,.editable-grid-shell .arco-input-wrapper{height:100%}.editable-grid-shell td.editing{padding:0}.login-input .workbench-input>.arco-input-wrapper{background:transparent;border-color:transparent;box-shadow:none}.login-input .workbench-input{flex:1}.login-card .arco-btn{display:inline-flex}.connection-options .arco-checkbox{margin:4px 16px 4px 0}.arco-btn>span>svg{vertical-align:middle}
+
+.app-shell .toolbar .arco-btn-text,.app-shell .tree-node.arco-btn-text{color:var(--color-text-2)}.app-shell .toolbar .arco-btn-text:hover{color:rgb(var(--primary-6))}.app-shell .tree-node.active{color:rgb(var(--primary-6));background:var(--color-primary-light-1)}.view-header>.form-field,.table-options>.form-field{white-space:nowrap;gap:10px}.view-header>.form-field .workbench-input{width:180px}.arco-btn>span{vertical-align:middle}.jobs-drawer-content>header,.inspector-details>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.jobs-drawer-content header>div{display:flex;gap:10px;align-items:center}.jobs-drawer-content header small{display:block;color:var(--color-text-3);margin-top:5px}.jobs-drawer-content .background-job-list{display:grid;gap:14px}.jobs-drawer-content article{padding:14px;border:1px solid var(--color-border-2);border-radius:var(--border-radius-medium)}.jobs-drawer-content article p small{display:block;margin-top:6px;color:var(--color-text-3)}
+
+.app-shell .toolbar{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.app-shell .database-switch{white-space:nowrap;flex-shrink:0}.app-shell .database-switch .arco-select{width:118px}.workbench-dialog .arco-btn-text{color:var(--color-text-2)}
+
+.app-shell .workspace-tabs .arco-tabs-tab{padding-right:8px}.app-shell .data-toolbar{overflow-x:auto;overflow-y:hidden;min-width:0;gap:8px}.app-shell .data-toolbar>.arco-btn,.app-shell .data-toolbar>.form-field{flex-shrink:0}.app-shell .data-toolbar>.form-field{display:flex;align-items:center;gap:8px;white-space:nowrap}.app-shell .view{min-width:0;overflow:hidden}.app-shell .editable-grid-shell{min-width:0;overscroll-behavior:contain}
+.editable-grid-shell thead .row-number{z-index:8}
+.app-shell .query-bar{overflow-x:auto;overflow-y:hidden}.editable-grid-shell tbody td{height:inherit}.editable-grid-shell td .arco-input{height:100%}
+
+/* Arco owns the control border; legacy form containers only arrange labels. */
+.app-shell .profile-switch,.app-shell .view-header>.form-field{height:auto;border:0;padding:0;background:transparent}
+.app-shell .view-header>.object-filter{width:220px;flex-shrink:0}
+.app-shell .tree-search .arco-input-prefix svg,.app-shell .object-filter .arco-input-prefix svg{width:16px;height:16px}
+
+/* Bound each pane so wide object metadata stays inside the work area. */
+.app-shell .workspace.arco-split{min-width:0;overflow:hidden}
+.app-shell .workspace>.arco-split-pane{display:flex;min-width:0;min-height:0;overflow:hidden}
+.app-shell .workspace>.arco-split-pane>.explorer{width:100%;min-width:0;border-right:0;background:#eef1f5}
+.app-shell .explorer>header,.app-shell .explorer>footer{background:#e7ecf2}
+.app-shell .explorer-divider{width:6px;height:100%;display:flex;align-items:center;justify-content:center;background:#e1e6ed;border-inline:1px solid #d0d8e2;cursor:col-resize;touch-action:none}
+.app-shell .explorer-divider>span{width:2px;height:32px;border-radius:2px;background:#a4b0bf}
+.app-shell .explorer-divider:hover,.app-shell .explorer-divider:focus-visible{background:var(--color-primary-light-2);outline:0}
+.app-shell .workspace>.arco-split-pane>.content{height:100%;width:100%;min-height:0}
+.app-shell .object-table{flex:1;min-width:0;min-height:0;overflow:hidden}
+.app-shell .object-table .arco-table-cell{overflow:hidden;white-space:nowrap;overflow-wrap:normal}
+.app-shell .object-name{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-width:0}
+.app-shell .object-name svg{width:15px;height:15px;flex-shrink:0;color:#4383b8}
+.app-shell .object-table .arco-table-td-content{max-width:100%}
+
+@media print{.app-shell .workspace>.arco-split-pane-first,.app-shell .workspace>.arco-split-trigger{display:none!important}}
+
+.app-shell .object-column-handle{position:absolute;inset:0 0 0 auto;width:8px;cursor:col-resize;touch-action:none}
+.app-shell .object-column-handle:hover,.app-shell .object-column-handle:focus-visible{background:var(--color-primary-light-2);outline:0}
+
+/* Designer forms use bounded framework columns rather than native-table rules. */
+.app-shell .designer-view{flex:1;min-width:0;min-height:0;height:auto;overflow:hidden}
+.app-shell .structure-table{flex:1;min-width:0;min-height:0;overflow:auto}
+.app-shell .structure-table .arco-table-cell{min-width:0;overflow:hidden}
+.app-shell .structure-table .arco-input-wrapper{min-width:0}
+.app-shell .structure-table .workbench-input,.app-shell .structure-table .arco-select{width:100%;min-width:0}
+.app-shell .view-header>div:first-child{min-width:0}
+.app-shell .view-header>div:first-child>span{min-width:0;overflow:hidden}
+.app-shell .view-header strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -1,0 +1,64 @@
+{
+  "release": "ai-native-20261030-0055",
+  "status": "deployed_verified_public_and_ai",
+  "git_commit": "942a5b35629e41def4d981242cd69b11aea8bf64",
+  "git_pushed": true,
+  "image": "deebee-local:ai-native-20261030-0055-942a5b35",
+  "previous_image": "deebee-local:ssh-files-20261026-154810-a1606050",
+  "backup": "/data/deebee/releases/ai-native-20261030-0055/backup",
+  "published_at_utc": "2026-10-29T16:52:23.956795+00:00",
+  "gracefully_closed_sessions": 0,
+  "closed_session_statuses": {},
+  "connections_count": 3,
+  "resources_count": 5,
+  "recordings_count": 43,
+  "backend_delta": [
+    "access/api.py",
+    "access/boundary.py",
+    "ai.py"
+  ],
+  "old_assets_preserved": true,
+  "guacd_unchanged": true,
+  "gateway_not_recreated": true,
+  "keys_config_recordings_preserved": true,
+  "health": true,
+  "sftp": {
+    "listed": true,
+    "items_count": 15
+  },
+  "public_health": true,
+  "public_index_matches_release": true,
+  "entry_assets_verified": 3,
+  "url": "https://deebee.idmesh.site/deebee/",
+  "browser_login_verified": true,
+  "browser_errors": 0,
+  "decorative_eyebrows": 0,
+  "ai_checks": [
+    {
+      "configured": true,
+      "model": "qwen3.7-plus",
+      "share_schema": false,
+      "timeout_seconds": 20
+    },
+    {
+      "generation_checks": [
+        {
+          "language": "mysql",
+          "code": "SELECT 1 AS ai_ready;",
+          "seconds": 1.64,
+          "executed": false
+        },
+        {
+          "language": "shell",
+          "code": "find . -maxdepth 1 -type f -size +100M",
+          "seconds": 1.69,
+          "executed": false
+        }
+      ]
+    }
+  ],
+  "frontend_source_sha256": "84fdebffc87bb152ae56d425bfe6622c9a0536157f3e9ed4212a03814e5b77d5",
+  "frontend_source_note": "AI commit is isolated from previously deployed uncommitted UI/completion fixes. Exact built frontend input (including eyebrow removal) is archived in frontend-source.tar.gz; old frontend assets are retained in the layered image.",
+  "initial_attempt_rolled_back": true,
+  "retry_note": "First SFTP check returned HTTP 400; automatic rollback succeeded. Old image SFTP recheck passed. Final deployment passed bounded SFTP retries and all preservation checks."
+}

@@ -2,14 +2,17 @@
 import { Icon } from "@iconify/vue";
 import Guacamole from "guacamole-common-js";
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import "../remoteSessions.css";
 import { API_BASE, authToken } from "../api";
+import { createAccessSocket, type AccessSession } from '../accessSession';
 
-const props = defineProps<{ profileId: string; title: string; active: boolean }>();
+const props = defineProps<{ profileId: string; title: string; active: boolean; access?: AccessSession }>();
 const emit = defineEmits<{ state: [value: "online" | "checking" | "offline"] }>();
 
 const viewport = ref<HTMLElement>();
 const state = ref<"connecting" | "connected" | "closed" | "error">("connecting");
 const message = ref("正在建立 RDP 会话");
+const fullscreen = ref(false);
 let client: Guacamole.Client | undefined;
 let mouse: Guacamole.Mouse | undefined;
 let keyboard: Guacamole.Keyboard | undefined;
@@ -18,6 +21,7 @@ let reconnectTimer: number | undefined;
 let resizeFrame: number | undefined;
 let connectionGeneration = 0;
 let reconnectAttempts = 0;
+let retryAllowed = true;
 let disposed = false;
 let lastVisibleSize = { width: 1280, height: 720 };
 
@@ -114,14 +118,24 @@ function refreshViewport(focus = false) {
   });
 }
 
-function connect() {
+async function connect() {
   disconnect();
   if (!viewport.value || !props.active || disposed) return;
   const generation = connectionGeneration;
+  retryAllowed = true;
+  let firstSync: number | undefined;
   state.value = "connecting";
   message.value = "正在建立 RDP 会话";
   emit("state", "checking");
-  const tunnel = new Guacamole.WebSocketTunnel(tunnelUrl());
+  let url: string;
+  try { url = props.access ? await createAccessSocket(props.access) : tunnelUrl(); }
+  catch (e) {
+    if (disposed || generation !== connectionGeneration) return;
+    retryAllowed = false;
+    state.value = 'error'; message.value = e instanceof Error ? e.message : '会话授权失败'; emit('state', 'offline'); return;
+  }
+  if (disposed || generation !== connectionGeneration) return;
+  const tunnel = new Guacamole.WebSocketTunnel(url);
   // Background tabs may throttle timers. The backend also sends regular
   // Guacamole keepalives, while this wider window avoids false disconnects.
   tunnel.receiveTimeout = 60_000;
@@ -144,39 +158,58 @@ function connect() {
 
   sessionClient.onstatechange = next => {
     if (generation !== connectionGeneration || sessionClient !== client) return;
-    if (next === Guacamole.Client.State.CONNECTED) {
+    if (next === Guacamole.Client.State.DISCONNECTED) {
+      if (state.value !== "error") {
+        state.value = "closed";
+        message.value = "远程桌面已断开";
+      }
+      emit("state", "offline");
+      if (retryAllowed) scheduleReconnect();
+    }
+  };
+  sessionClient.onsync = timestamp => display.flush(() => {
+    if (generation !== connectionGeneration || sessionClient !== client || state.value !== "connecting") return;
+    // The initial sync may contain only guacd's unauthenticated placeholder.
+    if (firstSync === undefined) firstSync = timestamp;
+    else if (timestamp > firstSync && display.getWidth() > 0 && display.getHeight() > 0) {
       reconnectAttempts = 0;
       state.value = "connected";
       message.value = "远程桌面已连接";
       emit("state", "online");
       refreshViewport(true);
     }
-    else if (next === Guacamole.Client.State.DISCONNECTED) {
-      state.value = "closed";
-      message.value = "远程桌面已断开";
-      emit("state", "offline");
-      scheduleReconnect();
-    }
-  };
+  });
   sessionClient.onerror = status => {
     if (generation !== connectionGeneration || sessionClient !== client) return;
     state.value = "error";
     message.value = status.message || "RDP 连接失败";
+    retryAllowed = [
+      Guacamole.Status.Code.SERVER_BUSY,
+      Guacamole.Status.Code.UPSTREAM_TIMEOUT,
+      Guacamole.Status.Code.UPSTREAM_UNAVAILABLE,
+      Guacamole.Status.Code.CLIENT_TIMEOUT,
+    ].some(code => code === status.code);
     emit("state", "offline");
-    scheduleReconnect();
+    if (retryAllowed) scheduleReconnect();
   };
   const { width, height } = dimensions() ?? lastVisibleSize;
-  sessionClient.connect(new URLSearchParams({ token: authToken(), width: String(width), height: String(height), dpi: "96" }).toString());
+  sessionClient.connect(new URLSearchParams({ ...(props.access ? {} : { token: authToken() }), width: String(width), height: String(height), dpi: "96" }).toString());
 }
 
 async function toggleFullscreen() {
   if (!viewport.value) return;
-  if (document.fullscreenElement) await document.exitFullscreen(); else await viewport.value.requestFullscreen();
+  if (document.fullscreenElement) await document.exitFullscreen(); else await (viewport.value.closest<HTMLElement>('.rdp-session')||viewport.value).requestFullscreen();
   window.setTimeout(resize, 80);
 }
+function reconnect() {
+  reconnectAttempts = 0;
+  void connect();
+}
+function fullscreenChanged(){fullscreen.value=!!document.fullscreenElement?.contains(viewport.value||null);resize();}
 
 onMounted(async () => {
   await nextTick();
+  document.addEventListener('fullscreenchange',fullscreenChanged);
   resizeObserver = new ResizeObserver(() => { if (props.active) resize(); });
   if (viewport.value) resizeObserver.observe(viewport.value);
   if (props.active) connect();
@@ -188,22 +221,26 @@ watch(() => props.active, active => {
     keyboard?.reset();
     return;
   }
-  if (!client || state.value === "closed" || state.value === "error") {
+  if (state.value === "closed" || state.value === "error") {
+    if (retryAllowed) scheduleReconnect();
+    return;
+  }
+  if (!client) {
     void nextTick(() => window.requestAnimationFrame(connect));
     return;
   }
   refreshViewport(true);
 });
-onBeforeUnmount(() => { disposed = true; resizeObserver?.disconnect(); disconnect(); });
+onBeforeUnmount(() => { document.removeEventListener('fullscreenchange',fullscreenChanged);disposed = true; resizeObserver?.disconnect(); disconnect(); });
 </script>
 
 <template>
   <section class="view remote-session rdp-session">
     <header class="remote-toolbar">
-      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span>{{ message }}</span></div>
+      <div><i :class="`remote-dot ${state}`" /><strong>{{ title }}</strong><span v-if="state==='connected'" class="recording-indicator" title="会话画面由服务器保存，仅管理员可回放">● 录制中</span><span>{{ message }}</span></div>
       <nav>
-        <button @click="toggleFullscreen"><Icon icon="lucide:maximize-2" />全屏</button>
-        <button @click="connect"><Icon icon="lucide:refresh-cw" />重新连接</button>
+        <a-button type="text" @click="toggleFullscreen"><Icon :icon="fullscreen?'lucide:minimize-2':'lucide:maximize-2'" />{{ fullscreen?'退出全屏':'全屏' }}</a-button>
+        <a-button type="text" @click="reconnect"><Icon icon="lucide:refresh-cw" />重新连接</a-button>
       </nav>
     </header>
     <div ref="viewport" class="rdp-viewport" tabindex="0" />
