@@ -1,0 +1,80 @@
+file,line,title,status,actual,duration_ms
+postgres-workbench.spec.ts,23,PG01 server/database/schema hierarchy isolates same-name data tabs and edits the intended schema,expected,passed,840
+postgres-workbench.spec.ts,24,PG02 schema selector changes real SQL context and database switching changes the backend session,expected,passed,1760
+postgres-workbench.spec.ts,25,PG03 data copy INSERT and UPDATE use schema-qualified identifiers and the actual primary key,expected,passed,1081
+postgres-workbench.spec.ts,26,"PG04 PostgreSQL table maintenance, privileges and structure designer use PostgreSQL semantics",expected,passed,1831
+workbench-regression.spec.ts,42,"G01-1440 data grid wheel, horizontal scrolling, sticky headers and footer do not overlap",expected,passed,793
+workbench-regression.spec.ts,52,"M01-1440 table context menu uses the available window, reaches every item and opens nonoverlapping submenus",expected,passed,847
+workbench-regression.spec.ts,42,"G01-1280 data grid wheel, horizontal scrolling, sticky headers and footer do not overlap",expected,passed,794
+workbench-regression.spec.ts,52,"M01-1280 table context menu uses the available window, reaches every item and opens nonoverlapping submenus",expected,passed,850
+workbench-regression.spec.ts,42,"G01-1024 data grid wheel, horizontal scrolling, sticky headers and footer do not overlap",expected,passed,777
+workbench-regression.spec.ts,52,"M01-1024 table context menu uses the available window, reaches every item and opens nonoverlapping submenus",expected,passed,958
+workbench-regression.spec.ts,68,M02 short windows have one working menu scrollbar and edge-positioned result menus stay reachable,expected,passed,815
+workbench-regression.spec.ts,78,"G02 opening a table sends LIMIT 1000, paging is real, filters and sort change server rows",expected,passed,1470
+workbench-regression.spec.ts,85,"G03 cell editing Enter, blur, Escape, primary key protection and narrow columns persist correctly",expected,passed,2279
+workbench-regression.spec.ts,94,"G04 all result menu selection, sizing, frozen columns and row jump actions change the grid",expected,passed,5632
+workbench-regression.spec.ts,103,"C01 INSERT Statement copies actual table, column and value contents",expected,passed,903
+workbench-regression.spec.ts,103,"C01 UPDATE Statement copies actual table, column and value contents",expected,passed,908
+workbench-regression.spec.ts,103,"C01 Tab Separated Values (Data only) copies actual table, column and value contents",expected,passed,927
+workbench-regression.spec.ts,103,"C01 Tab Separated Values (Field Name only) copies actual table, column and value contents",expected,passed,928
+workbench-regression.spec.ts,103,"C01 Tab Separated Values (Field Name and Data) copies actual table, column and value contents",expected,passed,921
+workbench-regression.spec.ts,103,"C01 JSON copies actual table, column and value contents",expected,passed,913
+workbench-regression.spec.ts,109,"C02 cell, name and DDL clipboard commands copy their real source",expected,passed,893
+workbench-regression.spec.ts,111,T01 仅结构… creates the requested real table,expected,passed,1669
+workbench-regression.spec.ts,111,T01 结构和数据… creates the requested real table,expected,passed,1631
+workbench-regression.spec.ts,112,T02 清空表 executes only after confirmation and refreshes open metadata,expected,passed,1548
+workbench-regression.spec.ts,112,T02 Truncate 表 executes only after confirmation and refreshes open metadata,expected,passed,1527
+workbench-regression.spec.ts,112,T02 删除表 executes only after confirmation and refreshes open metadata,expected,passed,1527
+workbench-regression.spec.ts,113,T03 rename updates the actual table and the open data tab,expected,passed,1497
+workbench-regression.spec.ts,114,T04 CHECK TABLE runs and shows the real maintenance response,expected,passed,790
+workbench-regression.spec.ts,114,T04 ANALYZE TABLE runs and shows the real maintenance response,expected,passed,788
+workbench-regression.spec.ts,114,T04 OPTIMIZE TABLE runs and shows the real maintenance response,expected,passed,834
+workbench-regression.spec.ts,114,T04 REPAIR TABLE runs and shows the real maintenance response,expected,passed,798
+workbench-regression.spec.ts,116,"S01 SQL multiresults, selected statement, EXPLAIN and errors are rendered correctly",expected,passed,780
+workbench-regression.spec.ts,121,"S02 manual SQL rollback and commit change real rows, and cancellation stops a running query",expected,passed,3744
+workbench-regression.spec.ts,126,"Q01 query tab copy, save, close right, close others and close invoke their actual actions",expected,passed,2447
+workbench-regression.spec.ts,128,W01 CSV exports the complete 1207-row table rather than the visible page,expected,passed,1734
+workbench-regression.spec.ts,128,W01 JSON exports the complete 1207-row table rather than the visible page,expected,passed,1727
+workbench-regression.spec.ts,128,W01 SQL INSERT exports the complete 1207-row table rather than the visible page,expected,passed,1748
+workbench-regression.spec.ts,128,W01 Excel XLSX exports the complete 1207-row table rather than the visible page,expected,passed,1847
+workbench-regression.spec.ts,130,"D01 database open/close, properties, new query, console, search, print and refresh execute",expected,passed,3621
+workbench-regression.spec.ts,139,D02 new database and typed deletion update the server and object tree,expected,passed,2299
+workbench-regression.spec.ts,142,"P01 server expand/collapse, properties, test, edit, duplicate and new connection forms are usable",expected,passed,4288
+workbench-regression.spec.ts,148,"O01 view definition, edit SQL, copy, refresh and confirmed delete execute",expected,passed,1808
+workbench-regression.spec.ts,148,"O01 function definition, edit SQL, copy, refresh and confirmed delete execute",expected,passed,1803
+workbench-regression.spec.ts,148,"O01 procedure definition, edit SQL, copy, refresh and confirmed delete execute",expected,passed,1794
+workbench-regression.spec.ts,148,"O01 trigger definition, edit SQL, copy, refresh and confirmed delete execute",expected,passed,1776
+workbench-regression.spec.ts,148,"O01 event definition, edit SQL, copy, refresh and confirmed delete execute",expected,passed,2101
+workbench-regression.spec.ts,157,T05 new table designer saves real fields and applies an ALTER through the UI,expected,passed,1007
+workbench-regression.spec.ts,161,"W02 csv import uploads the chosen file, completes its background job and persists actual rows",expected,passed,1580
+workbench-regression.spec.ts,161,"W02 json import uploads the chosen file, completes its background job and persists actual rows",expected,passed,1579
+workbench-regression.spec.ts,161,"W02 xlsx import uploads the chosen file, completes its background job and persists actual rows",expected,passed,1602
+workbench-regression.spec.ts,161,"W02 sql import uploads the chosen file, completes its background job and persists actual rows",expected,passed,1571
+workbench-regression.spec.ts,166,"P02 duplicate, save, edit without replacing the password and delete a real isolated connection",expected,passed,3282
+workbench-regression.spec.ts,172,S03 leaving a browser workspace releases its backend query session,expected,passed,475
+workbench-regression.spec.ts,173,"G05 switching tables isolates saved column widths, selection and frozen columns",expected,passed,2711
+workbench-regression.spec.ts,177,S04 running an explicit SQL selection executes only the selected text,expected,passed,591
+workbench.spec.ts,91,Vue/Iconify tree has reliable arrows and aligned icons with many tables,expected,passed,645
+workbench.spec.ts,123,visible toolbar action creates a database through the real dialog,expected,passed,1651
+workbench.spec.ts,134,database and table context menus expose the P0-P2 command set,expected,passed,586
+workbench.spec.ts,145,changing the query database changes the real backend session,expected,passed,1250
+workbench.spec.ts,160,lost backend query sessions are recreated and the SQL is safely retried,expected,passed,539
+workbench.spec.ts,172,lost sessions never auto-replay writes or a lost manual transaction,expected,passed,625
+workbench.spec.ts,204,network outage is shown and a manual health check restores the workspace,expected,passed,1405
+workbench.spec.ts,219,"query editor height supports drag, keyboard adjustment and persistence",expected,passed,811
+workbench.spec.ts,243,all dirty query tabs survive reload and closing one asks for confirmation,expected,passed,1666
+workbench.spec.ts,260,SQL intelligence completes real tables and alias-qualified columns,expected,passed,969
+workbench.spec.ts,298,current-statement execution ignores semicolons inside SQL literals,expected,passed,623
+workbench.spec.ts,308,direct single-table SELECT results support safe inline updates,expected,passed,840
+workbench.spec.ts,339,"table data supports inline edit, persistent resizing, sorting and filtering",expected,passed,5284
+workbench.spec.ts,411,"result grid actions, selection, sizing and frozen columns are wired",expected,passed,2650
+workbench.spec.ts,438,"query tabs, history, saved queries and transaction controls work",expected,passed,5517
+workbench.spec.ts,461,table designer and transfer wizards cover configuration and execution,expected,passed,5947
+workbench.spec.ts,484,designer emits a real column rename without marking it destructive,expected,passed,635
+workbench.spec.ts,497,MySQL privileges render and trigger menus hide unsupported state actions,expected,passed,626
+workbench.spec.ts,511,SQL-file cancellation stays pending until the server stops the query,expected,passed,2200
+workbench.spec.ts,526,database SQL-file wizard executes a script and refreshes metadata,expected,passed,2185
+workbench.spec.ts,536,"export, dump and generated-data jobs complete through their UI flows",expected,passed,3689
+workbench-regression.spec.ts,183,G06 a rejected cell edit restores real data and a subsequent valid edit still saves,expected,passed,1134
+workbench-regression.spec.ts,198,P03 server new-database/new-query entries and inactive-connection open execute their real targets,expected,passed,2922
+workbench-regression.spec.ts,216,R01 every SQL-result context action uses the query grid and real single-table metadata,expected,passed,7370

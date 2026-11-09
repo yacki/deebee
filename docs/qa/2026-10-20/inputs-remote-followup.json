@@ -1,0 +1,124 @@
+{
+  "release": "ui-inputs-remote-20261020-113306-aeaf7985",
+  "production_browser_cases": 44,
+  "suite_counts": {
+    "rdp-session.spec.ts": 7,
+    "remote-navigation.spec.ts": 5,
+    "session-recordings.spec.ts": 8,
+    "ui-input-theme.spec.ts": 3,
+    "ssh-host-key.spec.ts": 14,
+    "remote-live-ui.spec.ts": 2,
+    "ui-workbench.spec.ts": 5
+  },
+  "real_protocols": [
+    "SSH",
+    "xrdp/Guacamole"
+  ],
+  "normal_ui_font_px": 12,
+  "node_tests": 10,
+  "build": "passed",
+  "lint": "passed",
+  "diff_check": "passed",
+  "deployment": {
+    "release": "ui-inputs-remote-20261020-113306-aeaf7985",
+    "frontend_active": true,
+    "image_for_recreation": "deebee-local:ui-inputs-remote-20261020-113306-aeaf7985",
+    "runtime_image_unchanged": "deebee-local:vue-arco-20261020-101010-ebffb818-pg-privileges",
+    "backend_restarted": false,
+    "container_id_unchanged": "8f1c85e8a67aefa8296d833606bc5dc3e614cbf55c321d29c3e7477d11e67b31",
+    "guacd_unchanged": true,
+    "backend_source_unchanged": true,
+    "keys_and_environment_preserved": true,
+    "files_verified": 66,
+    "backup": "/data/deebee/backups/20261020-113313-before-ui-inputs-remote-20261020-113306-aeaf7985"
+  },
+  "public_acceptance": {
+    "base": "https://deebee.idmesh.site/deebee",
+    "remote_leaf_nodes": [
+      {
+        "protocol": "ssh",
+        "leaf": true
+      },
+      {
+        "protocol": "rdp",
+        "leaf": true
+      }
+    ],
+    "ok": true,
+    "metrics": {
+      "workbench.connection": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "workbench.treeSearch": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "workbench.objectFilter": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "workbench.connectionName": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "workbench.port": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "workbench.password": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "workbench.privateKey": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(185, 190, 198)",
+        "fontSize": "12px"
+      },
+      "admin.projectGroups": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "admin.tags": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "admin.name": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "admin.accountType": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "admin.recordingQuery": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "admin.recordingProtocol": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      },
+      "admin.recordingDate": {
+        "background": "rgb(255, 255, 255)",
+        "border": "rgb(201, 205, 212)",
+        "fontSize": "12px"
+      }
+    },
+    "page_errors": [],
+    "failed_responses": []
+  },
+  "public_control_samples": 14
+}

@@ -1,0 +1,33 @@
+{
+  "release": "sql-completion-20261022-000519",
+  "status": "deployed_verified",
+  "image_for_next_restart": "deebee-local:ui-sql-completion-20261022-000519-476da49c",
+  "previous_image": "deebee-local:query-array-20261021-2f491089",
+  "backup": "/data/deebee/releases/sql-completion-20261022-000519/backup",
+  "published_at_utc": "2026-10-21T16:09:32.708243+00:00",
+  "web_files": 66,
+  "backend_container_unchanged": true,
+  "backend_started_at_unchanged": true,
+  "backend_source_unchanged": true,
+  "guacd_unchanged": true,
+  "gateway_unchanged": true,
+  "keys_environment_trust_preserved": true,
+  "old_assets_preserved": true,
+  "health": true,
+  "git_commit": false,
+  "git_push": false,
+  "public_verification": {
+    "public_files_verified": 65,
+    "index_sha256": "476da49c270ae86805fcdc2bbeb8ea83a90063e405a1274b636bc06bea96975e",
+    "all_match_tested_bundle": true,
+    "health": true
+  },
+  "old_assets_verified": 121,
+  "browser_verification": {
+    "cases": 20,
+    "passed": 20,
+    "url": "https://deebee.idmesh.site/deebee/",
+    "api": "mocked",
+    "database_queries_executed": false
+  }
+}

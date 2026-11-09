@@ -1,0 +1,224 @@
+{
+  "date": "2026-10-20",
+  "timezone": "Australia/Perth",
+  "base_commit": "e82020baf9cb02999f18edf1aaa94fcbce5b4ffd",
+  "uncommitted_working_tree": true,
+  "browser_unique_passed": 140,
+  "browser_runs": [
+    {
+      "area": "MySQL/PostgreSQL workbench (production build)",
+      "passed": 76,
+      "failed": 0,
+      "includes": "76-case full run plus a targeted three-viewport mouse-wheel rerun"
+    },
+    {
+      "area": "Controls, recording frames, host-key failures, groups and environments",
+      "passed": 42,
+      "failed": 0,
+      "includes": "41-case run plus the new empty-buffer recording case; all eight recording cases rerun on production build"
+    },
+    {
+      "area": "Real SSH/xrdp workbench UI",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "area": "Real management UI",
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "area": "Real role UI",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 1,
+      "skip_reason": "No separately configured trusted TLS xrdp role fixture"
+    },
+    {
+      "area": "Real SQL/SSH approval UI",
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "backend_runs": [
+    {
+      "area": "Main backend suite with real MySQL/PostgreSQL",
+      "passed": 257,
+      "failed": 0,
+      "skipped": 37
+    },
+    {
+      "area": "Separately opted-in real access/role/identity/MCP protocols",
+      "passed": 36,
+      "failed": 0,
+      "resolves_main_skips": 36
+    }
+  ],
+  "node_tests_passed": 10,
+  "lint": "passed",
+  "git_diff_check": "passed",
+  "additional_browser_skip": {
+    "area": "Real Kubernetes cluster",
+    "reason": "No kubeconfig supplied"
+  },
+  "remaining_backend_skip": "Real Redis/ClickHouse/MongoDB connection suite not opted in",
+  "history_conversations_reviewed": 20,
+  "deployment": {
+    "release": "vue-arco-20261020-101010-ebffb818",
+    "frontend_manifest_sha256": "ebffb8180c2b31435c3b1973ce76e2b659d50645d59c8cd96086dab048420ac2",
+    "public_url": "https://deebee.idmesh.site/deebee/",
+    "admin_url": "https://deebee.idmesh.site/deebee/admin",
+    "backend_restarted": true,
+    "existing_sessions_preserved": false,
+    "verified_files": 66,
+    "backup": "/data/deebee/backups/20261020-101013-before-vue-arco-20261020-101010-ebffb818",
+    "user_authorized_restart": true,
+    "previous_sessions_closed_cleanly": true,
+    "previous_session_recordings_preserved": true,
+    "backend_image": "deebee-local:vue-arco-20261020-101010-ebffb818-pg-privileges",
+    "container_id": "8f1c85e8a67aefa8296d833606bc5dc3e614cbf55c321d29c3e7477d11e67b31",
+    "backend_started_at": "2026-10-20T10:48:37.227725289Z",
+    "backend_restart_backup": "/data/deebee/backups/20261020-104834-before-pg-backend-restart"
+  },
+  "remote_acceptance": {
+    "management_pages": [
+      "外部身份",
+      "系统账号",
+      "用户组管理",
+      "资源管理",
+      "资源授权",
+      "操作审批",
+      "执行记录",
+      "审计日志",
+      "系统设置"
+    ],
+    "recording_protocols": [
+      {
+        "protocol": "ssh",
+        "real_recording": true,
+        "playing_drag_resumes": true,
+        "paused_seek_stays_paused": true,
+        "backwards_restores_visual": true,
+        "different_visual_at_later_position": true,
+        "resume_advances": true
+      },
+      {
+        "protocol": "rdp",
+        "real_recording": true,
+        "playing_drag_resumes": true,
+        "paused_seek_stays_paused": true,
+        "backwards_restores_visual": true,
+        "different_visual_at_later_position": true,
+        "resume_advances": true
+      }
+    ],
+    "page_errors": [],
+    "failed_responses": [],
+    "workbench_checks": [
+      "17 table menu entries and submenu fit without an unnecessary scrollbar",
+      "double click opens data; real horizontal and wheel scrolling work",
+      "inline edit persists in the real remote database",
+      "remote SQL multi-statement execution returns the actual 1207-row count",
+      "production SQL completion loads and suggests the actual scratch table"
+    ],
+    "scratch_database_removed": true,
+    "ok": true
+  },
+  "approval_filesystem_independently_checked": true,
+  "backend_patch": {
+    "purpose": "PostgreSQL privileges response supports array results",
+    "local_http_and_browser_verified": true,
+    "image": "deebee-local:vue-arco-20261020-101010-ebffb818-pg-privileges",
+    "prepared_remotely": true,
+    "active": true,
+    "restart_required": false,
+    "main_sha256": "f3d4f970dd0f38c4559737f211086479cc34bff416c6af643e8bdf23140920db",
+    "production_privileges_api_and_menu_verified": true
+  },
+  "post_restart_validation": {
+    "workbench_checks": [
+      "17 table menu entries and submenu fit without an unnecessary scrollbar",
+      "double click opens data; real horizontal and wheel scrolling work",
+      "inline edit persists in the real remote database",
+      "remote SQL multi-statement execution returns the actual 1207-row count",
+      "production SQL completion loads and suggests the actual scratch table"
+    ],
+    "mysql_scratch_database_removed": true,
+    "real_postgresql": {
+      "base": "https://deebee.idmesh.site/deebee",
+      "actual_postgresql": true,
+      "postgres_version": "16.8",
+      "ephemeral_database": true,
+      "privileges_http_200": true,
+      "real_select_grant_returned": true,
+      "menu_shows_actual_privileges": true,
+      "actual_table_data_visible": true,
+      "ok": true,
+      "connection_and_synced_resource_removed": true,
+      "temporary_postgres_removed": true,
+      "page_errors": []
+    },
+    "management_pages": [
+      "外部身份",
+      "系统账号",
+      "用户组管理",
+      "资源管理",
+      "资源授权",
+      "操作审批",
+      "执行记录",
+      "审计日志",
+      "系统设置"
+    ],
+    "recording_checks": [
+      {
+        "protocol": "ssh",
+        "real_recording": true,
+        "playing_drag_resumes": true,
+        "paused_seek_stays_paused": true,
+        "backwards_restores_visual": true,
+        "different_visual_at_later_position": true,
+        "resume_advances": true
+      },
+      {
+        "protocol": "rdp",
+        "real_recording": true,
+        "playing_drag_resumes": true,
+        "paused_seek_stays_paused": true,
+        "backwards_restores_visual": true,
+        "different_visual_at_later_position": true,
+        "resume_advances": true
+      }
+    ],
+    "page_errors": [],
+    "failed_responses": [],
+    "previous_active_session_statuses": [
+      {
+        "protocol": "rdp",
+        "status": "completed"
+      },
+      {
+        "protocol": "ssh",
+        "status": "completed"
+      }
+    ],
+    "all_previous_recordings_preserved": true,
+    "guacd_unchanged": true,
+    "keys_and_environment_preserved": true,
+    "ok": true
+  },
+  "typography_followup": {
+    "release": "ui-typography-20261020-111224-7e892670",
+    "normal_ui_font_px": 12,
+    "deployed": true,
+    "backend_restarted": false,
+    "production_font_locations_checked": 16,
+    "remote_font_locations_checked": 13,
+    "existing_ui_tests_passed": 4,
+    "node_tests_passed": 10,
+    "recording_protocols_rechecked": [
+      "ssh",
+      "rdp"
+    ],
+    "details": "typography-followup.json"
+  }
+}

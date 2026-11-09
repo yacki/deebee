@@ -1,0 +1,61 @@
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -17,7 +17,7 @@
+ import { toolbarCapabilitiesFor, type ToolbarCapability } from "./toolbarPolicy";
+ import { API_BASE, ApiError, api, authToken, download, isNetworkError, isSessionExpiredError, jsonBody, workspaceId } from "./api";
+ import { inferEditableSingleSelectSource, inferSingleSelectSource, splitSqlStatements } from "./sqlAnalysis";
+-import type { Catalog, ConnectionDraft, ConnectionDriver, DataTab, Database, DatabaseSchema, DbObject, DesignerTab, MenuItem, MenuState, Objects, ObjectsTab, Profile, QueryResponse, QueryTab, RemoteTab, ResultSet, TableData, TableSchema, TableSpec, WizardState, WorkTab } from "./types";
++import type { Catalog, ConnectionDraft, ConnectionDriver, DataTab, Database, DatabaseSchema, DbObject, DesignerTab, MenuItem, MenuState, Objects, ObjectsTab, Profile, QueryResponse, QueryWireResponse, QueryTab, RemoteTab, ResultSet, TableData, TableSchema, TableSpec, WizardState, WorkTab } from "./types";
+ 
+ const TABLE_DATA_LIMIT = 1000;
+ 
+@@ -615,7 +615,16 @@
+ function tabMenu(event: MouseEvent, tab: WorkTab) { const index=tabs.value.indexOf(tab); contextMenu.value={x:event.clientX,y:event.clientY,title:`${tabTitle(tab)} · ${profileNameForTab(tab)}`,items:[{id:"close",label:"关闭",icon:"lucide:x",action:()=>closeTab(tab)},{id:"other",label:"关闭其他标签",icon:"lucide:copy-x",action:()=>closeTabs(tabs.value.filter(item=>item!==tab))},{id:"right",label:"关闭右侧标签",icon:"lucide:panel-right-close",disabled:index===tabs.value.length-1,action:()=>closeTabs([...tabs.value.slice(index+1)])},{id:"duplicate",label:"复制标签",icon:"lucide:copy",disabled:tab.type!=="query",action:async()=>{if(tab.type!=="query")return;await selectTab(tab);await newQuery(tab.database,tab.sql,tab.schema,undefined,tab.profileId)}},{id:"save",label:"保存查询…",icon:"lucide:save",disabled:tab.type!=="query",action:async()=>{if(tab.type!=="query")return;const name=await promptValue("查询名称",tab.title);if(!name)return;savedQueries.value=[{name,database:tab.database,schema:tab.schema,sql:tab.sql},...savedQueries.value.filter(item=>item.name!==name)];localStorage.setItem("deebee_saved_queries",JSON.stringify(savedQueries.value));tab.title=name;tab.savedSql=tab.sql;flash(`查询 ${name} 已保存`)}}]}; }
+ async function useSavedQuery(item:{name:string;database:string;schema?:string;sql:string}){const tab=active.value;if(tab?.type!=="query")return;if(item.schema!==undefined)await switchQueryContext(tab,item.database,item.schema);else await switchQueryDatabase(tab,item.database);tab.sql=item.sql;historyOpen.value=false}
+ 
+-async function sendQuery(tab: QueryTab, sql: string) { return api<QueryResponse>(`/sessions/${tab.sessionId}/query`, { method: "POST", body: jsonBody({ sql, limit: 10000 }) }); }
++async function sendQuery(tab: QueryTab, sql: string): Promise<QueryResponse> {
++  const response = await api<QueryWireResponse>(`/sessions/${tab.sessionId}/query`, {
++    method: "POST", body: jsonBody({ sql, limit: 10000 }), headers: { "X-Deebee-Row-Format": "array" },
++  });
++  return { ...response, results: response.results.map(result => {
++    if (result.row_format !== "array") return result;
++    const names = (result.columns || []).map(column => column.name);
++    return { ...result, rows: result.rows.map(values => Object.fromEntries(names.map((name, index) => [name, values[index]]))) };
++  }) };
++}
+ function attachQueryResultSources(tab: QueryTab, sql: string, response: QueryResponse) {
+   const statements = splitSqlStatements(sql);
+   if (statements.length !== response.results.length) return;
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -24,6 +24,8 @@
+ export type ResultSource = { database: string; schema: string; table: string; primaryKey?: string[]; statement?: string };
+ export type ResultSet = { index: number; kind: "rows" | "mutation"; columns?: { name: string; type: string; nullable: boolean }[]; rows?: Record<string, unknown>[]; row_count?: number; truncated?: boolean; affected_rows?: number; last_insert_id?: number; source?: ResultSource };
+ export type QueryResponse = { ok: boolean; results: ResultSet[]; elapsed_ms: number; autocommit: boolean; warnings?: Record<string, unknown>[]; status?: Record<string, unknown> };
++export type ArrayResultSet = Omit<ResultSet, "rows"> & { row_format: "array"; rows: unknown[][] };
++export type QueryWireResponse = Omit<QueryResponse, "results"> & { results: ((ResultSet & { row_format?: undefined }) | ArrayResultSet)[] };
+ export type CatalogColumn = { name: string; data_type: string; nullable: boolean; key?: string };
+ export type CatalogTable = { name: string; object_type: string; columns: CatalogColumn[] };
+ export type Catalog = { database: string; schema?: string; tables: CatalogTable[]; routines: { name: string; object_type: string; data_type: string }[] };
+--- a/backend/deebee/main.py
++++ b/backend/deebee/main.py
+@@ -926,9 +926,16 @@
+ 
+ @app.post("/api/sessions/{session_id}/query")
+ async def run_query(
+-    session_id: str, body: QueryBody, _: str = Depends(current_user)
++    session_id: str, body: QueryBody, request: Request, _: str = Depends(current_user)
+ ) -> dict[str, Any]:
+-    return await asyncio.to_thread(workbench.execute, session_id, body.sql, body.limit)
++    response = await asyncio.to_thread(workbench.execute, session_id, body.sql, body.limit)
++    if request.headers.get("x-deebee-row-format") == "array":
++        for result in response["results"]:
++            if result["kind"] == "rows":
++                names = [column["name"] for column in result["columns"]]
++                result["rows"] = [[row.get(name) for name in names] for row in result["rows"]]
++                result["row_format"] = "array"
++    return response
+ 
+ 
+ @app.post("/api/sessions/{session_id}/cancel")

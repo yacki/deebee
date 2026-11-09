@@ -1,0 +1,154 @@
+{
+  "status": "passed",
+  "benchmark_scope": "Local production frontend, synthetic 7179 rows x 24 columns; click to two animation frames, not production database execution latency",
+  "baseline": {
+    "rows": 7179,
+    "columns": 24,
+    "switches": [
+      {
+        "pane": "消息",
+        "ms": 42.299999952316284,
+        "characters": 112
+      },
+      {
+        "pane": "摘要",
+        "ms": 43.39999985694885,
+        "characters": 120
+      },
+      {
+        "pane": "Profile",
+        "ms": 968.7000000476837,
+        "characters": 10997115
+      },
+      {
+        "pane": "状态",
+        "ms": 93,
+        "characters": 153
+      },
+      {
+        "pane": "结果 1 (7179)",
+        "ms": 77.40000009536743,
+        "characters": 30352
+      },
+      {
+        "pane": "消息",
+        "ms": 45.799999952316284,
+        "characters": 112
+      },
+      {
+        "pane": "摘要",
+        "ms": 42,
+        "characters": 120
+      },
+      {
+        "pane": "Profile",
+        "ms": 944.8999998569489,
+        "characters": 10997115
+      },
+      {
+        "pane": "状态",
+        "ms": 81.09999990463257,
+        "characters": 153
+      },
+      {
+        "pane": "结果 1 (7179)",
+        "ms": 77.39999985694885,
+        "characters": 30352
+      }
+    ]
+  },
+  "verified": {
+    "rows": 7179,
+    "columns": 24,
+    "switches": [
+      {
+        "pane": "消息",
+        "ms": 46.90000009536743,
+        "characters": 112
+      },
+      {
+        "pane": "摘要",
+        "ms": 43.39999985694885,
+        "characters": 120
+      },
+      {
+        "pane": "Profile",
+        "ms": 42.200000047683716,
+        "characters": 3846
+      },
+      {
+        "pane": "状态",
+        "ms": 39.89999985694885,
+        "characters": 153
+      },
+      {
+        "pane": "结果 1 (7179)",
+        "ms": 76.40000009536743,
+        "characters": 30352
+      },
+      {
+        "pane": "消息",
+        "ms": 46,
+        "characters": 112
+      },
+      {
+        "pane": "摘要",
+        "ms": 44.799999952316284,
+        "characters": 120
+      },
+      {
+        "pane": "Profile",
+        "ms": 42.700000047683716,
+        "characters": 3846
+      },
+      {
+        "pane": "状态",
+        "ms": 41,
+        "characters": 153
+      },
+      {
+        "pane": "结果 1 (7179)",
+        "ms": 75.79999995231628,
+        "characters": 30352
+      }
+    ]
+  },
+  "main_workspace": {
+    "rows": 7000,
+    "columns": 24,
+    "queryMs": 267.10000014305115,
+    "mountedRows": 32,
+    "mountedCells": 801,
+    "switchMs": [
+      73.40000009536743,
+      69.60000014305115,
+      70.10000014305115
+    ]
+  },
+  "browser_cases": 53,
+  "node_cases": 10,
+  "build": true,
+  "lint": true,
+  "diff_check": true,
+  "tree_indent_px": 12,
+  "tree_expand_target_px": 26,
+  "tree_drivers": [
+    "mysql",
+    "postgresql",
+    "mssql"
+  ],
+  "browser_visual_check": {
+    "all_five_result_tabs": true,
+    "selection_restored": true,
+    "screenshot": "result-panels-tree-preview.png"
+  },
+  "covered": [
+    "result subtabs both directions",
+    "query rerun, empty results, mutation metadata, errors, warnings, status",
+    "selection, row keys, editing, virtual scroll, header, freeze, print preparation",
+    "object catalog, filtering, tree expansion, schemas",
+    "SSH/RDP navigation and mocked RDP reconnect",
+    "Kubernetes navigation",
+    "workbench tabs, controls and designer"
+  ]
+}

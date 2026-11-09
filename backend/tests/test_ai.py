@@ -249,3 +249,64 @@ def test_user_generation_respects_resource_auth_and_csrf(app, client, provider):
     client.cookies.set('deebee_access', token)
     assert client.post('/api/v1/ai/generate', json=body).status_code == 403
     assert len(provider[0]) == 1
+
+
+@pytest.mark.parametrize('sql,language,allowed', [
+    ('SELECT 1 AS ready;', 'mysql', True),
+    ('SELECT id, COUNT(*) FROM orders GROUP BY id', 'mysql', True),
+    ('WITH t AS (SELECT 1 AS id) SELECT * FROM t', 'postgresql', True),
+    ('SELECT TOP 10 id FROM orders', 'mssql', True),
+    ('UPDATE orders SET status=1', 'mysql', False),
+    ('SELECT 1; DELETE FROM orders', 'mysql', False),
+    ('SELECT * FROM orders FOR UPDATE', 'mysql', False),
+    ("SELECT * INTO OUTFILE '/tmp/dump' FROM orders", 'mysql', False),
+    ('SELECT * INTO backup FROM orders', 'mssql', False),
+    ('SELECT pg_sleep(10)', 'postgresql', False),
+    ("SELECT dblink_exec('x','DROP TABLE users')", 'postgresql', False),
+    ('SELECT custom_function()', 'mysql', False),
+    ('SELECT public.count(*) FROM orders', 'postgresql', False),
+    ('WITH x AS (DELETE FROM orders RETURNING *) SELECT * FROM x', 'postgresql', False),
+    ('SELECT @x := 1', 'mysql', False),
+    ('SELECT 1 /*! INTO OUTFILE "/tmp/x" */', 'mysql', False),
+    ('find . -type f -size +100M', 'shell', False),
+    ('ls -lah', 'shell', False),
+    ('SELECT :unbound', 'mysql', False),
+])
+def test_auto_run_uses_conservative_parser(sql, language, allowed):
+    from deebee.ai_run import can_auto_run
+    assert can_auto_run(sql, language) is allowed
+
+
+def test_prepare_generates_and_classifies_without_executing(app, client, provider):
+    client.put('/api/admin/v1/ai/settings', headers=ADMIN, json=CONFIG)
+    assert client.post('/api/ai/prepare', json={'instruction': '查询常量 1'}).status_code == 401
+    for code, expected in [('SELECT 1;', True), ('DELETE FROM users;', False), ('SELECT unknown_udf();', False), ('', False)]:
+        provider[1]['choices'][0]['message']['content'] = json.dumps({'code': code, 'message': '' if code else '请指定表名'})
+        response = client.post('/api/ai/prepare', headers=ADMIN, json={'instruction': '查询常量 1'})
+        assert response.status_code == 200
+        result = response.json()
+        assert result['auto_run'] is expected
+        assert result['requires_confirmation'] is (bool(code) and not expected)
+    assert app.state.access.store.list('executions') == []
+    for event in app.state.access.store.audits():
+        assert 'unknown_udf' not in json.dumps(event)
+
+
+def test_user_prepare_requires_current_resource_and_csrf(app, client, provider):
+    service = app.state.access
+    p = principal(service)
+    resource, accounts = published(service)
+    _, key = identity(service, p['id'])
+    headers = {'X-DeeBee-API-Key': key}
+    client.put('/api/admin/v1/ai/settings', headers=ADMIN, json=CONFIG)
+    provider[1]['choices'][0]['message']['content'] = '{"code":"SELECT 1;"}'
+    body = {'instruction': '查询常量 1', 'resource_id': resource['id']}
+    assert client.post('/api/v1/ai/prepare', headers=headers, json=body).status_code == 404
+    save(service, 'grants', {'principal_id': p['id'], 'resource_id': resource['id'], 'normal_account_id': accounts[0]})
+    assert client.post('/api/v1/ai/prepare', headers=headers, json=body).json()['auto_run'] is True
+    assert client.post('/api/v1/ai/prepare', headers=headers, json=body | {'language': 'shell'}).status_code == 403
+    save(service, 'principals', {'name': 'Human', 'kind': 'human', 'username': 'runuser', 'password': 'test-password-long'})
+    token, _ = service.auth.login('runuser', 'test-password-long', 'local')
+    client.cookies.set('deebee_access', token)
+    assert client.post('/api/v1/ai/prepare', json=body).status_code == 403
+    assert len(provider[0]) == 1

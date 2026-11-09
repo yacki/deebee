@@ -1,0 +1,24 @@
+{
+  "release": "query-performance-20261021",
+  "image_for_next_restart": "deebee-local:ui-query-performance-20261021-a2a4d6c7",
+  "previous_image": "deebee-local:rdp-stability-20261020",
+  "published_at_utc": "2026-10-20T16:11:31Z",
+  "backup": "/data/deebee/releases/query-performance-20261021/backup",
+  "web_files": 66,
+  "status": "deployed_verified",
+  "backend_container_unchanged": true,
+  "backend_started_at_unchanged": true,
+  "backend_source_unchanged": true,
+  "guacd_unchanged": true,
+  "keys_environment_trust_preserved": true,
+  "old_assets_preserved": true,
+  "health": true,
+  "connections_and_resources_and_recording_list": true,
+  "git_commit": false,
+  "git_push": false,
+  "public_verification": {
+    "public_files_verified": 65,
+    "index_sha256": "a2a4d6c7db1f77a64425f50fdbe3f9ec8e2f751de09d95c828cdf6ff8d0ada8c",
+    "all_match_tested_bundle": true
+  }
+}

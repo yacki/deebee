@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-21",
+  "scenario": "Production bundles served locally; mocked API returns all 7000 rows and 24 columns. Same machine, browser and test; click to double animation frame. These are browser benchmark timings, not live database timings.",
+  "before": {
+    "rows": 7000,
+    "columns": 24,
+    "queryMs": 4558.299999952316,
+    "mountedRows": 7000,
+    "mountedCells": 175000,
+    "switchMs": [
+      4630.599999904633,
+      4459.5,
+      4093.100000143051
+    ]
+  },
+  "after": {
+    "rows": 7000,
+    "columns": 24,
+    "queryMs": 278,
+    "mountedRows": 25,
+    "mountedCells": 626,
+    "switchMs": [
+      59,
+      61,
+      54.5
+    ]
+  },
+  "browser_unique_cases": 41,
+  "final_patch_targeted_cases": 9,
+  "node_cases": 10,
+  "build": "passed",
+  "lint": "passed",
+  "status": "deployed_verified",
+  "deployment": {
+    "release": "query-performance-20261021",
+    "image_for_next_restart": "deebee-local:ui-query-performance-20261021-a2a4d6c7",
+    "previous_image": "deebee-local:rdp-stability-20261020",
+    "published_at_utc": "2026-10-20T16:11:31Z",
+    "backup": "/data/deebee/releases/query-performance-20261021/backup",
+    "web_files": 66,
+    "status": "deployed_verified",
+    "backend_container_unchanged": true,
+    "backend_started_at_unchanged": true,
+    "backend_source_unchanged": true,
+    "guacd_unchanged": true,
+    "keys_environment_trust_preserved": true,
+    "old_assets_preserved": true,
+    "health": true,
+    "connections_and_resources_and_recording_list": true,
+    "git_commit": false,
+    "git_push": false,
+    "public_verification": {
+      "public_files_verified": 65,
+      "index_sha256": "a2a4d6c7db1f77a64425f50fdbe3f9ec8e2f751de09d95c828cdf6ff8d0ada8c",
+      "all_match_tested_bundle": true
+    }
+  }
+}

@@ -148,8 +148,8 @@ onBeforeUnmount(() => {
       </nav>
     </header>
     <section v-if="aiDraftOpen" class="ssh-ai-draft">
-      <header><strong>命令草稿</strong><span>{{ draftMessage || '写下需求，点击「自然语言转命令」' }}</span><a-button :disabled="!aiDraft" @click="copyDraft">复制命令</a-button><a-button @click="aiDraftOpen=false">关闭</a-button></header>
-      <div style="height:240px"><SqlEditor v-model="aiDraft" language="shell" :ai-access="access" :context-id="profileId" /></div>
+      <header><strong>命令草稿</strong><span>{{ draftMessage || '写下需求，按 ⌘Enter / Ctrl+Enter 生成命令' }}</span><a-button :disabled="!aiDraft" @click="copyDraft">复制命令</a-button><a-button @click="aiDraftOpen=false">关闭</a-button></header>
+      <div style="height:240px"><SqlEditor v-model="aiDraft" language="shell" draft-only :ai-access="access" :context-id="profileId" /></div>
     </section>
     <div ref="host" class="terminal-host" @click="terminal?.focus()" />
   </section>

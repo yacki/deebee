@@ -1,0 +1,63 @@
+{
+  "release": "query-array-20261021",
+  "image": "deebee-local:query-array-20261021-2f491089",
+  "previous_image": "deebee-local:ui-result-panels-20261021-0a883a58",
+  "backup": "/data/deebee/releases/query-array-20261021/backup",
+  "published_at_utc": "2026-10-21T05:53:58Z",
+  "git_commit": false,
+  "git_push": false,
+  "status": "deployed_verified_awaiting_user_review",
+  "backend_recreated": true,
+  "backend_id": "0def4664367a0f308df0f25256c9e7273a239f21d40cfa8e96c91ae6f58adc5c",
+  "backend_started_at": "2026-10-21T05:54:01.037903339Z",
+  "only_backend_main_changed": true,
+  "web_files": 66,
+  "guacd_unchanged": true,
+  "gateway_not_recreated": true,
+  "nginx_config_unchanged": true,
+  "keys_environment_trust_preserved": true,
+  "old_assets_preserved": true,
+  "health": true,
+  "connections_resources_recordings_verified": true,
+  "public_verification": {
+    "public_files_verified": 65,
+    "index_sha256": "2f491089661ea5601340ed93c0be4e605df1c3ad167df23b9130c296f56007b1",
+    "all_match_tested_bundle": true
+  },
+  "query_verification": {
+    "status": "passed",
+    "legacy": {
+      "row_format": "object",
+      "sql_elapsed_ms": 408.9,
+      "to_headers_ms": 980.6,
+      "download_ms": 2915.1,
+      "http_total_ms": 3895.7,
+      "wire_bytes": 1720739,
+      "json_bytes": 6234554,
+      "encoding": "gzip",
+      "content_type": "application/json"
+    },
+    "array": {
+      "row_format": "array",
+      "sql_elapsed_ms": 275.0,
+      "to_headers_ms": 594.0,
+      "download_ms": 2213.9,
+      "http_total_ms": 2807.8,
+      "wire_bytes": 1666336,
+      "json_bytes": 4202918,
+      "encoding": "gzip",
+      "content_type": "application/json"
+    },
+    "results": [
+      {
+        "rows": 7179,
+        "columns": 23
+      }
+    ],
+    "full_values_identical": true,
+    "result_sha256": "e9f314b32ccf7d888eae0e0fc3a1210483ab3fb5eaeb1f2436b57b0ba601eddf",
+    "single_json_response": true,
+    "temporary_session_closed": true
+  },
+  "awaiting_user_review": true
+}
