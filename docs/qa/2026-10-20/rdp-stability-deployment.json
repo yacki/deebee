@@ -1,0 +1,38 @@
+{
+  "release": "rdp-stability-20261020",
+  "image": "deebee-local:rdp-stability-20261020",
+  "previous_image": "deebee-local:ui-object-catalog-20261020-123023-aa03d051",
+  "backup": "/data/deebee/releases/rdp-stability-20261020/backup",
+  "published_at_utc": "2026-10-20T15:16:42Z",
+  "status": "deployed_verified",
+  "container_id": "5d9356dc5d696abfecf2559d006f1846ffef17d1d549eb4bd0d49e51183b36b7",
+  "image_id": "sha256:ad1518d3b85e2db7bdd7a658499c79c604834df096fa3208a5c9accd764e5b56",
+  "health": true,
+  "resource_list": true,
+  "saved_connections_preserved": true,
+  "configuration_keys_trust_preserved": true,
+  "guacd_unchanged": true,
+  "previous_recording_count": 33,
+  "previous_recordings_preserved": true,
+  "completed_recordings_unchanged": 30,
+  "browser_verification": {
+    "real_windows_desktop": true,
+    "keyboard_ctrl_escape": true,
+    "mouse_start_menu": true,
+    "fullscreen_and_exit": true,
+    "ssh_terminal_command_echo": true,
+    "ssh_test_session_closed": true,
+    "original_query_and_table_tabs_preserved": true,
+    "left_on_windows_desktop": true
+  },
+  "production_api_smoke": {
+    "mysql_metadata": true,
+    "mysql_session_select_1": true,
+    "mysql_session_closed": true,
+    "resource_list": true,
+    "recording_list": true
+  },
+  "public_frontend_sha256_verified": true,
+  "first_attempt": "Verification script used local admin token on end-user resource endpoint and correctly received 401; automatic rollback completed. Corrected smoke check uses admin resource endpoint.",
+  "rdp_observation": "First connection closed/refused by Windows; automatic retry succeeded. No credential or trust changes."
+}

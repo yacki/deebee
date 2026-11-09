@@ -1,0 +1,76 @@
+{
+  "before": {
+    "workbench.queryButton": "14px",
+    "workbench.tab": "14px",
+    "workbench.database": "14px",
+    "workbench.databaseSelector": "14px",
+    "workbench.gridCell": "13px",
+    "workbench.contextMenu": "14px",
+    "workbench.dialogInput": "14px",
+    "workbench.dialogTab": "14px",
+    "admin.body": "14px",
+    "admin.navigation": "14px",
+    "admin.resourceName": "14px",
+    "admin.tableHeader": "14px",
+    "admin.tableCell": "14px",
+    "admin.formInput": "14px",
+    "admin.formCheckbox": "14px",
+    "admin.dropdownOption": "14px"
+  },
+  "after": {
+    "workbench.queryButton": "12px",
+    "workbench.tab": "12px",
+    "workbench.database": "12px",
+    "workbench.databaseSelector": "12px",
+    "workbench.gridCell": "12px",
+    "workbench.contextMenu": "12px",
+    "workbench.dialogInput": "12px",
+    "workbench.dialogTab": "12px",
+    "admin.body": "12px",
+    "admin.navigation": "12px",
+    "admin.resourceName": "12px",
+    "admin.tableHeader": "12px",
+    "admin.tableCell": "12px",
+    "admin.formInput": "12px",
+    "admin.formCheckbox": "12px",
+    "admin.dropdownOption": "12px"
+  },
+  "production_page_errors": [],
+  "existing_ui_regression_tests_passed": 4,
+  "node_tests_passed": 10,
+  "lint": "passed",
+  "release": "ui-typography-20261020-111224-7e892670",
+  "deployed": true,
+  "backend_restarted": false,
+  "remote_font_metrics": {
+    "workbench.queryButton": "12px",
+    "workbench.tab": "12px",
+    "workbench.database": "12px",
+    "workbench.databaseSelector": "12px",
+    "workbench.contextMenu": "12px",
+    "workbench.dialogInput": "12px",
+    "admin.body": "12px",
+    "admin.navigation": "12px",
+    "admin.tableHeader": "12px",
+    "admin.tableCell": "12px",
+    "admin.formInput": "12px",
+    "admin.checkbox": "12px",
+    "admin.dropdown": "12px"
+  },
+  "remote_page_errors": [],
+  "remote_failed_responses": [],
+  "recordings_rechecked": [
+    {
+      "protocol": "ssh",
+      "playing_drag_resumes": true,
+      "paused_seek_stays_paused": true,
+      "backwards_restores_visual": true
+    },
+    {
+      "protocol": "rdp",
+      "playing_drag_resumes": true,
+      "paused_seek_stays_paused": true,
+      "backwards_restores_visual": true
+    }
+  ]
+}

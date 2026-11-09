@@ -1,0 +1,24 @@
+{
+  "release": "result-panels-20261021",
+  "image_for_next_restart": "deebee-local:ui-result-panels-20261021-0a883a58",
+  "previous_image": "deebee-local:ui-grid-interaction-20261021-52322127",
+  "published_at_utc": "2026-10-21T03:05:09Z",
+  "backup": "/data/deebee/releases/result-panels-20261021/backup",
+  "web_files": 66,
+  "status": "deployed_verified",
+  "backend_container_unchanged": true,
+  "backend_started_at_unchanged": true,
+  "backend_source_unchanged": true,
+  "guacd_unchanged": true,
+  "keys_environment_trust_preserved": true,
+  "old_assets_preserved": true,
+  "health": true,
+  "connections_and_resources_and_recording_list": true,
+  "git_commit": false,
+  "git_push": false,
+  "public_verification": {
+    "public_files_verified": 65,
+    "index_sha256": "0a883a58fd0a3064b2d0d7d135d934a404d700c0aef6f32658b522bad6dc21e2",
+    "all_match_tested_bundle": true
+  }
+}

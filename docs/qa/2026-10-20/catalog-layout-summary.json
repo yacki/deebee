@@ -1,0 +1,224 @@
+{
+  "verified_at": "2026-10-20T12:38:43.345547+00:00",
+  "browser_cases": 135,
+  "passed": 135,
+  "failed": 0,
+  "skipped": 0,
+  "suite_counts": {
+    "object-catalog.spec.ts": 12,
+    "postgres-workbench.spec.ts": 4,
+    "rdp-session.spec.ts": 7,
+    "remote-live-ui.spec.ts": 2,
+    "remote-navigation.spec.ts": 5,
+    "session-recordings.spec.ts": 8,
+    "ssh-host-key.spec.ts": 14,
+    "ui-input-theme.spec.ts": 3,
+    "ui-workbench.spec.ts": 5,
+    "workbench-regression.spec.ts": 54,
+    "workbench.spec.ts": 21
+  },
+  "catalog_specific_cases": 12,
+  "fixture_objects": 66,
+  "fixture_properties": [
+    "long names",
+    "long comments",
+    "full timestamps",
+    "collations"
+  ],
+  "normal_ui_font_px": 12,
+  "node_tests": 10,
+  "build": "passed",
+  "lint": "passed",
+  "diff_check": "passed",
+  "tested_frontend_files": {
+    "index.html": "1b7a8c8c40dc92ddad2d4952e53e9cc30553344347188db4baf6e28c674a92c2",
+    "file.svg": "1e0ae4d1a1ddfa36752988647b731e4abf150c414d069ec83c96fb0aaeff0307",
+    "globe.svg": "d051a8c47936990a9085693d307bb7cea1bc1b6d7ed956bcbaacf674f4ec96b9",
+    "window.svg": "decf1cf7bb22b5c99c4857cfcd5718ce5465c4454166317589c83fc73df74b66",
+    "favicon.svg": "d6fab46e3ceb1f3ebff61039585a3c5a5f96607a7b682697a864b1a94f30a12a",
+    ".openai/hosting.json": "d532abb65cf9ae20634b464d954cb4a08a0de9f3cd3cdf7f9c3ec8948826d947",
+    "assets/folding-Dsbd32Qw.js": "e343bf4ac5addb391bfb6818d94a5041be518d679996fefdf5c74087ee08e765",
+    "assets/snippetParser-BCOGxtHj.js": "2713b6b1698569a5c682731d683633b99a570342b1e5ade3b2f78e743fbc28ee",
+    "assets/environment-DcQ4OKIz.js": "34a17dad3e2f1b824ad89ab3855e18b20978b70ec91d749bcda5da4326aba47f",
+    "assets/postgresql-CTql7Pj9.svg": "f220a436258ed014c512ba4f9c0de6b9e5c2c4b55331a0a29f8c7a1a12c36443",
+    "assets/findInput-CB3_2iQM.js": "979aff46270003fe13588231961c7a914e616a71174854697c700d59bb2209f6",
+    "assets/defaultStyles-jlbSmp4t.js": "04d57d64cbbda8ea9c015113b5ca60fcdad6517fd228510ea916e5cfd3848f1c",
+    "assets/SshTerminal-BKH6AfG_.css": "29abc58f6f961788316deb8cc0137db996c69ffc82c699e4fbf503333883de32",
+    "assets/contextmenu-DAEiMlXc.js": "f35db58014e607180f5441dfb27a0e67db33a31a0f5f0e3a6a1c0fe9828980e5",
+    "assets/quickInput-Bha4GEBx.js": "f379b04a6fcf24bdccea3b3785701a141e7a951e0bdf8005446f94ed295eecba",
+    "assets/accessibility-CcvyVKQn.css": "9f817aecc1b2817d63afebdf3183a1bf0ea2779626767103b533c99f9250ca21",
+    "assets/textModel-BRB0P9xA.js": "63c4136b8c1da67070a64b2afe66f27824d4ff526fa5b14a06d30343a8af1482",
+    "assets/languageFeatureDebounce-DPbk6got.js": "a2d760d3eb7fa325238062eab54480ba0cd227ea5e82a612a1adf9f7ae44456c",
+    "assets/codicon-Brq4_Ui5.ttf": "cc2472e239e17062e7760af87f8f5997720cc0d94aa014a615c418baaf6333a8",
+    "assets/folding-DXWfYlj_.css": "d2a52ddfd8ef5acfd05454b1562789a10143bd568698f378b0845019283bf35e",
+    "assets/iconRegistry-DmjUo0SD.js": "b73fc60c0a425079d105ac7fb499d320ecdd1cb1eddada2cf0f9471675180d60",
+    "assets/iconLabel-BkzR-Nso.js": "87f3a71d6a94b277cd00ff71bc109d62313ca132745f53bbafce4ebe5baefaf9",
+    "assets/keybinding-BXfZfOA3.js": "5d01466a0b0c05f202e39eb83ea9f72b6f8b2c1ad104f9a398402f032c4558d9",
+    "assets/editor.worker-D9zwrD0f.js": "8b135697475f2b7f995df260f1e3948d2c228c340df4434c08d61f17b45662d3",
+    "assets/actionViewItems-Cf2pPAj5.js": "7286eae53e057cfe5c510c41f0bf09f9ef1bbbc1fc127a149c52e5d5812e4796",
+    "assets/notification-o_5ELgrG.js": "ab0d893a018b36dc84434b19b68df087b916b19ee222bcf115affa3419ac7085",
+    "assets/contextScopedHistoryWidget-DSlgRoL-.js": "40315c9234840fef6a3c732985c3a3c132ffbf3a4c968fd4c0ab4dd0afa64c86",
+    "assets/bracketMatching-DHs1xjl-.js": "b41443895c0359937231ef24f8301f548144644bbfeb7a59a4d27f888c870a93",
+    "assets/suggestController-DB1BE4Mr.css": "d4f79c9be52d3c718484ac7f97b62edde10b475170cefb2a5521a199e0d65242",
+    "assets/AccessWorkspace-BvjeB0QC.css": "1360af484d2cbd5a37b0b89720fe03b59caf4c5799ea7abb142be73c947c7d54",
+    "assets/workspace-DFwMY--T.js": "be114fd010cfc0a2873976ade37c6a8864595df899be98b2cb0d7923d3c451a6",
+    "assets/accessibility-CgFQQB1n.js": "17fc74a43134b626743a04e29625930a06bd959af76b62fd581add55a2b47cbc",
+    "assets/iconLabel-1o8PSChU.css": "4e5cbd4b0896a61a8c5a4d72130a41dbe1843a3f7d1d9b156c10b5b01f7febcd",
+    "assets/SshTerminal-CTm5gAny.js": "47bbae2e07b65bf84913075a6af7f871b0b325ffd4b73f1889adb55c92893300",
+    "assets/styles-D3fu75Ks.css": "3058ad68a3831e7301e14c44e163c16092d51bc13b67a828d491139ae0ae080b",
+    "assets/index-CriWsJAa.js": "f6693847f429f7bc6bbd67678db0188eb2b47b6d7a84a85136d02ce88d18d821",
+    "assets/snippetController2-Db0iUD3Z.css": "2a947ba15f729656e89ca039d80cfe6f8aae1841a3aeca8f72ef502a29895b4e",
+    "assets/keybindingLabels-Dn3A3QlQ.js": "4f2a15685591f6827e16d3e3014f63ce49401381484c63b11525fef9dbb9cae4",
+    "assets/clipboard-CsZGbJVY.css": "a7ff3367b4b07a095543e63e6c6f92275ae38a8220f213f7de6c27e9022c24d8",
+    "assets/hover-Dj-Kv5dP.js": "d30e47f9c2fe00120a7decf9674e8114d9fba6758c9299e8a3b50505d1b9671b",
+    "assets/layoutService-B7TSf44k.js": "693340e2bb26a42d8a7754bf0c962a459df62dafdb36bb6c1066e74da7229216",
+    "assets/App-BpysCva7.js": "fb42602111214183574e769d460c922c2afd7dd0ca6253a87f0d5a59327d4e91",
+    "assets/mongodb-Dijo5B3J.svg": "d9f2bf7041264f4747e9969fb82ede0199c0ac97dfa8632aa0687d702ec05f7b",
+    "assets/sql-NEE52Syq.js": "fa4fe9ccff8882e93028a9fa6961b1a485b8eb480880fa480fdf4057b0de7cd0",
+    "assets/suggestController-BSj_fjJb.js": "d819fd0cc3102e75a111980cd52db6803269e0d1678a5da55117a0aaa07baee4",
+    "assets/findController-jHPjua6R.css": "ef4dc63000e83629f7977813b508d51c9999ff2a0936d1cb8113637e50afa407",
+    "assets/languageFeatures-BgJ7nT4o.js": "e4a16dceb86f1538dbe8b7813fa034cc12392e79eda2a83d5334c2d14769718f",
+    "assets/actionViewItems-C368j81S.css": "83ad640448aa9533906a4904e77f8dcfe8f2feefa4e9cef40d967f73e96d25c3",
+    "assets/numbers-Dhkiv5cg.js": "963326375174748b7ea415fbfeca146890965624d880a4d774f01558917c0cc9",
+    "assets/editor.api-C9kcBv-f.js": "0e9de4e3ca882822f072c432a6190aca690b2700950a512227dae5a5c7ad05a8",
+    "assets/register-B017GkMP.js": "950980105770a609667203e0c1d2625bd2a7e6abd04172eebdae3c8c488f80a0",
+    "assets/findInput-hyHYqbUI.css": "d503e46693a74022cc3804564dacd9a8e4a88eef8de0ef4ffe4e5c6b09c63a82",
+    "assets/mime-ug8XUlJq.js": "fa384f3a4aee0c168f1cc45917b369c376b7d51c9880d842db8645a9e31d8715",
+    "assets/bracketMatching-YdNSa6b7.css": "1b72b598a4a340218a288c8f6366ddfb160387339684d6c484ec4ed21c8f78df",
+    "assets/kubernetes-CaC8YlG3.svg": "fb31e4163238978201cfde0601728ee5168b74e476c32c37739bed626fa281ae",
+    "assets/label-CXgBqgFl.js": "ff14b9d0d120cc452cee2627f45d312b2d122e6e4ef435360cf2cc338c1e2af4",
+    "assets/findController-CtAdVD2H.js": "ee492f33a5a35c2f9c5c8f78d33d6a8621ce330de67630a89c9c014d517cca72",
+    "assets/actionbar-Xrz3U45c.js": "45cd30b48dedb8bceb47020d0e54a7b0a48d52d976cbf0146eaa6b8d918e46d6",
+    "assets/index-BP6kYaoc.css": "6a38851cd4c7de7a8380d65ec4fb600a738c381e57df14005a11138cd4fa3b76",
+    "assets/layoutService-CFOuK0he.css": "7bbdad6a963f4f64172327198c6270f063bbe7ca43406d6b4a9d41c9124b37fc",
+    "assets/snippetController2-BaGz_D1r.js": "c717814c1637aee109ceab326905fab008867a2f3c90e5c9de7eb048a9752c8d",
+    "assets/clipboard-CuitAvT8.js": "eccc2793db2a55b23020c39f5e99500498781bd56cfc19200c5c7606fbf261fe",
+    "assets/microsoftsqlserver-BKa7WwQi.svg": "f52b63cb5ff8c17efc079ae93eb7e2f1a04ca34eb736310c3576b19c0b9db21d",
+    "assets/editor-CPgU7loC.css": "7af075f58c990eb832cadc9adb4dd96c728d4f0d672cfff8e2e49a80f69d2c5d",
+    "assets/App-DGCNhQRZ.css": "07dba8ce65b38a1460c3648bc00583681080051cd0919c7ea0fd76b5bcfe6ae7",
+    "assets/AccessWorkspace-CVRsKEDU.js": "734f1a6954b38e8f4aea54dcac57238acadaa24e1ad6b879a6c62a33a94dabe3"
+  },
+  "release": "ui-object-catalog-20261020-123023-aa03d051",
+  "deployment": {
+    "release": "ui-object-catalog-20261020-123023-aa03d051",
+    "frontend_active": true,
+    "image_for_recreation": "deebee-local:ui-object-catalog-20261020-123023-aa03d051",
+    "runtime_image_unchanged": "deebee-local:vue-arco-20261020-101010-ebffb818-pg-privileges",
+    "backend_restarted": false,
+    "container_id_unchanged": "8f1c85e8a67aefa8296d833606bc5dc3e614cbf55c321d29c3e7477d11e67b31",
+    "guacd_unchanged": true,
+    "backend_source_unchanged": true,
+    "keys_and_environment_preserved": true,
+    "files_verified": 66,
+    "backup": "/data/deebee/backups/20261020-123026-before-ui-object-catalog-20261020-123023-aa03d051"
+  },
+  "public_catalog": {
+    "base": "https://deebee.idmesh.site/deebee",
+    "checks": [
+      "actual user database: table-category context menu opens the populated catalog",
+      "real header and explorer drags resize; metadata clips; name stays fixed during independent horizontal/vertical scrolling",
+      "both object-column and explorer widths persist after a real reload",
+      "category new-table action targets the intended database and leaves the draft unsaved",
+      "category new-query action creates the intended database context",
+      "category refresh issues a real metadata request"
+    ],
+    "object_count": 66,
+    "column_width_before": 240,
+    "column_width_after": 310,
+    "explorer_width_after": 360,
+    "ok": true,
+    "page_errors": [],
+    "failed_responses": [],
+    "database_mutations": []
+  },
+  "public_scratch_grid": {
+    "base": "https://deebee.idmesh.site/deebee",
+    "isolated_database": "deebee_ui_qa_1792499512063",
+    "checks": [
+      "17 table menu entries and submenu fit without an unnecessary scrollbar",
+      "1440x900, 1280x720, 1024x768: real wheel and horizontal scrolling, sticky header and footer bounds without page overflow",
+      "1024x500: menu has one working scrollbar and bottom refresh action can execute",
+      "inline edit persists in the real remote database",
+      "Escape cancels; blur saves; primary-key cells reject inline editing; checked against actual server rows",
+      "All grid context actions: six copy formats, cell copy, select/deselect, 24px column/row, auto-fit, freeze/unfreeze and jump actually execute",
+      "remote SQL multi-statement execution returns the actual 1207-row count",
+      "production SQL completion loads and suggests the actual scratch table"
+    ],
+    "geometry": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "grid": {
+          "x": 282,
+          "y": 127,
+          "width": 1158,
+          "height": 741
+        },
+        "footer": {
+          "x": 282,
+          "y": 868,
+          "width": 1158,
+          "height": 32
+        },
+        "scroll": {
+          "left": 600,
+          "top": 650
+        },
+        "header_y": 127
+      },
+      {
+        "viewport": {
+          "width": 1280,
+          "height": 720
+        },
+        "grid": {
+          "x": 282,
+          "y": 127,
+          "width": 998,
+          "height": 561
+        },
+        "footer": {
+          "x": 282,
+          "y": 688,
+          "width": 998,
+          "height": 32
+        },
+        "scroll": {
+          "left": 600,
+          "top": 650
+        },
+        "header_y": 127
+      },
+      {
+        "viewport": {
+          "width": 1024,
+          "height": 768
+        },
+        "grid": {
+          "x": 282,
+          "y": 127,
+          "width": 742,
+          "height": 609
+        },
+        "footer": {
+          "x": 282,
+          "y": 736,
+          "width": 742,
+          "height": 32
+        },
+        "scroll": {
+          "left": 600,
+          "top": 650
+        },
+        "header_y": 127
+      }
+    ],
+    "page_errors": [],
+    "failed_responses": [],
+    "ok": true,
+    "cleaned_up": true
+  },
+  "isolated_services_cleaned_up": true
+}

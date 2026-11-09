@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-21",
+  "status": "deployed_verified",
+  "browser_unique_cases": 48,
+  "new_grid_interaction_cases": 7,
+  "node_cases": 10,
+  "build": "passed",
+  "lint": "passed",
+  "metrics": {
+    "rows": 7000,
+    "columns": 24,
+    "queryMs": 279.5,
+    "mountedRows": 32,
+    "mountedCells": 801,
+    "switchMs": [
+      73.60000014305115,
+      61.799999952316284,
+      62.89999985694885
+    ]
+  },
+  "benchmark_method": "Production build, same local browser and complete mocked 7000-row/24-column response; click to visible result plus two animation frames. Not a live database timing.",
+  "features_verified": [
+    "stable cell and row selection through hover and scrolling",
+    "separate header outside scrollbar region",
+    "exact row position through virtual window changes",
+    "horizontal header/body column alignment",
+    "keyboard navigation and F2 editing with correct original key",
+    "per-result selection and scroll restored across tabs",
+    "range row selection and preserved context menu selection",
+    "real wheel input over header scrolls body",
+    "data-tab deselection and deletion target safety",
+    "full-row print preparation",
+    "RDP, SSH, object catalog and UI controls"
+  ],
+  "manual_browser_preview": "7000 synthetic rows, independent local HTTP fixture; real pointer/wheel interaction through browser tool",
+  "screenshot": "/tmp/deebee-grid-interaction-20261021.png",
+  "physical_print_verified": false,
+  "git_commit": false,
+  "git_push": false,
+  "deployment": {
+    "release": "grid-interaction-20261021",
+    "image_for_next_restart": "deebee-local:ui-grid-interaction-20261021-52322127",
+    "previous_image": "deebee-local:ui-query-performance-20261021-a2a4d6c7",
+    "published_at_utc": "2026-10-20T16:45:32Z",
+    "backup": "/data/deebee/releases/grid-interaction-20261021/backup",
+    "web_files": 66,
+    "status": "deployed_verified",
+    "backend_container_unchanged": true,
+    "backend_started_at_unchanged": true,
+    "backend_source_unchanged": true,
+    "guacd_unchanged": true,
+    "keys_environment_trust_preserved": true,
+    "old_assets_preserved": true,
+    "health": true,
+    "connections_and_resources_and_recording_list": true,
+    "git_commit": false,
+    "git_push": false,
+    "public_verification": {
+      "public_files_verified": 65,
+      "index_sha256": "52322127581d6b5172f402ce18de49a8576296320fd4a2c7d88863940296b113",
+      "all_match_tested_bundle": true
+    }
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "verified_at": "2026-10-20T11:50:23.529883+00:00",
+  "previous_release": "ui-inputs-remote-20261020-113306-aeaf7985",
+  "release": "ui-table-recheck-20261020-114447-c9661a87",
+  "production_files": 66,
+  "all_production_files_match": true,
+  "browser_unique_cases": 79,
+  "browser_passed": 79,
+  "browser_failed": 0,
+  "browser_skipped": 0,
+  "suite_counts": {
+    "postgres-workbench.spec.ts": 4,
+    "workbench-regression.spec.ts": 54,
+    "workbench.spec.ts": 21
+  },
+  "function_matrix_rows": 138,
+  "function_passed": 136,
+  "function_partial": 2,
+  "database_engines": [
+    "MySQL 8.4",
+    "PostgreSQL 17"
+  ],
+  "node_tests_passed": 10,
+  "build": "passed",
+  "lint": "passed",
+  "diff_check": "passed",
+  "selection_bug": {
+    "found_on": "ui-inputs-remote-20261020-113306-aeaf7985",
+    "reproduction": "edit a row; context menu select all; context menu deselect all",
+    "expected_selected_rows": 0,
+    "actual_selected_rows": 1,
+    "error": "expect(locator).toHaveCount(expected) failed\n\nLocator:  locator('.editable-grid-shell tbody tr.selected')\nExpected: 0\nReceived: 1\nTimeout:  5000ms\n\nCall log:\n  - Expect \"to.have.count\" with timeout 5000ms\n  - waiting for locator('.editable-grid-shell tbody tr.selected')\n    14 × locator resolved to 1 element\n       - unexpected value \"1\"\n",
+    "scratch_database_cleaned_up": true
+  },
+  "deployment": {
+    "release": "ui-table-recheck-20261020-114447-c9661a87",
+    "frontend_active": true,
+    "image_for_recreation": "deebee-local:ui-table-recheck-20261020-114447-c9661a87",
+    "runtime_image_unchanged": "deebee-local:vue-arco-20261020-101010-ebffb818-pg-privileges",
+    "backend_restarted": false,
+    "container_id_unchanged": "8f1c85e8a67aefa8296d833606bc5dc3e614cbf55c321d29c3e7477d11e67b31",
+    "guacd_unchanged": true,
+    "backend_source_unchanged": true,
+    "keys_and_environment_preserved": true,
+    "files_verified": 66,
+    "backup": "/data/deebee/backups/20261020-114450-before-ui-table-recheck-20261020-114447-c9661a87"
+  },
+  "public_acceptance": {
+    "base": "https://deebee.idmesh.site/deebee",
+    "isolated_database": "deebee_ui_qa_1792496724046",
+    "checks": [
+      "17 table menu entries and submenu fit without an unnecessary scrollbar",
+      "1440x900, 1280x720, 1024x768: real wheel and horizontal scrolling, sticky header and footer bounds without page overflow",
+      "1024x500: menu has one working scrollbar and bottom refresh action can execute",
+      "inline edit persists in the real remote database",
+      "Escape cancels; blur saves; primary-key cells reject inline editing; checked against actual server rows",
+      "All grid context actions: six copy formats, cell copy, select/deselect, 24px column/row, auto-fit, freeze/unfreeze and jump actually execute",
+      "remote SQL multi-statement execution returns the actual 1207-row count",
+      "production SQL completion loads and suggests the actual scratch table"
+    ],
+    "geometry": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "grid": {
+          "x": 276,
+          "y": 127,
+          "width": 1164,
+          "height": 741
+        },
+        "footer": {
+          "x": 276,
+          "y": 868,
+          "width": 1164,
+          "height": 32
+        },
+        "scroll": {
+          "left": 600,
+          "top": 650
+        },
+        "header_y": 127
+      },
+      {
+        "viewport": {
+          "width": 1280,
+          "height": 720
+        },
+        "grid": {
+          "x": 276,
+          "y": 127,
+          "width": 1004,
+          "height": 561
+        },
+        "footer": {
+          "x": 276,
+          "y": 688,
+          "width": 1004,
+          "height": 32
+        },
+        "scroll": {
+          "left": 600,
+          "top": 650
+        },
+        "header_y": 127
+      },
+      {
+        "viewport": {
+          "width": 1024,
+          "height": 768
+        },
+        "grid": {
+          "x": 276,
+          "y": 127,
+          "width": 748,
+          "height": 609
+        },
+        "footer": {
+          "x": 276,
+          "y": 736,
+          "width": 748,
+          "height": 32
+        },
+        "scroll": {
+          "left": 600,
+          "top": 650
+        },
+        "header_y": 127
+      }
+    ],
+    "page_errors": [],
+    "failed_responses": [],
+    "ok": true,
+    "cleaned_up": true
+  },
+  "selection_fix": {
+    "file": "src/components/EditableGrid.vue",
+    "change": "deselectAll emits select(null), clearing the parent single-row selection as well as the grid selection set",
+    "regression": "G04 now starts with a clicked row and checks zero highlighted rows plus a disabled Delete button"
+  },
+  "additional_cases": [
+    "P03 server new-database/new-query and inactive connection menu targets",
+    "R01 all SQL-result context actions and real single-table copy metadata"
+  ]
+}

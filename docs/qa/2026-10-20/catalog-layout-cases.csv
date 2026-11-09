@@ -1,0 +1,136 @@
+file,line,title,status,duration_ms
+object-catalog.spec.ts,25,"CL01-1024 long object metadata stays clipped in aligned cells, with independent scrolling",passed,1102
+object-catalog.spec.ts,25,"CL01-1440 long object metadata stays clipped in aligned cells, with independent scrolling",passed,1144
+object-catalog.spec.ts,25,"CL01-1920 long object metadata stays clipped in aligned cells, with independent scrolling",passed,1005
+object-catalog.spec.ts,38,CL02 dragging object headers resizes real columns and survives tab changes and reload,passed,1828
+object-catalog.spec.ts,46,"CL03 category context menus open lists, create in the right database and refresh; object rows keep their menus",passed,968
+object-catalog.spec.ts,56,"CL04 the framework divider resizes, clamps, restores and persists a distinct explorer pane",passed,1781
+object-catalog.spec.ts,66,CL05 object views open their definition and non-query tabs disable query-only actions,passed,731
+object-catalog.spec.ts,71,CL06 schema category context actions preserve the targeted PostgreSQL schema,passed,545
+object-catalog.spec.ts,76,CL07 the final comment column also has a working resize handle,passed,1324
+object-catalog.spec.ts,81,CL08 designer columns resize and form controls stay in their own cells after explorer resizing,passed,720
+object-catalog.spec.ts,88,CL09 long trees and overflowing workspace tabs keep independent scroll areas after resizing,passed,949
+postgres-workbench.spec.ts,23,PG01 server/database/schema hierarchy isolates same-name data tabs and edits the intended schema,passed,798
+postgres-workbench.spec.ts,24,PG02 schema selector changes real SQL context and database switching changes the backend session,passed,1749
+postgres-workbench.spec.ts,25,PG03 data copy INSERT and UPDATE use schema-qualified identifiers and the actual primary key,passed,1083
+postgres-workbench.spec.ts,26,"PG04 PostgreSQL table maintenance, privileges and structure designer use PostgreSQL semantics",passed,1850
+rdp-session.spec.ts,41,RDP preserves 519 errors and stays offline despite healthy backend checks,passed,389
+rdp-session.spec.ts,41,RDP preserves 769 errors and stays offline despite healthy backend checks,passed,421
+rdp-session.spec.ts,57,RDP waits for a new desktop frame after the initial placeholder,passed,264
+rdp-session.spec.ts,71,RDP opens once and never authenticates automatically on page reload or health checks,passed,561
+rdp-session.spec.ts,86,RDP automatically reconnects transient failures and confirms a new desktop frame,passed,258
+rdp-session.spec.ts,98,RDP bounds automatic retries when the upstream remains unavailable,passed,641
+rdp-session.spec.ts,108,saving edited RDP credentials opens a fresh desktop session,passed,354
+remote-live-ui.spec.ts,18,"LIVE01 SSH actually connects, handles input, clipboard paste, resize, clear and reconnect",passed,913
+remote-live-ui.spec.ts,23,"LIVE02 RDP actually renders an xrdp desktop, resizes, enters fullscreen and reconnects",passed,3401
+remote-navigation.spec.ts,47,"ssh is a leaf, connects once per double-click and names each tab after its server",passed,578
+remote-navigation.spec.ts,47,"rdp is a leaf, connects once per double-click and names each tab after its server",passed,554
+remote-navigation.spec.ts,74,double-clicking an untrusted SSH server still requires explicit trust before connecting,passed,1347
+remote-navigation.spec.ts,86,renaming an SSH connection updates its existing tab names and preserves session numbers,passed,1312
+remote-navigation.spec.ts,101,Kubernetes retains its workspace hierarchy,passed,417
+session-recordings.spec.ts,19,administrator can filter recordings and active sessions cannot be replayed,passed,670
+session-recordings.spec.ts,32,SSH recording plays terminal output and supports seeking and resizing,passed,416
+session-recordings.spec.ts,44,RDP protocol recording renders its actual screen and seeking works,passed,623
+session-recordings.spec.ts,81,"SSH playing drag holds its target, resumes playback and reconstructs earlier output",passed,1124
+session-recordings.spec.ts,105,RDP real dragging changes the rendered frame and preserves playing or paused state,passed,1051
+session-recordings.spec.ts,129,RDP seek waits for decoded image frames before completing and restoring earlier state,passed,1435
+session-recordings.spec.ts,158,damaged recordings show an actionable error and another recording can be opened,passed,417
+session-recordings.spec.ts,170,"RDP recordings with empty offscreen buffers can snapshot, seek backwards and close without canvas errors",passed,535
+ssh-host-key.spec.ts,61,saving a first SSH connection requires visible trust before persistence or a session,passed,1166
+ssh-host-key.spec.ts,79,testing exposes an inline trust action and cancellation keeps the connection unsaved,passed,1253
+ssh-host-key.spec.ts,96,an existing connection missing a fingerprint opens confirmation and preserves stored credentials,passed,1104
+ssh-host-key.spec.ts,110,opening an untrusted saved SSH session after dismissing settings asks for trust again,passed,1112
+ssh-host-key.spec.ts,122,changing host or port discards pending and previously confirmed SSH fingerprints,passed,1264
+ssh-host-key.spec.ts,140,a late test response cannot attach a fingerprint to a different SSH host,passed,1123
+ssh-host-key.spec.ts,158,failed SSH tests leave an actionable error and never offer trust or save,passed,1157
+ssh-host-key.spec.ts,168,a saved trusted SSH connection opens without a second trust prompt,passed,268
+ssh-host-key.spec.ts,178,saving an edited SSH connection opens a terminal with the saved configuration,passed,1165
+ssh-host-key.spec.ts,196,cancelling trust after save-and-connect leaves no connection or terminal,passed,1296
+ssh-host-key.spec.ts,210,private-key SSH authentication follows the same save-and-connect confirmation,passed,1604
+ssh-host-key.spec.ts,225,a missing fingerprint in a test response cannot save an untrusted SSH connection,passed,1133
+ssh-host-key.spec.ts,236,the toolbar test also exposes trust for a saved SSH connection,passed,1117
+ssh-host-key.spec.ts,248,database SSH tunnels use the same inline fingerprint confirmation,passed,1209
+ui-input-theme.spec.ts,19,"admin text, password and selection controls stay white while accepting input",passed,700
+ui-input-theme.spec.ts,33,admin locked selects retain a disabled appearance and cannot be edited,passed,336
+ui-input-theme.spec.ts,45,"recording text, select and date filters share the outlined theme and submit entered dates",passed,731
+ui-workbench.spec.ts,29,"Arco tabs switch with the keyboard, context actions save a query, and drawers close",passed,3809
+ui-workbench.spec.ts,47,Arco selectors change query context and result actions preserve inline editing and column sizing,passed,2842
+ui-workbench.spec.ts,64,"Arco tables in the structure designer retain text, checkbox and index changes in DDL requests",passed,689
+ui-workbench.spec.ts,81,Arco uploads accept replacement files without uploading them before confirmation,passed,1686
+ui-workbench.spec.ts,97,inputs and selectors use one white outline through hover and focus and still accept edits,passed,1869
+workbench-regression.spec.ts,42,"G01-1440 data grid wheel, horizontal scrolling, sticky headers and footer do not overlap",passed,799
+workbench-regression.spec.ts,52,"M01-1440 table context menu uses the available window, reaches every item and opens nonoverlapping submenus",passed,845
+workbench-regression.spec.ts,42,"G01-1280 data grid wheel, horizontal scrolling, sticky headers and footer do not overlap",passed,761
+workbench-regression.spec.ts,52,"M01-1280 table context menu uses the available window, reaches every item and opens nonoverlapping submenus",passed,830
+workbench-regression.spec.ts,42,"G01-1024 data grid wheel, horizontal scrolling, sticky headers and footer do not overlap",passed,798
+workbench-regression.spec.ts,52,"M01-1024 table context menu uses the available window, reaches every item and opens nonoverlapping submenus",passed,825
+workbench-regression.spec.ts,68,M02 short windows have one working menu scrollbar and edge-positioned result menus stay reachable,passed,768
+workbench-regression.spec.ts,78,"G02 opening a table sends LIMIT 1000, paging is real, filters and sort change server rows",passed,1323
+workbench-regression.spec.ts,85,"G03 cell editing Enter, blur, Escape, primary key protection and narrow columns persist correctly",passed,2249
+workbench-regression.spec.ts,94,"G04 all result menu selection, sizing, frozen columns and row jump actions change the grid",passed,5513
+workbench-regression.spec.ts,103,"C01 INSERT Statement copies actual table, column and value contents",passed,901
+workbench-regression.spec.ts,103,"C01 UPDATE Statement copies actual table, column and value contents",passed,904
+workbench-regression.spec.ts,103,"C01 Tab Separated Values (Data only) copies actual table, column and value contents",passed,897
+workbench-regression.spec.ts,103,"C01 Tab Separated Values (Field Name only) copies actual table, column and value contents",passed,887
+workbench-regression.spec.ts,103,"C01 Tab Separated Values (Field Name and Data) copies actual table, column and value contents",passed,907
+workbench-regression.spec.ts,103,"C01 JSON copies actual table, column and value contents",passed,907
+workbench-regression.spec.ts,109,"C02 cell, name and DDL clipboard commands copy their real source",passed,914
+workbench-regression.spec.ts,111,T01 仅结构… creates the requested real table,passed,1635
+workbench-regression.spec.ts,111,T01 结构和数据… creates the requested real table,passed,1632
+workbench-regression.spec.ts,112,T02 清空表 executes only after confirmation and refreshes open metadata,passed,1423
+workbench-regression.spec.ts,112,T02 Truncate 表 executes only after confirmation and refreshes open metadata,passed,1433
+workbench-regression.spec.ts,112,T02 删除表 executes only after confirmation and refreshes open metadata,passed,1416
+workbench-regression.spec.ts,113,T03 rename updates the actual table and the open data tab,passed,1467
+workbench-regression.spec.ts,114,T04 CHECK TABLE runs and shows the real maintenance response,passed,792
+workbench-regression.spec.ts,114,T04 ANALYZE TABLE runs and shows the real maintenance response,passed,814
+workbench-regression.spec.ts,114,T04 OPTIMIZE TABLE runs and shows the real maintenance response,passed,818
+workbench-regression.spec.ts,114,T04 REPAIR TABLE runs and shows the real maintenance response,passed,814
+workbench-regression.spec.ts,116,"S01 SQL multiresults, selected statement, EXPLAIN and errors are rendered correctly",passed,734
+workbench-regression.spec.ts,121,"S02 manual SQL rollback and commit change real rows, and cancellation stops a running query",passed,3700
+workbench-regression.spec.ts,126,"Q01 query tab copy, save, close right, close others and close invoke their actual actions",passed,2401
+workbench-regression.spec.ts,128,W01 CSV exports the complete 1207-row table rather than the visible page,passed,1727
+workbench-regression.spec.ts,128,W01 JSON exports the complete 1207-row table rather than the visible page,passed,1751
+workbench-regression.spec.ts,128,W01 SQL INSERT exports the complete 1207-row table rather than the visible page,passed,1738
+workbench-regression.spec.ts,128,W01 Excel XLSX exports the complete 1207-row table rather than the visible page,passed,1886
+workbench-regression.spec.ts,130,"D01 database open/close, properties, new query, console, search, print and refresh execute",passed,3550
+workbench-regression.spec.ts,139,D02 new database and typed deletion update the server and object tree,passed,2296
+workbench-regression.spec.ts,142,"P01 server expand/collapse, properties, test, edit, duplicate and new connection forms are usable",passed,4248
+workbench-regression.spec.ts,148,"O01 view definition, edit SQL, copy, refresh and confirmed delete execute",passed,1778
+workbench-regression.spec.ts,148,"O01 function definition, edit SQL, copy, refresh and confirmed delete execute",passed,1767
+workbench-regression.spec.ts,148,"O01 procedure definition, edit SQL, copy, refresh and confirmed delete execute",passed,1801
+workbench-regression.spec.ts,148,"O01 trigger definition, edit SQL, copy, refresh and confirmed delete execute",passed,1762
+workbench-regression.spec.ts,148,"O01 event definition, edit SQL, copy, refresh and confirmed delete execute",passed,2082
+workbench-regression.spec.ts,157,T05 new table designer saves real fields and applies an ALTER through the UI,passed,1009
+workbench-regression.spec.ts,161,"W02 csv import uploads the chosen file, completes its background job and persists actual rows",passed,1552
+workbench-regression.spec.ts,161,"W02 json import uploads the chosen file, completes its background job and persists actual rows",passed,1573
+workbench-regression.spec.ts,161,"W02 xlsx import uploads the chosen file, completes its background job and persists actual rows",passed,1620
+workbench-regression.spec.ts,161,"W02 sql import uploads the chosen file, completes its background job and persists actual rows",passed,1554
+workbench-regression.spec.ts,166,"P02 duplicate, save, edit without replacing the password and delete a real isolated connection",passed,3256
+workbench-regression.spec.ts,172,S03 leaving a browser workspace releases its backend query session,passed,470
+workbench-regression.spec.ts,173,"G05 switching tables isolates saved column widths, selection and frozen columns",passed,2720
+workbench-regression.spec.ts,177,S04 running an explicit SQL selection executes only the selected text,passed,608
+workbench-regression.spec.ts,183,G06 a rejected cell edit restores real data and a subsequent valid edit still saves,passed,1069
+workbench-regression.spec.ts,198,P03 server new-database/new-query entries and inactive-connection open execute their real targets,passed,2787
+workbench-regression.spec.ts,216,R01 every SQL-result context action uses the query grid and real single-table metadata,passed,7321
+workbench.spec.ts,91,Vue/Iconify tree has reliable arrows and aligned icons with many tables,passed,617
+workbench.spec.ts,123,visible toolbar action creates a database through the real dialog,passed,1656
+workbench.spec.ts,134,database and table context menus expose the P0-P2 command set,passed,591
+workbench.spec.ts,145,changing the query database changes the real backend session,passed,1253
+workbench.spec.ts,160,lost backend query sessions are recreated and the SQL is safely retried,passed,532
+workbench.spec.ts,172,lost sessions never auto-replay writes or a lost manual transaction,passed,607
+workbench.spec.ts,204,network outage is shown and a manual health check restores the workspace,passed,1354
+workbench.spec.ts,219,"query editor height supports drag, keyboard adjustment and persistence",passed,811
+workbench.spec.ts,243,all dirty query tabs survive reload and closing one asks for confirmation,passed,1622
+workbench.spec.ts,260,SQL intelligence completes real tables and alias-qualified columns,passed,942
+workbench.spec.ts,298,current-statement execution ignores semicolons inside SQL literals,passed,609
+workbench.spec.ts,308,direct single-table SELECT results support safe inline updates,passed,842
+workbench.spec.ts,339,"table data supports inline edit, persistent resizing, sorting and filtering",passed,6819
+workbench.spec.ts,411,"result grid actions, selection, sizing and frozen columns are wired",passed,2641
+workbench.spec.ts,438,"query tabs, history, saved queries and transaction controls work",passed,4703
+workbench.spec.ts,461,table designer and transfer wizards cover configuration and execution,passed,5954
+workbench.spec.ts,484,designer emits a real column rename without marking it destructive,passed,638
+workbench.spec.ts,497,MySQL privileges render and trigger menus hide unsupported state actions,passed,587
+workbench.spec.ts,511,SQL-file cancellation stays pending until the server stops the query,passed,2212
+workbench.spec.ts,526,database SQL-file wizard executes a script and refreshes metadata,passed,1415
+workbench.spec.ts,536,"export, dump and generated-data jobs complete through their UI flows",passed,3709
+object-catalog.spec.ts,96,CL10 every one of the nine object columns responds to a real drag,passed,4783

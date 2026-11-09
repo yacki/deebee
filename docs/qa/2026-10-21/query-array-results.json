@@ -1,0 +1,32 @@
+{
+  "status": "deployed_verified_awaiting_user_review",
+  "scope": "Single JSON response; columns defined once, array values per row; no dictionary references or incremental rendering",
+  "runtime_files": [
+    "src/App.vue",
+    "src/types.ts",
+    "backend/deebee/main.py"
+  ],
+  "restored": [
+    "src/api.ts",
+    "query lifecycle, cancel, editing, selection and scrolling"
+  ],
+  "removed": [
+    "src/queryStream.ts",
+    "backend/deebee/query_transport.py",
+    "tests/e2e/query-stream.spec.ts",
+    "backend/tests/test_query_transport.py",
+    "discarded release archive"
+  ],
+  "build": true,
+  "lint": true,
+  "browser_cases": 54,
+  "backend_cases": 23,
+  "node_cases": 10,
+  "legacy_api_compatible": true,
+  "field_order_and_full_values_verified": true,
+  "last_row_edit_key_verified": true,
+  "published": true,
+  "git_commit": false,
+  "git_push": false,
+  "awaiting_user_review": true
+}

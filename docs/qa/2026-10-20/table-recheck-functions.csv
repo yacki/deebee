@@ -1,0 +1,139 @@
+group,action,status,evidence,verification
+表右键,打开表,通过（真实）,G01/G02,真实读取1207行表；100行分页，默认LIMIT 1000
+表右键,设计表,通过（真实）,PG04/workbench-designer,真实列和Schema显示正确
+表右键,新建表,通过（真实）,T05,通过菜单创建、生成DDL、保存并执行ALTER，读information_schema确认
+表右键,删除表,通过（真实）,T02-drop,确认后服务端对象消失
+表右键,清空表,通过（真实）,T02-empty,确认后真实COUNT(*)为0，结构保留
+表右键,Truncate 表,通过（真实）,T02-truncate,确认后真实COUNT(*)为0，结构保留
+表右键,复制表,通过（真实）,M01/T01,展开子菜单，分别验证结构/数据复制
+表右键,查看权限…,通过（真实）,PG04/workbench-privileges,显示实际MySQL/PG授权内容
+表右键,导入向导…,通过（真实）,W02 × 4,CSV/JSON/XLSX/SQL文件真正入库
+表右键,导出向导…,通过（真实）,W01 × 4,四格式实际下载，验证完整1207行
+表右键,数据生成…,通过（真实）,workbench-export-dump-generate,后台任务实际执行并返回5行生成结果
+表右键,转储 SQL 文件…,通过（真实）,workbench-export-dump-generate,实际下载SQL文件
+表右键,维护,通过（真实）,M01/T04 × 4,子菜单可达；四种操作实际执行
+表右键,复制名称,通过（真实）,C02,核对限定表名剪贴板内容
+表右键,复制 DDL,通过（真实）,C02,剪贴板含真实CREATE TABLE
+表右键,重命名…,通过（真实）,T03,服务端改名、行数保持、打开标签同步
+表右键,刷新,通过（真实）,D01/T02/T03,读服务端对象并更新目录
+表右键/复制表,仅结构…,通过（真实）,T01,查询新表存在，COUNT(*)=0
+表右键/复制表,结构和数据…,通过（真实）,T01,查询新表存在，COUNT(*)=2
+表右键/维护,CHECK TABLE,通过（真实）,T04/,MyISAM真实执行并返回OK；PG仅验证适用的ANALYZE
+表右键/维护,ANALYZE TABLE,通过（真实）,T04/PG04,MyISAM真实执行并返回OK；PG仅验证适用的ANALYZE
+表右键/维护,OPTIMIZE TABLE,通过（真实）,T04/,MyISAM真实执行并返回OK；PG仅验证适用的ANALYZE
+表右键/维护,REPAIR TABLE,通过（真实）,T04/,MyISAM真实执行并返回OK；PG仅验证适用的ANALYZE
+数据网格右键,复制单元格,通过（真实）,C02,核对真实单元格内容
+数据网格右键,复制为,通过（真实）,C01 × 6,逐项执行六个子菜单并核对剪贴板
+数据网格右键,全选,通过（真实）,G04,当前页100行选中
+数据网格右键,取消全选,通过（真实）,G04,先点击选中单行，再全选和取消；0行高亮且删除按钮禁用（本次修复）
+数据网格右键,设置当前列宽…,通过（真实）,G03/G05,24px列宽，刷新后持久化
+数据网格右键,自动调整全部列宽,通过（真实）,G04,长文本列实际变宽
+数据网格右键,设置行高…,通过（真实）,G04,24/60px实测
+数据网格右键,冻结到当前列,通过（真实）,G04,横纵滚动后固定表头可点击且不被覆盖
+数据网格右键,取消冻结所有列,通过（真实）,G04,冻结类清空
+数据网格右键,跳转到记录…,通过（真实）,G04,定位到第80行，真实滚动位置改变
+数据网格右键/复制为,INSERT Statement,通过（真实）,C01/PG03,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+数据网格右键/复制为,UPDATE Statement,通过（真实）,C01/PG03,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+数据网格右键/复制为,Tab Separated Values (Data only),通过（真实）,C01/PG03,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+数据网格右键/复制为,Tab Separated Values (Field Name only),通过（真实）,C01/PG03,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+数据网格右键/复制为,Tab Separated Values (Field Name and Data),通过（真实）,C01/PG03,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+数据网格右键/复制为,JSON,通过（真实）,C01/PG03,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+标签右键,关闭,通过（真实）,Q01,点击后核对标签数量/活动标签/保存名称与SQL内容
+标签右键,关闭其他标签,通过（真实）,Q01,点击后核对标签数量/活动标签/保存名称与SQL内容
+标签右键,关闭右侧标签,通过（真实）,Q01,点击后核对标签数量/活动标签/保存名称与SQL内容
+标签右键,复制标签,通过（真实）,Q01,点击后核对标签数量/活动标签/保存名称与SQL内容
+标签右键,保存查询…,通过（真实）,Q01,点击后核对标签数量/活动标签/保存名称与SQL内容
+数据库连接右键,展开服务器,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,收起服务器,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,连接属性…,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,编辑连接…,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,复制连接…,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,测试连接,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,新建连接…,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,删除连接,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库连接右键,刷新,通过（真实）,P01/P02,执行展开收起/属性核对/独立连接保存测试与删除；新建表单及字段可操作
+数据库右键,打开数据库,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,关闭数据库,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,新建数据库…,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,删除数据库,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,新建查询,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,控制台,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,执行 SQL 文件…,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,转储 SQL 文件…,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,在数据库中查找…,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,刷新,通过（真实）,D01/D02/workbench-SQL-file/workbench-export-dump-generate,执行真实操作并核对服务器结果、查询上下文、目录变化或下载文件
+数据库右键,编辑数据库…,部分通过,D01,当前只能查看字符集/排序规则等属性，不能提交修改；既有功能缺口
+数据库右键,打印数据库…,部分通过,D01,验证调用window.print；未验证物理打印或PDF设备输出
+MySQL view 右键,打开定义,通过（真实）,O01-view,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL view 右键,编辑定义 SQL,通过（真实）,O01-view,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL view 右键,复制名称,通过（真实）,O01-view,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL view 右键,复制 DDL,通过（真实）,O01-view,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL view 右键,刷新,通过（真实）,O01-view,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL view 右键,删除对象,通过（真实）,O01-view,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL function 右键,打开定义,通过（真实）,O01-function,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL function 右键,编辑定义 SQL,通过（真实）,O01-function,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL function 右键,复制名称,通过（真实）,O01-function,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL function 右键,复制 DDL,通过（真实）,O01-function,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL function 右键,刷新,通过（真实）,O01-function,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL function 右键,删除对象,通过（真实）,O01-function,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL procedure 右键,打开定义,通过（真实）,O01-procedure,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL procedure 右键,编辑定义 SQL,通过（真实）,O01-procedure,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL procedure 右键,复制名称,通过（真实）,O01-procedure,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL procedure 右键,复制 DDL,通过（真实）,O01-procedure,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL procedure 右键,刷新,通过（真实）,O01-procedure,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL procedure 右键,删除对象,通过（真实）,O01-procedure,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL trigger 右键,打开定义,通过（真实）,O01-trigger,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL trigger 右键,编辑定义 SQL,通过（真实）,O01-trigger,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL trigger 右键,复制名称,通过（真实）,O01-trigger,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL trigger 右键,复制 DDL,通过（真实）,O01-trigger,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL trigger 右键,刷新,通过（真实）,O01-trigger,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL trigger 右键,删除对象,通过（真实）,O01-trigger,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,打开定义,通过（真实）,O01-event,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,编辑定义 SQL,通过（真实）,O01-event,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,复制名称,通过（真实）,O01-event,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,复制 DDL,通过（真实）,O01-event,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,刷新,通过（真实）,O01-event,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,删除对象,通过（真实）,O01-event,真实创建对象；逐项点击并核对定义SQL、剪贴板、目录和确认删除
+MySQL event 右键,禁用,通过（真实）,O01-event,查询information_schema.EVENTS.STATUS核对真实状态
+MySQL event 右键,启用,通过（真实）,O01-event,查询information_schema.EVENTS.STATUS核对真实状态
+查看/编辑/SQL,三尺寸横纵滚动/固定表头/底栏,通过（真实）,G01 × 3,1440×900、1280×720、1024×768；真实鼠标滚轮与水平滚动、几何位置和无body溢出
+查看/编辑/SQL,普通窗口完整菜单/子菜单分离,通过（真实）,M01 × 3,17个入口可见、无多余滚动条，子菜单不覆盖主菜单
+查看/编辑/SQL,矮窗口菜单滚动/边界定位,通过（真实）,M02,1024×500单一滚动条滚到底，刷新可点击；结果菜单在窗口内
+查看/编辑/SQL,分页/筛选/排序,通过（真实）,G02,LIMIT 1000，每页100；第二页101行、筛选1207行、排序实际变化
+查看/编辑/SQL,Enter保存/失焦保存/Escape撤销,通过（真实）,G03,读实际数据库行值核对
+查看/编辑/SQL,编辑被数据库拒绝后恢复并重试,通过（真实）,G06,VARCHAR超长更新返回400；原值保留并重新载入；有效修改随后保存
+查看/编辑/SQL,主键编辑保护,通过（真实）,G03,主键双击不出现编辑框
+查看/编辑/SQL,列宽与表间状态隔离,通过（真实）,G03/G05,24px宽度持久化，另一张表不继承选区/冻结/宽度
+查看/编辑/SQL,单表SELECT结果编辑与保护,通过（真实）,workbench-direct-SELECT,可识别且带主键结果可保存；缺主键、表达式和手动事务结果拒绝原地编辑
+查看/编辑/SQL,新增/删除记录,通过（真实）,workbench-data-edit,实际添加/删除，确认流程和分页数据更新
+查看/编辑/SQL,PG同名表Schema隔离,通过（真实）,PG01,只更新目标Schema；直接读两Schema确认
+查看/编辑/SQL,SQL真实数据库/Schema切换,通过（真实）,PG02/workbench-query-database,SELECT current_database/current_schema/DATABASE核对会话上下文
+查看/编辑/SQL,SQL执行/多结果,通过（真实）,S01,真实返回11/22等结果，结果页切换正确
+查看/编辑/SQL,SQL当前语句/分号字符串,通过（真实）,workbench-current-statement/S01,字符串内分号不分割语句
+查看/编辑/SQL,SQL选区执行,通过（真实）,S04,只执行选中的SELECT，结果没有另一语句
+查看/编辑/SQL,EXPLAIN执行计划/语法错误,通过（真实）,S01,显示真实执行计划；非法SQL显示错误
+查看/编辑/SQL,手动提交/回滚,通过（真实）,S02,独立会话读实际行值确认提交与回滚
+查看/编辑/SQL,停止执行/取消SQL文件任务,通过（真实）,S02/workbench-SQL-file-cancel,运行SLEEP后取消，等待服务器结束
+查看/编辑/SQL,真实表/别名字段补全,通过（真实）,workbench-SQL-intelligence,真实catalog补全，无重复/无关字段
+查看/编辑/SQL,会话失效/网络中断恢复,通过（受控故障，真实后端）,workbench-session-loss/network,受控丢会话/断网，真实后端恢复；写SQL和丢失事务不自动重放
+查看/编辑/SQL,草稿/历史/保存查询/脏关闭确认,通过（真实）,workbench-dirty-tabs/history/Q01,刷新保留草稿；运行记录/保存查询可用，关闭询问
+查看/编辑/SQL,退出工作台释放查询会话,通过（真实）,S03,pagehide后后端会话实际不可用
+数据库连接右键,新建数据库…,通过（真实）,P03,服务器右键创建后查information_schema确认
+数据库连接右键,新建查询,通过（真实）,P03,服务器右键打开查询，SELECT DATABASE()核对当前新建数据库上下文
+数据库连接右键,打开连接,通过（真实）,P03,非当前连接的右键打开入口实际切换到目标，SQL确认目标默认库
+SQL结果右键,复制单元格,通过（真实）,R01,核对真实单元格内容
+SQL结果右键,复制为,通过（真实）,R01,逐项执行六个子菜单并核对剪贴板
+SQL结果右键,全选,通过（真实）,R01,当前页100行选中
+SQL结果右键,取消全选,通过（真实）,R01,SQL结果100行全选后取消，0行高亮
+SQL结果右键,设置当前列宽…,通过（真实）,R01,SQL结果列宽设为24px并实测
+SQL结果右键,自动调整全部列宽,通过（真实）,R01,长文本列实际变宽
+SQL结果右键,设置行高…,通过（真实）,R01,SQL结果行高设为24px并实测
+SQL结果右键,冻结到当前列,通过（真实）,R01,横纵滚动后固定表头可点击且不被覆盖
+SQL结果右键,取消冻结所有列,通过（真实）,R01,冻结类清空
+SQL结果右键,跳转到记录…,通过（真实）,R01,定位到第80行，真实滚动位置改变
+SQL结果右键/复制为,INSERT Statement,通过（真实）,R01,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+SQL结果右键/复制为,UPDATE Statement,通过（真实）,R01,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+SQL结果右键/复制为,Tab Separated Values (Data only),通过（真实）,R01,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+SQL结果右键/复制为,Tab Separated Values (Field Name only),通过（真实）,R01,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+SQL结果右键/复制为,Tab Separated Values (Field Name and Data),通过（真实）,R01,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名
+SQL结果右键/复制为,JSON,通过（真实）,R01,核对真实表、字段和值；UPDATE含主键WHERE；PG使用Schema限定名

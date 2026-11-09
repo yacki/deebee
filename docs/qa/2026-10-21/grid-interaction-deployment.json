@@ -1,0 +1,24 @@
+{
+  "release": "grid-interaction-20261021",
+  "image_for_next_restart": "deebee-local:ui-grid-interaction-20261021-52322127",
+  "previous_image": "deebee-local:ui-query-performance-20261021-a2a4d6c7",
+  "published_at_utc": "2026-10-20T16:45:32Z",
+  "backup": "/data/deebee/releases/grid-interaction-20261021/backup",
+  "web_files": 66,
+  "status": "deployed_verified",
+  "backend_container_unchanged": true,
+  "backend_started_at_unchanged": true,
+  "backend_source_unchanged": true,
+  "guacd_unchanged": true,
+  "keys_environment_trust_preserved": true,
+  "old_assets_preserved": true,
+  "health": true,
+  "connections_and_resources_and_recording_list": true,
+  "git_commit": false,
+  "git_push": false,
+  "public_verification": {
+    "public_files_verified": 65,
+    "index_sha256": "52322127581d6b5172f402ce18de49a8576296320fd4a2c7d88863940296b113",
+    "all_match_tested_bundle": true
+  }
+}

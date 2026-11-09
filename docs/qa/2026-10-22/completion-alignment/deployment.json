@@ -1,0 +1,46 @@
+{
+  "release": "completion-alignment-20261022-002521",
+  "status": "deployed_verified",
+  "image_for_next_restart": "deebee-local:ui-completion-alignment-20261022-002521-ae7299fd",
+  "previous_image": "deebee-local:ui-sql-completion-20261022-000519-476da49c",
+  "backup": "/data/deebee/releases/completion-alignment-20261022-002521/backup",
+  "published_at_utc": "2026-10-21T16:26:39.846254+00:00",
+  "web_files": 66,
+  "backend_container_unchanged": true,
+  "backend_started_at_unchanged": true,
+  "backend_source_unchanged": true,
+  "guacd_unchanged": true,
+  "gateway_unchanged": true,
+  "keys_environment_trust_preserved": true,
+  "old_assets_preserved": true,
+  "health": true,
+  "git_commit": false,
+  "git_push": false,
+  "public_verification": {
+    "public_files_verified": 65,
+    "index_sha256": "ae7299fd4f5a62058d0abcabbe301885098fdb9c55d73cb9921117025c5b313e",
+    "all_match_tested_bundle": true,
+    "health": true
+  },
+  "old_assets_verified": 130,
+  "browser_verification": {
+    "local_passed": 26,
+    "public_passed": 21,
+    "api": "mocked",
+    "database_queries_executed": false,
+    "layout_checks": {
+      "device_pixel_ratios": [
+        1,
+        2
+      ],
+      "viewports": [
+        1440,
+        1024,
+        800
+      ],
+      "row_visible_height_css_px": 30,
+      "max_vertical_center_error_css_px": 1,
+      "max_top_bottom_gap_difference_css_px": 0.5
+    }
+  }
+}
