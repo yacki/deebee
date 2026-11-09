@@ -1,9 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 const profile={id:'mysql-ui',driver:'mysql',name:'UI QA',host:'db.example.test',port:3306,user:'reader',default_database:'app',default_schema:'',options:{}};
 const columns=[{name:'id',data_type:'BIGINT',nullable:false,default:null,extra:'',comment:''},{name:'name',data_type:'VARCHAR(80)',nullable:false,default:null,extra:'',comment:''}];
-async function setup(page:Page,multiple=false){
+async function setup(page:Page,multiple=false,fixture?:{columns:typeof columns;rows:Record<string,unknown>[]}){
+  const gridColumns=fixture?.columns||columns;
   const errors:string[]=[],writes:unknown[]=[],previews:unknown[]=[];
-  let data=[{id:1,name:'Alpha'},{id:2,name:'Beta'}],session=0;
+  let data:Record<string,unknown>[]=fixture?.rows||[{id:1,name:'Alpha'},{id:2,name:'Beta'}],session=0;
   page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>sessionStorage.setItem('deebee_token','ui-test'));
   await page.route('**/api/**',route=>{
@@ -12,10 +13,10 @@ async function setup(page:Page,multiple=false){
     if(path.endsWith('/connections'))response=multiple?[profile,{...profile,id:'mysql-secondary',name:'Second QA'}]:[profile];
     else if(path.endsWith('/databases'))response=[{name:'app',charset:'utf8mb4',collation:''},{name:'archive',charset:'utf8mb4',collation:''}];
     else if(path.endsWith('/objects'))response={tables:[{name:'people',object_type:'BASE TABLE',estimated_rows:2}],views:[],routines:[],triggers:[],events:[]};
-    else if(path.endsWith('/catalog'))response={database:'app',tables:[{name:'people',object_type:'BASE TABLE',columns:columns.map(c=>({...c,key:c.name==='id'?'PRI':''}))}],routines:[]};
+    else if(path.endsWith('/catalog'))response={database:'app',tables:[{name:'people',object_type:'BASE TABLE',columns:gridColumns.map(c=>({...c,key:c.name==='id'?'PRI':''}))}],routines:[]};
     else if(path.endsWith('/sessions'))response={id:`session-${++session}`};
-    else if(path.endsWith('/query'))response={ok:true,results:[{index:0,kind:'rows',columns,rows:data,row_count:data.length,source:{database:'app',schema:'',table:'people',primaryKey:['id']}}],elapsed_ms:3,autocommit:true};
-    else if(path.endsWith('/data/read'))response={columns,primary_key:['id'],rows:data,page:1,page_size:100,total:data.length,limited:false};
+    else if(path.endsWith('/query'))response={ok:true,results:[{index:0,kind:'rows',columns:gridColumns,rows:data,row_count:data.length,source:{database:'app',schema:'',table:'people',primaryKey:['id']}}],elapsed_ms:3,autocommit:true};
+    else if(path.endsWith('/data/read'))response={columns:gridColumns,primary_key:['id'],rows:data,page:1,page_size:100,total:data.length,limited:false};
     else if(path.endsWith('/data/rows')){writes.push(body);if(request.method()==='PATCH')data=data.map(row=>row.id===body.key.id?{...row,...body.changes}:row);if(request.method()==='DELETE')data=data.filter(row=>row.id!==body.key.id);}
     else if(path.endsWith('/ddl/preview')){previews.push(body.spec);response={statements:['CREATE TABLE demo (id BIGINT)'],dangerous:[]};}
     else if(path.endsWith('/jobs'))response=[];
@@ -25,6 +26,61 @@ async function setup(page:Page,multiple=false){
   return {errors,writes,previews};
 }
 async function choose(page:Page,label:string,text:string){await page.getByRole('combobox',{name:label,exact:true}).click();await page.locator('.arco-select-dropdown:visible').getByText(text,{exact:true}).click();}
+
+test('record popup edits all typed fields together and keeps drafts on validation or server failure',async({page})=>{
+  const names=[['id','BIGINT',false,''],['name','VARCHAR(80)',false,''],['amount','DECIMAL(30,8)',false,''],['counter','BIGINT',false,''],['enabled','BOOLEAN',false,''],['payload','JSON',true,''],['note','TEXT',true,''],['computed','INT',false,'STORED GENERATED'] ] as const;
+  const {writes,errors}=await setup(page,false,{columns:names.map(([name,data_type,nullable,extra])=>({name,data_type,nullable,extra,default:null,comment:''})),rows:[{id:1,name:'Alpha',amount:'123.00000001',counter:'9007199254740993',enabled:1,payload:{n:1},note:'before',computed:2}]});
+  await page.locator('.query-bar').getByRole('button',{name:'运行',exact:true}).click();
+  await page.getByRole('cell',{name:'Alpha',exact:true}).click();
+  await page.getByRole('button',{name:'编辑记录',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'编辑记录',exact:true});
+  const dialogBounds=await dialog.boundingBox();
+  expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBounds!.y+dialogBounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  await expect(dialog.getByLabel('记录字段 id',{exact:true})).toBeDisabled();
+  await expect(dialog.getByLabel('记录字段 computed',{exact:true})).toBeDisabled();
+  await dialog.getByLabel('记录字段 name',{exact:true}).fill('Whole row');
+  await dialog.getByLabel('记录字段 amount',{exact:true}).fill('98765432101234567890.12345678');
+  await dialog.getByLabel('记录字段 counter',{exact:true}).fill('9007199254740999');
+  await choose(page,'记录字段 enabled','false / 0');
+  await dialog.getByLabel('记录字段 payload',{exact:true}).fill('{invalid');
+  await dialog.getByRole('button',{name:'保存记录',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('JSON 格式无效');expect(writes).toHaveLength(0);
+  await dialog.getByLabel('记录字段 payload',{exact:true}).fill('{"n":2}');
+  await dialog.getByLabel('note 设为数据库 NULL',{exact:true}).check();
+  await page.route('**/api/data/rows',route=>route.fulfill({status:500,json:{error:{message:'保存失败，请重试'}}}),{times:1});
+  await dialog.getByRole('button',{name:'保存记录',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('保存失败');
+  await expect(dialog.getByLabel('记录字段 name',{exact:true})).toHaveValue('Whole row');expect(writes).toHaveLength(0);
+  await dialog.getByRole('button',{name:'保存记录',exact:true}).click();
+  await expect(dialog).not.toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({key:{id:1},changes:{name:'Whole row',amount:'98765432101234567890.12345678',counter:'9007199254740999',enabled:0,payload:'{"n":2}',note:null}});
+  expect(Object.keys((writes[0] as {changes:object}).changes)).not.toContain('computed');
+  await page.getByRole('cell',{name:'Whole row',exact:true}).click({button:'right'});
+  await page.getByRole('menuitem',{name:'编辑记录…',exact:true}).click();
+  await dialog.getByLabel('记录字段 name',{exact:true}).fill('Discard this');
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();expect(writes).toHaveLength(1);
+  await page.getByRole('cell',{name:'Whole row',exact:true}).click();await page.keyboard.press('Shift+Enter');
+  await expect(dialog.getByLabel('记录字段 name',{exact:true})).toHaveValue('Whole row');
+  await dialog.getByRole('button',{name:'保存记录',exact:true}).click();expect(writes).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+for(const width of [1920,1536,1366,1280,1024])test(`top toolbar fits ${width}px with all actions reachable`,async({page})=>{
+  await page.setViewportSize({width,height:1080});const {errors}=await setup(page,true);
+  const toolbar=page.getByRole('region',{name:'上下文工具栏'});
+  expect(await toolbar.evaluate(e=>e.scrollWidth<=e.clientWidth)).toBeTruthy();
+  const bounds=await toolbar.boundingBox();
+  for(const button of await toolbar.getByRole('button').all()) {
+    const box=await button.boundingBox();if(box)expect(box.x+box.width).toBeLessThanOrEqual(bounds!.x+bounds!.width+1);
+  }
+  await toolbar.getByRole('button',{name:'更多功能',exact:true}).click();
+  for(const name of ['视图','函数','触发器','事件','用户权限','备份'])await expect(page.locator('.arco-dropdown').getByText(name,{exact:true})).toBeVisible();
+  await page.locator('.arco-dropdown').getByText('视图',{exact:true}).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('CREATE OR REPLACE VIEW');
+  expect(errors).toEqual([]);
+});
 
 test('Arco tabs switch with the keyboard, context actions save a query, and drawers close',async({page})=>{
   const {errors}=await setup(page);

@@ -2,7 +2,7 @@
 import { Icon } from "@iconify/vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, useId, watch } from "vue";
 import CellValueInput from './CellValueInput.vue';
-import { cellText, formatCellJson, columnType, isGenerated, parseCellValue, parsePastedValue, parseDelimited, delimitedText, type GridEdit } from '../cellValues';
+import { cellText, columnType, isGenerated, parseCellValue, parsePastedValue, parseDelimited, delimitedText, type GridEdit } from '../cellValues';
 import type { Column } from "../types";
 import { gridViewStates } from '../gridViewState';
 
@@ -22,7 +22,7 @@ const rowSelection = ref(false);
 const viewMode = ref<'grid'|'record'|'text'|'json'>('grid');
 const error = ref('');
 const saving = ref(false);
-const cellEditor = ref<{ row: number; column: string; value: string; nullValue: boolean }>();
+const recordEditor = ref<{ row: number; fields: Record<string, { value: string; nullValue: boolean }> }>();
 const pastePreview = ref<{ text: string; edits: GridEdit[]; count: number }>();
 let selectionAnchor = 0;
 const selectedRows = ref(new Set<number>());
@@ -69,7 +69,7 @@ function rememberView(rows = props.rows) {
 }
 function restoreView(rows = props.rows) {
   const saved = gridViewStates.get(rows);
-  editing.value = undefined; cellEditor.value=undefined;pastePreview.value=undefined;error.value='';
+  editing.value = undefined; recordEditor.value=undefined;pastePreview.value=undefined;error.value='';
   currentCell.value = saved?.cell; cellAnchor.value=saved?.cell;rangeEnd.value=saved?.cell;rowSelection.value=false;
   selectedRows.value = saved ? new Set(saved.selected) : new Set();
   selectionAnchor = saved?.anchor || 0;
@@ -207,7 +207,7 @@ function key(event: KeyboardEvent) {
   let row = cell.row, col = column;
   if (command && event.key.toLowerCase() === 'a') { event.preventDefault(); selectAll(); return; }
   if (command && event.key.toLowerCase() === 'c' && currentCell.value) { event.preventDefault(); void copySelection(); return; }
-  if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); openCellEditor(cell.row, cell.column); return; }
+  if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); void openRecordEditor(cell.row); return; }
   if (command && event.key.toLowerCase() === 'v') return;
   if (event.key === 'F2' || event.key === 'Enter') { event.preventDefault(); void edit(cell.row, cell.column, props.rows[cell.row]?.[cell.column]); return; }
   if (event.key === 'Tab') { if (tabCell(event.shiftKey)) event.preventDefault(); return; }
@@ -282,18 +282,28 @@ async function copySelection() {
   try { const selected=selection.value; if (!selected.rows.length) return; await navigator.clipboard.writeText(delimitedText(selected.rows.map(index=>selected.columns.map(name=>props.rows[index]?.[name])))); error.value=''; }
   catch { error.value='无法访问剪贴板，请使用 Ctrl/⌘+C'; }
 }
-function openCellEditor(row=currentCell.value?.row, column=currentCell.value?.column) {
-  if (row===undefined || !column) return;
-  if(currentCell.value?.row!==row||currentCell.value?.column!==column)chooseCell(row,column);
-  cellEditor.value={row,column,value:cellText(props.rows[row]?.[column],columns.value.find(item=>item.name===column)),nullValue:props.rows[row]?.[column]===null};error.value='';
+async function openRecordEditor(row=currentCell.value?.row) {
+  if (row===undefined || saving.value || !props.rows[row]) return;
+  if (editing.value) { await commit(); if (editing.value || saving.value) return; }
+  const column=currentCell.value?.column || columns.value[0]?.name;
+  if (column && currentCell.value?.row!==row) chooseCell(row,column);
+  recordEditor.value={row,fields:Object.fromEntries(columns.value.map(column=>[column.name,{value:cellText(props.rows[row][column.name],column),nullValue:props.rows[row][column.name]===null}]))};
+  error.value='';
 }
-const editorColumn = computed(() => columns.value.find(item=>item.name===cellEditor.value?.column));
-async function saveCellEditor() {
-  const editor=cellEditor.value,column=editorColumn.value;if(!editor||!column||!canEdit(column.name))return;
-  try {const value=parseCellValue(editor.value,column,editor.nullValue);if(await persist([{rowIndex:editor.row,changes:{[column.name]:value}}]))cellEditor.value=undefined;}
-  catch(reason){error.value=reason instanceof Error?reason.message:String(reason);}
+const recordEditable = computed(() => columns.value.some(column=>canEdit(column.name)));
+async function saveRecordEditor() {
+  const editor=recordEditor.value;if(!editor||saving.value)return;
+  try {
+    const changes:Record<string,unknown>={};
+    for(const column of columns.value) {
+      if(!canEdit(column.name))continue;
+      const field=editor.fields[column.name],original=props.rows[editor.row][column.name];
+      if(field.nullValue===(original===null) && field.value===cellText(original,column))continue;
+      changes[column.name]=parseCellValue(field.value,column,field.nullValue);
+    }
+    if(!Object.keys(changes).length || await persist([{rowIndex:editor.row,changes}]))recordEditor.value=undefined;
+  } catch(reason){error.value=reason instanceof Error?reason.message:String(reason);}
 }
-function formatJson() { if(!cellEditor.value)return;try{cellEditor.value.value=formatCellJson(cellEditor.value.value);}catch{error.value='JSON 格式无效';} }
 async function setNull() { const cell=currentCell.value,column=columns.value.find(item=>item.name===cell?.column);if(cell&&column&&canEdit(column.name)){if(column.nullable===false){error.value='该字段不允许 NULL';return;}await persist([{rowIndex:cell.row,changes:{[cell.column]:null}}]);} }
 function preparePaste(text: string) {
   try {
@@ -318,19 +328,19 @@ const browseText = computed(() => viewMode.value==='json'?JSON.stringify(props.r
 function exportRows(format: string, selectedOnly=false) {const fields=selectedOnly?selection.value.columns:columns.value.map(item=>item.name);const rows=selectedOnly?selection.value.rows.map(index=>props.rows[index]):props.rows;if(!rows.length)return;emit('export',format,rows,fields);}
 async function preparePrint() { viewMode.value='grid'; printing.value = true; await nextTick(); }
 function finishPrint() { printing.value = false; }
-defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, selectAll, deselectAll, goToRow, preparePrint, finishPrint, copySelection, pasteFromClipboard, editCurrentCell:openCellEditor, setNull });
+defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, selectAll, deselectAll, goToRow, preparePrint, finishPrint, copySelection, pasteFromClipboard, editRecord:openRecordEditor, setNull });
 </script>
 
 <template>
   <div ref="frame" class="editable-grid-frame" role="grid" :aria-rowcount="rows.length + 1" :aria-colcount="columns.length + 1" :aria-activedescendant="activeDescendant" tabindex="0" :style="{ '--grid-row-height': `${rowHeight}px` }" @keydown="key" @paste="paste">
     <div class="grid-tools" aria-label="数据浏览与编辑">
       <div role="tablist" aria-label="数据浏览方式"><a-button v-for="item in ([['grid','表格'],['record','记录'],['text','文本'],['json','JSON']] as const)" :key="item[0]" type="text" role="tab" :aria-selected="viewMode===item[0]" @click="viewMode=item[0]">{{ item[1] }}</a-button></div>
-      <span class="separator" /><a-button type="text" :disabled="!selection.rows.length" title="Shift 选择区域，Ctrl/⌘ 选择多行；Ctrl/⌘+C 复制" @click="copySelection">复制所选</a-button><a-button v-if="editable" type="text" :disabled="!currentCell || saving" @click="pasteFromClipboard">粘贴</a-button><a-button type="text" :disabled="!currentCell" @click="openCellEditor()">弹窗编辑</a-button>
+      <span class="separator" /><a-button type="text" :disabled="!selection.rows.length" title="Shift 选择区域，Ctrl/⌘ 选择多行；Ctrl/⌘+C 复制" @click="copySelection">复制所选</a-button><a-button v-if="editable" type="text" :disabled="!currentCell || saving" @click="pasteFromClipboard">粘贴</a-button><a-button type="text" :disabled="!currentCell || saving" title="Shift+Enter 编辑整条记录" @click="openRecordEditor()">{{ recordEditable?'编辑记录':'查看记录' }}</a-button>
       <a-dropdown @select="value=>{const [scope,format]=String(value).split(':');exportRows(format,scope==='selected')}"><a-button type="text">导出结果<Icon icon="lucide:chevron-down" /></a-button><template #content><a-doption v-for="format in ['csv','xlsx','sql','json']" :key="format" :value="`all:${format}`">导出已加载数据 · {{ format==='xlsx'?'Excel':format.toUpperCase() }}</a-doption><a-doption v-for="format in ['csv','xlsx','sql']" :key="`selected:${format}`" :value="`selected:${format}`" :disabled="!selection.rows.length">导出所选区域 · {{ format==='xlsx'?'Excel':format.toUpperCase() }}</a-doption></template></a-dropdown>
       <span class="grid-selection-summary">{{ selection.rows.length }} 行 × {{ selection.columns.length }} 列</span>
     </div>
-    <div v-if="error && !cellEditor && !pastePreview" class="grid-error" role="alert">{{ error }}<a-button type="text" @click="error=''">关闭</a-button></div>
-    <div v-if="viewMode==='record'" class="grid-record"><div class="grid-record-nav"><a-button :disabled="recordIndex===0" @click="moveRecord(-1)">上一条</a-button><span>第 {{ rows.length ? recordIndex+1 : 0 }} / {{ rows.length }} 条</span><a-button :disabled="recordIndex>=rows.length-1" @click="moveRecord(1)">下一条</a-button></div><dl><div v-for="column in columns" :key="column.name"><dt>{{ column.name }}<small>{{ columnType(column) }}</small></dt><dd><button type="button" :aria-label="`查看或编辑 ${column.name}`" @click="openCellEditor(recordIndex,column.name)">{{ display(rows[recordIndex]?.[column.name],column) }}</button></dd></div></dl></div>
+    <div v-if="error && !recordEditor && !pastePreview" class="grid-error" role="alert">{{ error }}<a-button type="text" @click="error=''">关闭</a-button></div>
+    <div v-if="viewMode==='record'" class="grid-record"><div class="grid-record-nav"><a-button :disabled="recordIndex===0" @click="moveRecord(-1)">上一条</a-button><span>第 {{ rows.length ? recordIndex+1 : 0 }} / {{ rows.length }} 条</span><a-button :disabled="recordIndex>=rows.length-1" @click="moveRecord(1)">下一条</a-button></div><dl><div v-for="column in columns" :key="column.name"><dt>{{ column.name }}<small>{{ columnType(column) }}</small></dt><dd><button type="button" :aria-label="`查看或编辑记录 ${column.name}`" @click="openRecordEditor(recordIndex)">{{ display(rows[recordIndex]?.[column.name],column) }}</button></dd></div></dl></div>
     <textarea v-else-if="viewMode==='text'||viewMode==='json'" class="grid-text-view" :aria-label="viewMode==='json'?'JSON 数据浏览':'文本数据浏览'" :value="browseText" readonly />
     <div v-show="viewMode==='grid'" ref="shell" class="editable-grid-shell" @scroll.passive="scroll">
       <table :style="{ width: `${tableWidth}px` }">
@@ -357,14 +367,18 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
       </table>
       <div v-if="!rows.length" class="empty-grid"><Icon icon="lucide:database-zap" /><span>没有数据</span></div>
     </div>
-    <WorkbenchModal v-if="cellEditor && editorColumn" visible :width="720" :footer="false" hide-title :closable="false" :mask-closable="false" @cancel="cellEditor=undefined">
-      <section class="grid-value-dialog" role="dialog" aria-label="单元格编辑器">
-        <header><strong>{{ canEdit(editorColumn.name)?'编辑':'查看' }} {{ editorColumn.name }}</strong><span>{{ columnType(editorColumn) }} · 第 {{ cellEditor.row+1 }} 条</span></header>
+    <WorkbenchModal v-if="recordEditor" visible :width="860" :footer="false" hide-title :closable="false" :mask-closable="false" :modal-style="{maxWidth:'calc(100vw - 32px)'}" :body-style="{padding:'0',maxHeight:'none',overflow:'hidden'}" @cancel="!saving && (recordEditor=undefined)">
+      <section class="grid-value-dialog grid-record-dialog" role="dialog" :aria-label="recordEditable?'编辑记录':'查看记录'">
+        <header><strong>{{ recordEditable?'编辑记录':'查看记录' }}</strong><span>第 {{ recordEditor.row+1 }} 条 · {{ columns.length }} 个字段</span></header>
         <p v-if="error" role="alert" class="grid-error">{{ error }}</p>
-        <WorkbenchCheckbox v-model="cellEditor.nullValue" :disabled="!canEdit(editorColumn.name)||editorColumn.nullable===false" aria-label="设为数据库 NULL">数据库 NULL</WorkbenchCheckbox>
-        <CellValueInput v-model="cellEditor.value" :column="editorColumn" :label="`单元格值 ${editorColumn.name}`" :disabled="cellEditor.nullValue||!canEdit(editorColumn.name)||saving" />
-        <p class="grid-value-hint">空字符串与 NULL 分开保存。大整数和精确小数保留完整精度。</p>
-        <footer><a-button v-if="columnType(editorColumn).startsWith('json')" type="text" :disabled="cellEditor.nullValue" @click="formatJson">格式化 JSON</a-button><span class="grow" /><a-button @click="cellEditor=undefined">取消</a-button><a-button v-if="canEdit(editorColumn.name)" type="primary" :loading="saving" @click="saveCellEditor">保存单元格</a-button></footer>
+        <div class="grid-record-fields">
+          <div v-for="column in columns" :key="column.name" class="grid-record-field">
+            <div class="grid-record-label"><strong>{{ column.name }}</strong><small>{{ columnType(column) }}<template v-if="primaryKey.includes(column.name)"> · 主键只读</template><template v-else-if="!canEdit(column.name)"> · 只读</template></small></div>
+            <div class="grid-record-input"><CellValueInput v-model="recordEditor.fields[column.name].value" :column="column" :label="`记录字段 ${column.name}`" :disabled="recordEditor.fields[column.name].nullValue||!canEdit(column.name)||saving" /><WorkbenchCheckbox v-model="recordEditor.fields[column.name].nullValue" :disabled="!canEdit(column.name)||column.nullable===false||saving" :aria-label="`${column.name} 设为数据库 NULL`">NULL</WorkbenchCheckbox></div>
+          </div>
+        </div>
+        <p class="grid-value-hint">仅保存修改过的字段。空字符串与 NULL 分开保存，大整数和小数保留原始精度。</p>
+        <footer><span class="grow" /><a-button :disabled="saving" @click="recordEditor=undefined">取消</a-button><a-button v-if="recordEditable" type="primary" :loading="saving" @click="saveRecordEditor">保存记录</a-button></footer>
       </section>
     </WorkbenchModal>
     <WorkbenchModal v-if="pastePreview" visible :width="760" :footer="false" hide-title :closable="false" :mask-closable="false" @cancel="pastePreview=undefined"><section class="grid-value-dialog" role="dialog" aria-label="确认粘贴数据"><header><strong>确认粘贴数据</strong><span>{{ pastePreview.edits.length }} 行 · {{ pastePreview.count }} 个单元格</span></header><p>将覆盖选中位置起的已有单元格。所有修改在同一事务中保存；失败时整体回滚。\N 表示 NULL，空白表示空字符串。</p><p v-if="error" role="alert" class="grid-error">{{ error }}</p><div class="grid-paste-preview"><table><thead><tr><th>记录</th><th>字段</th><th>原值</th><th>新值</th></tr></thead><tbody><template v-for="pasteEdit in pastePreview.edits.slice(0,30)" :key="pasteEdit.rowIndex"><tr v-for="(value,name) in pasteEdit.changes" :key="name"><td>{{ pasteEdit.rowIndex+1 }}</td><td>{{ name }}</td><td>{{ display(rows[pasteEdit.rowIndex]?.[name]) }}</td><td>{{ display(value) }}</td></tr></template></tbody></table></div><footer><span>预览前 30 行，共 {{ pastePreview.edits.length }} 行</span><span class="grow" /><a-button :disabled="saving" @click="pastePreview=undefined">取消</a-button><a-button type="primary" :loading="saving" @click="applyPaste">确认并保存</a-button></footer></section></WorkbenchModal>
@@ -413,6 +427,14 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
 .grid-text-view { width:100%; resize:none; border:0; outline:0; font:13px/1.6 ui-monospace,monospace; white-space:pre; }
 .grid-value-dialog { padding:20px; }.grid-value-dialog header { display:flex; gap:12px; align-items:center; margin-bottom:16px; }.grid-value-dialog header span,.grid-value-hint { color:#8793a3; font-size:12px; }.grid-value-dialog footer { display:flex; gap:8px; align-items:center; margin-top:18px; }.grid-value-dialog :deep(.arco-checkbox) { margin-bottom:12px; }
 .grid-paste-preview { max-height:360px; overflow:auto; }.grid-paste-preview table { width:100%; border-collapse:collapse; font-size:12px; }.grid-paste-preview th,.grid-paste-preview td { padding:6px; border:1px solid #e2e7ef; white-space:pre-wrap; overflow-wrap:anywhere; max-width:240px; }
+.grid-record-dialog { display:flex; flex-direction:column; max-height:calc(100dvh - 160px); box-sizing:border-box; }
+.grid-record-fields { min-height:0; overflow:auto; border-top:1px solid var(--color-border-2); }
+.grid-record-field { display:grid; grid-template-columns:180px minmax(0,1fr); gap:16px; padding:12px 4px; border-bottom:1px solid var(--color-border-2); }
+.grid-record-label { min-width:0; overflow-wrap:anywhere; }.grid-record-label small { display:block; margin-top:5px; color:var(--color-text-3); }
+.grid-record-input { min-width:0; display:flex; align-items:flex-start; gap:12px; }.grid-record-input>:first-child { flex:1; min-width:0; }
+.grid-record-input :deep(.arco-checkbox) { flex:none; margin:5px 0 0; }
+.grid-record-dialog header,.grid-record-dialog footer,.grid-record-dialog>.grid-value-hint,.grid-record-dialog>.grid-error { flex:none; }
+@media(max-width:600px){.grid-record-field{grid-template-columns:minmax(0,1fr);gap:8px}.grid-record-dialog{padding:14px;max-height:calc(100dvh - 48px)}}
 @media print {
   .grid-tools,.grid-error { display:none; }
   .editable-grid-frame { display:block; height:auto; overflow:visible; border:0; }
