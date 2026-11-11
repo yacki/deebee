@@ -418,11 +418,6 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
 .grid-header .row-number { position:sticky; left:0; z-index:8; padding:0; text-align:center; color:#7c8b9b; }
 .grid-header .current-column { background:#dce7f4; color:#1e4d80; box-shadow:inset 0 -2px #4e7faf; }
 .editable-grid-shell { min-width:0; overflow:auto; overflow-y:scroll; scrollbar-gutter:stable; overflow-anchor:none; overscroll-behavior:contain; scroll-behavior:auto; }
-.editable-grid-shell::-webkit-scrollbar { width:12px; height:12px; }
-.editable-grid-shell::-webkit-scrollbar-track { background:#edf1f5; }
-.editable-grid-shell::-webkit-scrollbar-thumb { border:3px solid #edf1f5; border-radius:0; background:#9aaaba; }
-.editable-grid-shell::-webkit-scrollbar-thumb:hover { background:#71869b; }
-.editable-grid-shell::-webkit-scrollbar-corner { background:#e5ebf2; }
 .editable-grid-shell td { box-sizing:border-box; user-select:none; transition:none; }
 .editable-grid-shell tbody tr:not(.grid-spacer) > td { height:var(--grid-row-height); }
 .editable-grid-shell .grid-spacer > td { padding:0; border:0; }
