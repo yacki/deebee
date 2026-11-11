@@ -192,7 +192,7 @@ export function useRecordingPlayer() {
         if (events.some(event => !Array.isArray(event) || !Number.isFinite(event[0]) || event[0] < 0 || typeof event[2] !== 'string')) throw new Error('终端录像数据损坏');
         events.sort((a, b) => a[0] - b[0]);
         duration.value = Math.max(row.duration * 1000, (events.at(-1)?.[0] || 0) * 1000, 1);
-        terminal = new Terminal({ cols: size.cols, rows: size.rows, fontSize: 13, disableStdin: true, cursorBlink: false, scrollback: 3000, theme: { background: '#0b1220', foreground: '#d9e2f2' } });
+        terminal = new Terminal({ cols: size.cols, rows: size.rows, fontSize: 12, disableStdin: true, cursorBlink: false, scrollback: 3000, theme: { background: '#0b1220', foreground: '#d9e2f2' } });
         terminal.open(viewport.value); loading.value = false; play();
       }
     } catch (reason) { if (active === generation) { loading.value = false; fail(reason); } }

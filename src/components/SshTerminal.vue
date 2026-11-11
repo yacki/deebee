@@ -108,7 +108,7 @@ onMounted(async () => {
     cursorBlink: true,
     cursorStyle: "bar",
     fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 14,
+    fontSize: 12,
     lineHeight: 1.16,
     scrollback: 10000,
     allowProposedApi: false,
@@ -156,5 +156,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.ssh-ai-draft{flex:none;background:#fff;border-bottom:1px solid #dce2eb}.ssh-ai-draft>header{display:flex;align-items:center;gap:12px;padding:6px 12px;color:#59677d;font-size:12px}.ssh-ai-draft>header span{flex:1}
+.ssh-ai-draft{flex:none;background:#fff;border-bottom:1px solid #dce2eb}.ssh-ai-draft>header{display:flex;align-items:center;gap:12px;padding:6px 12px;color:#59677d;font-size:var(--deebee-font-size)}.ssh-ai-draft>header span{flex:1}
 </style>

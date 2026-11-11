@@ -63,5 +63,5 @@ async function save(enabled: boolean, ids = selected.value) {
 </template>
 
 <style scoped>
-section{margin:22px 0}h3{font-size:14px;font-weight:500;margin:0 0 16px}.access-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.access-field{display:flex;flex-direction:column;gap:8px}.wide-field{grid-column:1/-1}.access-actions{display:flex;gap:8px;margin:16px 0;flex-wrap:wrap}input[type=datetime-local]{font:inherit;border:1px solid var(--color-border-2);padding:8px;background:var(--color-fill-2);min-width:0}.arco-alert{margin-bottom:16px}
+section{margin:22px 0}h3{font-size:var(--deebee-font-size);font-weight:500;margin:0 0 16px}.access-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.access-field{display:flex;flex-direction:column;gap:8px}.wide-field{grid-column:1/-1}.access-actions{display:flex;gap:8px;margin:16px 0;flex-wrap:wrap}input[type=datetime-local]{font:inherit;border:1px solid var(--color-border-2);padding:8px;background:var(--color-fill-2);min-width:0}.arco-alert{margin-bottom:16px}
 </style>

@@ -133,7 +133,7 @@ function fitTerminal(id: string) {
 function mountTerminal(item: TerminalTab) {
   const element = document.getElementById(terminalElementId(item.id));
   if (!element || terminals.has(item.id)) return;
-  const terminal = new Terminal({ cursorBlink: true, cursorStyle: "bar", fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 14, lineHeight: 1.16, scrollback: 10000, theme: { background: "#0b1220", foreground: "#d9e2f2", cursor: "#48a6ff", selectionBackground: "#24588a88" } });
+  const terminal = new Terminal({ cursorBlink: true, cursorStyle: "bar", fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, lineHeight: 1.16, scrollback: 10000, theme: { background: "#0b1220", foreground: "#d9e2f2", cursor: "#48a6ff", selectionBackground: "#24588a88" } });
   const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(element); fit.fit();
   terminal.writeln(`\x1b[38;5;75m正在连接 ${item.label}…\x1b[0m`);
   const disposable = terminal.onData(data => send({ type: "data", id: item.id, data }));

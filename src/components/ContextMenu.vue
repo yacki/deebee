@@ -34,6 +34,6 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',escape);window.removeE
   </a-dropdown>
 </template>
 <style scoped>
-.context-menu-anchor{position:fixed;width:0;height:0;pointer-events:none;outline:none}.workbench-context-menu{width:278px}.workbench-context-menu :deep(.arco-dropdown-option-content){display:flex;align-items:center;gap:9px}.workbench-context-menu :deep(svg){width:16px;height:16px;flex:none}.workbench-context-menu kbd{margin-left:auto;color:var(--color-text-3);font:11px ui-monospace,monospace}.workbench-context-menu :deep(.danger-action){color:rgb(var(--danger-6))}
+.context-menu-anchor{position:fixed;width:0;height:0;pointer-events:none;outline:none}.workbench-context-menu{width:278px}.workbench-context-menu :deep(.arco-dropdown-option-content){display:flex;align-items:center;gap:9px}.workbench-context-menu :deep(svg){width:16px;height:16px;flex:none}.workbench-context-menu kbd{margin-left:auto;color:var(--color-text-3);font:var(--deebee-font-size) ui-monospace,monospace}.workbench-context-menu :deep(.danger-action){color:rgb(var(--danger-6))}
 :global(.workbench-context-popup .arco-dropdown-option-content){display:flex;align-items:center;gap:9px}:global(.workbench-context-popup .arco-dropdown-option-content>svg){width:16px;height:16px;flex:none}
 </style>

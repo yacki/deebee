@@ -9,6 +9,7 @@ async function setup(page: Page) {
   });
   await page.goto('/admin');
   await expect(page.getByRole('heading',{name:'资源管理',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'资源管理',exact:true})).toHaveCSS('font-size','12px');
 }
 async function white(control: Locator) {
   await expect(control).toHaveCSS('background-color','rgb(255, 255, 255)');

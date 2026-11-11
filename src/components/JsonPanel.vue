@@ -25,5 +25,5 @@ function format(next: string) {
   </div>
 </template>
 <style scoped>
-.json-panel{min-width:0;margin:12px 0;border:1px solid var(--color-border-2);border-radius:4px;overflow:hidden}.json-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--color-fill-1);font-size:12px;gap:12px}.json-panel pre{margin:0;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:460px;overflow:auto;font:12px/1.7 ui-monospace,monospace;background:var(--color-bg-1)}
+.json-panel{min-width:0;margin:12px 0;border:1px solid var(--color-border-2);border-radius:4px;overflow:hidden}.json-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--color-fill-1);font-size:var(--deebee-font-size);gap:12px}.json-panel pre{margin:0;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:460px;overflow:auto;font:var(--deebee-font-size)/1.7 ui-monospace,monospace;background:var(--color-bg-1)}
 </style>
