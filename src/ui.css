@@ -2,6 +2,20 @@
 html{font-size:var(--deebee-font-size)}
 body :is(h1,h2,h3,h4,h5,h6,small,button,input,select,textarea,kbd,code,pre){font-size:var(--deebee-font-size)}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-ligatures:none;font-size:var(--deebee-font-size);color:var(--color-text-1)}
+
+/* Keep scroll geometry stable while hiding idle scrollbar paint. */
+*{scrollbar-width:thin;scrollbar-color:#96a6b8 transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{border:2px solid transparent;border-radius:8px;background:#96a6b8;background-clip:padding-box}
+@media (hover:hover){
+  *{scrollbar-color:transparent transparent}
+  *:hover,*:focus-visible{scrollbar-color:#96a6b8 transparent}
+  ::-webkit-scrollbar-thumb{background-color:transparent}
+  :hover::-webkit-scrollbar-thumb,:focus-visible::-webkit-scrollbar-thumb{background-color:#96a6b8}
+  ::-webkit-scrollbar-thumb:hover{background-color:#687e97}
+}
+@media (forced-colors:active){*{scrollbar-color:auto}}
 .arco-btn svg{width:16px;height:16px;flex-shrink:0}.arco-btn{gap:6px}.arco-btn:focus-visible{outline:2px solid rgb(var(--primary-5));outline-offset:2px}.arco-select,.arco-input-wrapper,.arco-textarea-wrapper,.arco-picker{min-width:0}.arco-modal{max-width:calc(100vw - 32px)}.arco-modal-body{max-height:calc(100dvh - 160px);overflow:auto}.arco-table-cell{overflow-wrap:anywhere}.arco-form{min-width:0}
 .workbench-dialog .arco-modal-body{padding:0;max-height:calc(100dvh - 64px)}.workbench-dialog .modal{width:100%;max-width:none;max-height:none;box-shadow:none;border:0;margin:0;border-radius:0}.workbench-dialog .arco-form{display:flex;flex-direction:column;align-items:stretch}.workbench-dialog .connection-modal{width:100%}.workbench-dialog .connection-form-grid>label{min-width:0}.workbench-dialog .arco-select{width:100%}.workbench-dialog .arco-checkbox{display:inline-flex;align-items:center;gap:6px}.workbench-dialog .arco-checkbox-label{line-height:1.5}.workbench-dialog .private-key-field>.workbench-input{min-height:130px}
 .app-shell .workspace-tabs{flex:none;min-height:40px;background:var(--color-fill-1)}.workspace-tabs>.arco-tabs-content,.component-tabs>.arco-tabs-content{display:none}.workspace-tabs .arco-tabs-nav{margin:0}.workspace-tab-label{display:inline-flex;align-items:center;gap:7px;max-width:200px;white-space:nowrap}.workspace-tab-label>span{overflow:hidden;text-overflow:ellipsis}.workspace-tab-label>svg{width:16px;height:16px;flex-shrink:0}.app-shell .result-tabs{display:block;height:auto;min-height:36px;padding:0 12px;background:var(--color-bg-1)}.result-tabs .arco-tabs-nav{margin:0}.workbench-dialog .connection-sections{display:block;padding:0 18px;background:var(--color-bg-1)}.connection-sections .arco-tabs-nav{margin:0}.app-shell .autocommit-control{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:var(--deebee-font-size)}.app-shell .database-switch{border:0;background:transparent}.app-shell .database-switch .arco-select{min-width:100px;max-width:180px}.app-shell .profile-switch .arco-select{min-width:160px}.app-shell .tree-search{border:0;padding:0;background:transparent}.app-shell .tree-search>.iconify{display:none}.app-shell .tree-node .node-label{display:block}.app-shell .tree-node.server-node .node-label{display:flex}.app-shell .toolbar .arco-btn{font-size:var(--deebee-font-size)}.app-shell .query-bar{min-height:44px;gap:8px}.app-shell .query-bar .arco-btn{flex-shrink:0}.data-toolbar .workbench-input{width:160px}.data-toolbar .arco-select{width:140px}.designer-tabs{display:block;height:auto;padding:0 12px}.designer-tabs .arco-tabs-nav{margin:0}.structure-table .arco-input-wrapper{min-width:80px}.structure-table .arco-table-td{padding:6px}.structure-table .arco-table-cell{padding:0}.structure-table .arco-table-th .arco-table-cell{padding:6px}.table-options .arco-select{width:140px}.table-options .workbench-input{max-width:220px}.object-table .arco-table{height:100%}.editable-grid-shell .workbench-input,.editable-grid-shell .arco-input-wrapper{height:100%}.editable-grid-shell td.editing{padding:0}.login-input .workbench-input>.arco-input-wrapper{background:transparent;border-color:transparent;box-shadow:none}.login-input .workbench-input{flex:1}.login-card .arco-btn{display:inline-flex}.connection-options .arco-checkbox{margin:4px 16px 4px 0}.arco-btn>span>svg{vertical-align:middle}
@@ -78,8 +92,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,"PingFang SC"
 .toolbar-overflow-popup .arco-dropdown{min-width:min(260px,calc(100vw - 24px))}
 @media(max-width:1100px){.app-shell .toolbar .profile-switch{width:150px}.app-shell .toolbar .connection-state{max-width:150px}}
 
-.object-info-drawer .arco-drawer-header{justify-content:space-between;gap:12px;padding:12px 18px;font-size:var(--deebee-font-size)}
-.object-info-drawer .arco-drawer-body{padding:18px;overflow:auto}
+.object-info-drawer .arco-drawer{background:#f2f6fb;border-left:1px solid #c5d2e2;box-shadow:-8px 0 24px #18334f18}
+.object-info-drawer .arco-drawer-header{justify-content:space-between;gap:12px;padding:12px 18px;border-bottom:1px solid #cdd9e7;background:#e5edf7;color:#294b70;font-size:var(--deebee-font-size)}
+.object-info-drawer .arco-drawer-body{padding:18px;overflow:auto;background:#f2f6fb}
 .inspector-details{min-width:0;font-size:var(--deebee-font-size);line-height:1.6}
 .inspector-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
 .inspector-heading>div:last-child{flex:1;min-width:0}
@@ -87,8 +102,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,"PingFang SC"
 .inspector-details .inspector-icon svg{width:20px;height:20px}
 .inspector-details h3{margin:0 0 4px;font-size:var(--deebee-font-size);line-height:1.5;overflow-wrap:anywhere}
 .inspector-details p{margin:0;color:var(--color-text-2);overflow-wrap:anywhere}
-.inspector-details dl{margin:0;border-top:1px solid var(--color-border-2)}
-.inspector-details dl>div{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:start;gap:12px;padding:10px 0;border-bottom:1px solid var(--color-border-2)}
+.inspector-details dl{margin:0;border-top:1px solid #d5dfeb}
+.inspector-details dl>div{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:start;gap:12px;padding:10px 0;border-bottom:1px solid #d5dfeb}
 .inspector-details dt,.inspector-details dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .inspector-details dt{color:var(--color-text-2)}
 .inspector-details dd{color:var(--color-text-1);white-space:pre-wrap}

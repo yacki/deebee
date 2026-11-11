@@ -127,9 +127,9 @@ for(const driver of ['mysql','postgresql','mssql'])test(`compact ${driver} tree 
  const labels=[];
  for(const node of nodes){
   const icon=await node.locator(':scope > .node-icon').boundingBox();labels.push(icon!.x);
-  expect((await node.locator('.twisty').boundingBox())!.width).toBe(26);
+  expect((await node.locator('.twisty').boundingBox())!.width).toBe(20);
  }
- for(let i=1;i<labels.length;i++)expect(Math.abs(labels[i]-labels[i-1]-12)).toBeLessThanOrEqual(1);
+ for(let i=1;i<labels.length;i++)expect(Math.abs(labels[i]-labels[i-1]-8)).toBeLessThanOrEqual(1);
  expect((await nodes.at(-1)!.locator('.node-label').boundingBox())!.width).toBeGreaterThan(100);
  const tables=category(page);await tables.locator('.twisty').click();await expect(page.locator('.object-node')).toHaveCount(1);
  await tables.locator('.twisty').click();await expect(page.locator('.object-node').filter({hasText:'com_dict'})).toBeVisible();
