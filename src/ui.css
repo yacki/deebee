@@ -1,8 +1,10 @@
 :root{--primary-6:36,112,205;--primary-5:64,135,221;--primary-7:24,88,171;--border-radius-small:4px;--border-radius-medium:6px;--deebee-font-size:12px;font-synthesis:none}
-body{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;font-size:var(--deebee-font-size);color:var(--color-text-1)}
+html{font-size:var(--deebee-font-size)}
+body :is(h1,h2,h3,h4,h5,h6,small,button,input,select,textarea,kbd,code,pre){font-size:var(--deebee-font-size)}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-ligatures:none;font-size:var(--deebee-font-size);color:var(--color-text-1)}
 .arco-btn svg{width:16px;height:16px;flex-shrink:0}.arco-btn{gap:6px}.arco-btn:focus-visible{outline:2px solid rgb(var(--primary-5));outline-offset:2px}.arco-select,.arco-input-wrapper,.arco-textarea-wrapper,.arco-picker{min-width:0}.arco-modal{max-width:calc(100vw - 32px)}.arco-modal-body{max-height:calc(100dvh - 160px);overflow:auto}.arco-table-cell{overflow-wrap:anywhere}.arco-form{min-width:0}
 .workbench-dialog .arco-modal-body{padding:0;max-height:calc(100dvh - 64px)}.workbench-dialog .modal{width:100%;max-width:none;max-height:none;box-shadow:none;border:0;margin:0;border-radius:0}.workbench-dialog .arco-form{display:flex;flex-direction:column;align-items:stretch}.workbench-dialog .connection-modal{width:100%}.workbench-dialog .connection-form-grid>label{min-width:0}.workbench-dialog .arco-select{width:100%}.workbench-dialog .arco-checkbox{display:inline-flex;align-items:center;gap:6px}.workbench-dialog .arco-checkbox-label{line-height:1.5}.workbench-dialog .private-key-field>.workbench-input{min-height:130px}
-.app-shell .workspace-tabs{flex:none;min-height:40px;background:var(--color-fill-1)}.workspace-tabs>.arco-tabs-content,.component-tabs>.arco-tabs-content{display:none}.workspace-tabs .arco-tabs-nav{margin:0}.workspace-tab-label{display:inline-flex;align-items:center;gap:7px;max-width:200px;white-space:nowrap}.workspace-tab-label>span{overflow:hidden;text-overflow:ellipsis}.workspace-tab-label>svg{width:16px;height:16px;flex-shrink:0}.app-shell .result-tabs{display:block;height:auto;min-height:36px;padding:0 12px;background:var(--color-bg-1)}.result-tabs .arco-tabs-nav{margin:0}.workbench-dialog .connection-sections{display:block;padding:0 18px;background:var(--color-bg-1)}.connection-sections .arco-tabs-nav{margin:0}.app-shell .autocommit-control{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px}.app-shell .database-switch{border:0;background:transparent}.app-shell .database-switch .arco-select{min-width:100px;max-width:180px}.app-shell .profile-switch .arco-select{min-width:160px}.app-shell .tree-search{border:0;padding:0;background:transparent}.app-shell .tree-search>.iconify{display:none}.app-shell .tree-node .node-label{display:block}.app-shell .tree-node.server-node .node-label{display:flex}.app-shell .toolbar .arco-btn{font-size:12px}.app-shell .query-bar{min-height:44px;gap:8px}.app-shell .query-bar .arco-btn{flex-shrink:0}.data-toolbar .workbench-input{width:160px}.data-toolbar .arco-select{width:140px}.designer-tabs{display:block;height:auto;padding:0 12px}.designer-tabs .arco-tabs-nav{margin:0}.structure-table .arco-input-wrapper{min-width:80px}.structure-table .arco-table-td{padding:6px}.structure-table .arco-table-cell{padding:0}.structure-table .arco-table-th .arco-table-cell{padding:6px}.table-options .arco-select{width:140px}.table-options .workbench-input{max-width:220px}.object-table .arco-table{height:100%}.editable-grid-shell .workbench-input,.editable-grid-shell .arco-input-wrapper{height:100%}.editable-grid-shell td.editing{padding:0}.login-input .workbench-input>.arco-input-wrapper{background:transparent;border-color:transparent;box-shadow:none}.login-input .workbench-input{flex:1}.login-card .arco-btn{display:inline-flex}.connection-options .arco-checkbox{margin:4px 16px 4px 0}.arco-btn>span>svg{vertical-align:middle}
+.app-shell .workspace-tabs{flex:none;min-height:40px;background:var(--color-fill-1)}.workspace-tabs>.arco-tabs-content,.component-tabs>.arco-tabs-content{display:none}.workspace-tabs .arco-tabs-nav{margin:0}.workspace-tab-label{display:inline-flex;align-items:center;gap:7px;max-width:200px;white-space:nowrap}.workspace-tab-label>span{overflow:hidden;text-overflow:ellipsis}.workspace-tab-label>svg{width:16px;height:16px;flex-shrink:0}.app-shell .result-tabs{display:block;height:auto;min-height:36px;padding:0 12px;background:var(--color-bg-1)}.result-tabs .arco-tabs-nav{margin:0}.workbench-dialog .connection-sections{display:block;padding:0 18px;background:var(--color-bg-1)}.connection-sections .arco-tabs-nav{margin:0}.app-shell .autocommit-control{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:var(--deebee-font-size)}.app-shell .database-switch{border:0;background:transparent}.app-shell .database-switch .arco-select{min-width:100px;max-width:180px}.app-shell .profile-switch .arco-select{min-width:160px}.app-shell .tree-search{border:0;padding:0;background:transparent}.app-shell .tree-search>.iconify{display:none}.app-shell .tree-node .node-label{display:block}.app-shell .tree-node.server-node .node-label{display:flex}.app-shell .toolbar .arco-btn{font-size:var(--deebee-font-size)}.app-shell .query-bar{min-height:44px;gap:8px}.app-shell .query-bar .arco-btn{flex-shrink:0}.data-toolbar .workbench-input{width:160px}.data-toolbar .arco-select{width:140px}.designer-tabs{display:block;height:auto;padding:0 12px}.designer-tabs .arco-tabs-nav{margin:0}.structure-table .arco-input-wrapper{min-width:80px}.structure-table .arco-table-td{padding:6px}.structure-table .arco-table-cell{padding:0}.structure-table .arco-table-th .arco-table-cell{padding:6px}.table-options .arco-select{width:140px}.table-options .workbench-input{max-width:220px}.object-table .arco-table{height:100%}.editable-grid-shell .workbench-input,.editable-grid-shell .arco-input-wrapper{height:100%}.editable-grid-shell td.editing{padding:0}.login-input .workbench-input>.arco-input-wrapper{background:transparent;border-color:transparent;box-shadow:none}.login-input .workbench-input{flex:1}.login-card .arco-btn{display:inline-flex}.connection-options .arco-checkbox{margin:4px 16px 4px 0}.arco-btn>span>svg{vertical-align:middle}
 
 .app-shell .toolbar .arco-btn-text,.app-shell .tree-node.arco-btn-text{color:var(--color-text-2)}.app-shell .toolbar .arco-btn-text:hover{color:rgb(var(--primary-6))}.app-shell .tree-node.active{color:rgb(var(--primary-6));background:var(--color-primary-light-1)}.view-header>.form-field,.table-options>.form-field{white-space:nowrap;gap:10px}.view-header>.form-field .workbench-input{width:180px}.arco-btn>span{vertical-align:middle}.jobs-drawer-content>header,.inspector-details>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.jobs-drawer-content header>div{display:flex;gap:10px;align-items:center}.jobs-drawer-content header small{display:block;color:var(--color-text-3);margin-top:5px}.jobs-drawer-content .background-job-list{display:grid;gap:14px}.jobs-drawer-content article{padding:14px;border:1px solid var(--color-border-2);border-radius:var(--border-radius-medium)}.jobs-drawer-content article p small{display:block;margin-top:6px;color:var(--color-text-3)}
 
@@ -47,19 +49,43 @@ body{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;font-size:var(
 .app-shell .view-header>div:first-child>span{min-width:0;overflow:hidden}
 .app-shell .view-header strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Keep every top-level action reachable without a horizontal toolbar. */
-.app-shell .toolbar{gap:2px;padding:0 8px}.app-shell .toolbar>.arco-btn{flex:none;min-width:0;padding:0 8px;gap:5px}.app-shell .toolbar-spacer{min-width:0}.app-shell .toolbar .profile-switch{flex:0 1 180px;min-width:100px;gap:5px}.app-shell .toolbar .profile-switch .arco-select{min-width:0;width:100%;max-width:180px}.app-shell .toolbar .profile-switch>.iconify{flex:none}.app-shell .toolbar .connection-state{flex:0 1 230px;min-width:80px;margin-left:0}.app-shell .toolbar .connection-state>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-shell .toolbar .connection-state>i,.app-shell .toolbar .connection-state>b{flex:none}.app-shell .toolbar .workbench-brand{flex:none}.app-shell .toolbar .toolbar-query-action{width:32px;padding:0}.app-shell .toolbar .toolbar-query-action>span{display:none}
-@media(max-width:1440px){.app-shell .toolbar .jobs-button>span{display:none}.app-shell .toolbar .connection-state{max-width:180px}.app-shell .toolbar .profile-switch{max-width:150px}}
-@media(max-width:1200px){.app-shell .toolbar .toolbar-primary>span,.app-shell .toolbar .toolbar-more>span{display:none}.app-shell .toolbar .toolbar-primary,.app-shell .toolbar .toolbar-more{width:34px;padding:0}.app-shell .toolbar .workbench-brand>strong{display:none}}
+/* Actions keep their labels; only buttons that do not fit move into More. */
+.app-shell .toolbar{gap:4px;padding:0 8px}
+.app-shell .toolbar-actions{position:relative;display:flex;align-items:center;gap:2px;flex:1;min-width:0;height:100%;overflow:hidden}
+.app-shell .toolbar .toolbar-action{flex:none;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 8px;gap:5px;white-space:nowrap}
+.app-shell .toolbar-measure{position:absolute;display:flex;gap:2px;width:max-content;visibility:hidden;pointer-events:none}
+.app-shell .toolbar>.arco-btn{flex:none;min-width:0;padding:0 8px;gap:5px}
+.app-shell .toolbar .profile-switch{flex:none;width:170px;gap:0}
+.app-shell .toolbar .profile-switch .arco-select{min-width:0;width:100%;max-width:none}
+.app-shell .toolbar .connection-state{flex:none;min-width:30px;max-width:200px;margin-left:0;padding:0 10px;gap:7px}
+.app-shell .toolbar .connection-state>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-shell .toolbar .connection-state>i{flex:none;width:7px;height:7px;box-shadow:none}
+.app-shell .toolbar .connection-status-label{color:inherit}
+.app-shell .toolbar .workbench-brand{flex:none}
+.app-shell .toolbar .toolbar-query-action{width:32px;padding:0}
+.app-shell .toolbar .toolbar-query-action>span{display:none}
+.app-shell .toolbar .jobs-button{width:32px;padding:0;position:relative}
+.app-shell .toolbar .jobs-button>span{display:none}
+.app-shell .toolbar .jobs-button b{position:absolute;top:0;right:0;line-height:16px;min-width:16px;padding:0 3px;background:var(--color-primary-light-1)}
+.app-shell .toolbar .avatar{padding:0}
+.account-menu-header{display:flex;flex-direction:column;gap:4px;padding:10px 14px 8px;overflow-wrap:anywhere}
+.account-menu-header small{color:var(--color-text-3)}
+.account-menu-header strong{color:var(--color-text-1);font-weight:500}
+.arco-dropdown,.arco-dropdown-menu{min-width:min(240px,calc(100vw - 24px));max-width:calc(100vw - 24px)}
+.arco-dropdown-option-content{display:flex;align-items:center;gap:8px}
+.arco-dropdown-option-content>svg{width:16px;height:16px;flex:none}
+.connection-switch-popup .arco-select-dropdown{width:min(320px,calc(100vw - 24px));max-width:calc(100vw - 24px)}
+.toolbar-overflow-popup .arco-dropdown{min-width:min(260px,calc(100vw - 24px))}
+@media(max-width:1100px){.app-shell .toolbar .profile-switch{width:150px}.app-shell .toolbar .connection-state{max-width:150px}}
 
-.object-info-drawer .arco-drawer-header{justify-content:space-between;gap:12px;padding:12px 18px;font-size:14px}
+.object-info-drawer .arco-drawer-header{justify-content:space-between;gap:12px;padding:12px 18px;font-size:var(--deebee-font-size)}
 .object-info-drawer .arco-drawer-body{padding:18px;overflow:auto}
-.inspector-details{min-width:0;font-size:12px;line-height:1.6}
+.inspector-details{min-width:0;font-size:var(--deebee-font-size);line-height:1.6}
 .inspector-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
 .inspector-heading>div:last-child{flex:1;min-width:0}
 .inspector-details .inspector-icon{flex:none;width:36px;height:36px;margin:0;border-radius:7px}
 .inspector-details .inspector-icon svg{width:20px;height:20px}
-.inspector-details h3{margin:0 0 4px;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.inspector-details h3{margin:0 0 4px;font-size:var(--deebee-font-size);line-height:1.5;overflow-wrap:anywhere}
 .inspector-details p{margin:0;color:var(--color-text-2);overflow-wrap:anywhere}
 .inspector-details dl{margin:0;border-top:1px solid var(--color-border-2)}
 .inspector-details dl>div{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:start;gap:12px;padding:10px 0;border-bottom:1px solid var(--color-border-2)}

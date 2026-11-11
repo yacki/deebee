@@ -4,7 +4,7 @@ import { Icon } from "@iconify/vue";
 import { confirmAction, promptValue } from "./components/ui/dialogs";
 import BrandMark from "./components/BrandMark.vue";
 import "./brand.css";
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from "vue";
 import ContextMenu from "./components/ContextMenu.vue";
 import DatabaseTree from "./components/DatabaseTree.vue";
 import EditableGrid from "./components/EditableGrid.vue";
@@ -33,7 +33,7 @@ type DesignerViewDraft = Pick<DesignerTab, "id" | "type" | "title" | "database" 
 type ObjectsViewDraft = Pick<ObjectsTab, "id" | "type" | "title" | "database" | "schema" | "kind">;
 type WorkspaceViewDraft = QueryViewDraft | DataViewDraft | DesignerViewDraft | ObjectsViewDraft;
 type ProfileWorkspace = { version: 1; activeTabId: string; tabs: WorkspaceViewDraft[] };
-type ToolbarItem = { label: string; icon: string; action: () => void | Promise<void>; secondary?: boolean };
+type ToolbarItem = { label: string; icon: string; action: () => void | Promise<void> };
 type BackgroundJob = { id:string;kind:string;status:"queued"|"running"|"cancelling"|"completed"|"failed"|"cancelled";progress:number;message:string;result?:unknown;error?:string;created_at:number;updated_at:number;metadata:Record<string,unknown> };
 
 const user = ref(""); const authReady = ref(false); const loginUser = ref("admin"); const loginPassword = ref(""); const loginError = ref(""); const loginLoading = ref(false);
@@ -326,7 +326,8 @@ async function login() {
 async function logout(force = false) {
   const manual = tabs.value.filter((tab): tab is QueryTab => tab.type === "query" && !tab.autocommit).length;
   const dirty = tabs.value.filter(queryDirty).length;
-  if (!force && (manual || dirty) && !await confirmAction(`退出将关闭 ${manual} 个手动事务；${dirty} 个未保存查询草稿会保留在本机。确定退出吗？`)) return;
+  const message = manual || dirty ? `退出将关闭 ${manual} 个手动事务；${dirty} 个未保存查询草稿会保留在本机。确定退出吗？` : "确定退出当前账号吗？已打开的连接会话将关闭。";
+  if (!force && !await confirmAction(message)) return;
   persistWorkspaces();
   try { await api("/sessions/cleanup", { method: "POST", body: jsonBody({ workspace_id: workspaceId() }) }); } catch { /* Logout must remain available while offline. */ }
   sessionStorage.removeItem("deebee_token"); user.value = ""; tabs.value = []; profiles.value = []; profile.value = undefined; backgroundJobs.value=[];jobsOpen.value=false;hydratedProfileIds.clear(); lastActiveTabIds.clear(); connectionState.value = "offline";
@@ -994,65 +995,98 @@ function toolbarItems(): ToolbarItem[] {
     database: { label:"新建数据库", icon:"lucide:database-backup", action:openCreateDatabase },
     query: { label:"新建查询", icon:"lucide:square-terminal", action:()=>newQuery() },
     table: { label:"新建表", icon:"lucide:table-properties", action:()=>openDesigner() },
-    view: { label:"视图", icon:"lucide:panels-top-left", secondary:true, action:()=>newQuery(database.value,ms?"CREATE OR ALTER VIEW [dbo].[view_name] AS\nSELECT 1 AS [value];":pg?"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;":"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;",schema.value) },
-    function: { label:"函数", icon:"lucide:function-square", secondary:true, action:()=>newQuery(database.value,ms?"CREATE OR ALTER FUNCTION [dbo].[function_name]() RETURNS int AS\nBEGIN\n  RETURN 1;\nEND;":pg?"CREATE FUNCTION function_name() RETURNS integer\nLANGUAGE sql AS $$ SELECT 1 $$;":"CREATE FUNCTION function_name() RETURNS INT DETERMINISTIC RETURN 1;",schema.value) },
-    trigger: { label:"触发器", icon:"lucide:zap", secondary:true, action:()=>newQuery(database.value,ms?"CREATE OR ALTER TRIGGER [dbo].[trigger_name] ON [dbo].[table_name]\nAFTER INSERT AS\nBEGIN\n  SET NOCOUNT ON;\nEND;":pg?"CREATE FUNCTION trigger_function() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  RETURN NEW;\nEND $$;\n\nCREATE TRIGGER trigger_name BEFORE INSERT ON table_name\nFOR EACH ROW EXECUTE FUNCTION trigger_function();":"CREATE TRIGGER trigger_name BEFORE INSERT ON table_name FOR EACH ROW SET NEW.created_at = NOW();",schema.value) },
-    event: { label:"事件", icon:"lucide:clock-3", secondary:true, action:()=>newQuery(database.value,"CREATE EVENT event_name ON SCHEDULE EVERY 1 DAY DO SELECT 1;",schema.value) },
-    privileges: { label:"用户权限", icon:"lucide:user-round-cog", secondary:true, action:()=>showPrivileges(database.value,"",schema.value) },
-    backup: { label:"备份", icon:"lucide:archive-restore", secondary:true, action:()=>openWizard({kind:"dump",database:database.value,schema:schema.value}) },
+    view: { label:"视图", icon:"lucide:panels-top-left", action:()=>newQuery(database.value,ms?"CREATE OR ALTER VIEW [dbo].[view_name] AS\nSELECT 1 AS [value];":pg?"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;":"CREATE OR REPLACE VIEW view_name AS\nSELECT 1 AS value;",schema.value) },
+    function: { label:"函数", icon:"lucide:function-square", action:()=>newQuery(database.value,ms?"CREATE OR ALTER FUNCTION [dbo].[function_name]() RETURNS int AS\nBEGIN\n  RETURN 1;\nEND;":pg?"CREATE FUNCTION function_name() RETURNS integer\nLANGUAGE sql AS $$ SELECT 1 $$;":"CREATE FUNCTION function_name() RETURNS INT DETERMINISTIC RETURN 1;",schema.value) },
+    trigger: { label:"触发器", icon:"lucide:zap", action:()=>newQuery(database.value,ms?"CREATE OR ALTER TRIGGER [dbo].[trigger_name] ON [dbo].[table_name]\nAFTER INSERT AS\nBEGIN\n  SET NOCOUNT ON;\nEND;":pg?"CREATE FUNCTION trigger_function() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  RETURN NEW;\nEND $$;\n\nCREATE TRIGGER trigger_name BEFORE INSERT ON table_name\nFOR EACH ROW EXECUTE FUNCTION trigger_function();":"CREATE TRIGGER trigger_name BEFORE INSERT ON table_name FOR EACH ROW SET NEW.created_at = NOW();",schema.value) },
+    event: { label:"事件", icon:"lucide:clock-3", action:()=>newQuery(database.value,"CREATE EVENT event_name ON SCHEDULE EVERY 1 DAY DO SELECT 1;",schema.value) },
+    privileges: { label:"用户权限", icon:"lucide:user-round-cog", action:()=>showPrivileges(database.value,"",schema.value) },
+    backup: { label:"备份", icon:"lucide:archive-restore", action:()=>openWizard({kind:"dump",database:database.value,schema:schema.value}) },
     session: { label:current.driver==="ssh"?"新建终端":current.driver==="k8s"?"新建 K8s 工作区":"新建桌面", icon:current.driver==="ssh"?"lucide:square-terminal":current.driver==="k8s"?"lucide:ship-wheel":"lucide:monitor-up", action:()=>openRemoteSession(current.driver) },
     test: { label:"测试连接", icon:"lucide:plug-zap", action:testCurrentConnection },
     settings: { label:"连接设置", icon:"lucide:settings-2", action:()=>openEditConnection() },
   };
   return [create, ...toolbarCapabilitiesFor(current.driver).map(capability => actions[capability])];
 }
+
+// Measure full labels so overflow depends on available space, including query controls.
+const toolbarActions = computed(toolbarItems);
+const toolbarActionsRef = ref<HTMLElement>();
+const toolbarMeasureRef = ref<HTMLElement>();
+const toolbarVisibleCount = ref(Number.POSITIVE_INFINITY);
+const visibleToolbarActions = computed(() => toolbarActions.value.slice(0, toolbarVisibleCount.value));
+const overflowToolbarActions = computed(() => toolbarActions.value.slice(toolbarVisibleCount.value));
+let toolbarObserver: ResizeObserver | undefined;
+function fitToolbarActions() {
+  const container = toolbarActionsRef.value, measure = toolbarMeasureRef.value;
+  if (!container || !measure) return;
+  const buttons = Array.from(measure.children) as HTMLElement[];
+  const more = buttons.pop();
+  const gap = Number.parseFloat(getComputedStyle(container).columnGap) || 0;
+  const widths = buttons.map(button => button.getBoundingClientRect().width);
+  const available = container.clientWidth;
+  if (widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1) <= available) {
+    toolbarVisibleCount.value = widths.length;
+    return;
+  }
+  let used = more?.getBoundingClientRect().width || 0, count = 0;
+  for (const width of widths) {
+    if (used + gap + width > available) break;
+    used += gap + width;
+    count++;
+  }
+  toolbarVisibleCount.value = count;
+}
+watch([toolbarActionsRef, toolbarMeasureRef], () => {
+  toolbarObserver?.disconnect();
+  toolbarObserver = new ResizeObserver(fitToolbarActions);
+  if (toolbarActionsRef.value) toolbarObserver.observe(toolbarActionsRef.value);
+  if (toolbarMeasureRef.value) toolbarObserver.observe(toolbarMeasureRef.value);
+  fitToolbarActions();
+}, { flush: 'post' });
+watch(toolbarActions, () => void nextTick(fitToolbarActions), { flush: 'post' });
+onBeforeUnmount(() => toolbarObserver?.disconnect());
 </script>
 
 <template>
   <main v-if="!authReady" class="loading-screen"><BrandMark /><span>正在恢复工作区…</span></main>
   <main v-else-if="!user" class="login-screen branded-login">
-    <section class="login-story" aria-label="DeeBee 连接工作台">
-      <div class="login-wordmark"><BrandMark /><strong>DeeBee<span>连接，让工作更简单。</span></strong></div>
-      <div class="login-story-content">
-        <h2>连接每一处，<br />掌控<span>每一步。</span></h2>
-        <p>从数据库到远程服务器，<br />把日常运维，收进一个工作台。</p>
-        <div class="connection-map" aria-hidden="true">
-          <svg class="connection-map-lines" viewBox="0 0 460 230" fill="none"><path d="M115 45h67q18 0 18 18v104q0 18-18 18h-67m230-140h-67q-18 0-18 18v104q0 18 18 18h67M200 115h60" stroke="currentColor" stroke-width="1.5" /><circle cx="200" cy="115" r="4" fill="#F8BE53" /><circle cx="260" cy="115" r="4" fill="#F8BE53" /></svg>
-          <div class="map-node map-database"><Icon icon="lucide:database" /><span>Database<small>查询与数据管理</small></span><i /></div>
-          <div class="map-node map-terminal"><Icon icon="lucide:square-terminal" /><span>SSH<small>交互式远程终端</small></span><i /></div>
-          <div class="map-hub"><BrandMark /></div>
-          <div class="map-node map-cluster"><Icon icon="lucide:ship-wheel" /><span>Kubernetes<small>集群与容器管理</small></span><i /></div>
-          <div class="map-node map-desktop"><Icon icon="lucide:monitor" /><span>Desktop<small>浏览器内远程桌面</small></span><i /></div>
+    <section class="login-layout">
+      <div class="login-art">
+        <div class="login-visual" aria-hidden="true">
+          <div class="login-orbit login-orbit-back" />
+          <div class="login-orb"><div class="login-art-emblem"><BrandMark variant="electric" /></div></div>
+          <div class="login-orbit login-orbit-front"><i /></div>
+          <span class="login-spark" />
         </div>
+        <p class="login-slogan">Connect Everything</p>
       </div>
-      <footer class="login-story-footer">一个入口，多种可能。</footer>
-    </section>
-    <section class="login-form-panel">
-      <span class="login-panel-caption"><Icon icon="lucide:panels-top-left" /> 管理员工作台</span>
-      <a-form :model="{loginUser,loginPassword}" class="login-card branded-login-card" layout="vertical" @submit-success="login">
-        <BrandMark />
-        <h1>欢迎回来</h1>
-        <p>登录工作台，继续你的工作。</p>
-        <label for="login-username">用户名</label>
-        <div class="login-input"><Icon icon="lucide:user-round" /><WorkbenchInput id="login-username" v-model="loginUser" aria-label="用户名" autocomplete="username" placeholder="输入用户名" required /></div>
-        <label for="login-password">密码</label>
-        <div class="login-input"><Icon icon="lucide:lock-keyhole" /><WorkbenchInput id="login-password" v-model="loginPassword" aria-label="密码" :type="loginPasswordVisible ? 'text' : 'password'" autocomplete="current-password" placeholder="输入密码" required /><IconButton html-type="button" :label="loginPasswordVisible ? '隐藏密码' : '显示密码'" :aria-pressed="loginPasswordVisible" @click="loginPasswordVisible=!loginPasswordVisible"><Icon :icon="loginPasswordVisible ? 'lucide:eye-off' : 'lucide:eye'" /></IconButton></div>
-        <a-alert v-if="loginError" type="error" role="alert">{{ loginError }}</a-alert>
-        <a-button type="primary" html-type="submit" class="login-button branded-login-button" :disabled="loginLoading"><span>{{ loginLoading ? "正在登录…" : "登录工作台" }}</span><Icon :icon="loginLoading ? 'lucide:loader-circle' : 'lucide:arrow-right'" :class="{spin:loginLoading}" /></a-button>
-        <div class="login-form-note"><Icon icon="lucide:shield-check" /> 连接配置与凭据加密保存</div>
-      </a-form>
-      <footer class="login-panel-footer">DeeBee <span>·</span> 数据库与远程连接工作台</footer>
+      <section class="login-form-panel" aria-label="登录 DeeBee">
+        <a-form :model="{loginUser,loginPassword}" class="login-card branded-login-card" layout="vertical" @submit-success="login">
+          <div class="login-form-brand"><BrandMark variant="electric" /><strong>DeeBee</strong></div>
+          <h1>登录</h1>
+          <label for="login-username">用户名</label>
+          <div class="login-input"><WorkbenchInput id="login-username" v-model="loginUser" aria-label="用户名" autocomplete="username" placeholder="输入用户名" required /></div>
+          <label for="login-password">密码</label>
+          <div class="login-input"><WorkbenchInput id="login-password" v-model="loginPassword" aria-label="密码" :type="loginPasswordVisible ? 'text' : 'password'" autocomplete="current-password" placeholder="输入密码" required /><a-button html-type="button" type="text" shape="square" :aria-label="loginPasswordVisible ? '隐藏密码' : '显示密码'" :title="loginPasswordVisible ? '隐藏密码' : '显示密码'" :aria-pressed="loginPasswordVisible" @click="loginPasswordVisible=!loginPasswordVisible"><Icon :icon="loginPasswordVisible ? 'lucide:eye-off' : 'lucide:eye'" /></a-button></div>
+          <a-alert v-if="loginError" type="error" role="alert">{{ loginError }}</a-alert>
+          <a-button type="primary" html-type="submit" class="login-button branded-login-button" :disabled="loginLoading"><Icon v-if="loginLoading" icon="lucide:loader-circle" class="spin" /><span>{{ loginLoading ? "正在登录…" : "登录工作台" }}</span><Icon v-if="!loginLoading" icon="lucide:arrow-right" class="login-submit-arrow" /></a-button>
+        </a-form>
+      </section>
     </section>
   </main>
   <main v-else-if="fatal" class="fatal"><section><Icon icon="lucide:circle-alert" /><h2>无法打开工作台</h2><p>{{ fatal }}</p><a-button type="text" @click="fatal='';bootstrap()">重试</a-button><a-button type="text" @click="logout()">退出登录</a-button></section></main>
   <main v-else class="app-shell">
     <section class="toolbar" aria-label="上下文工具栏">
       <div class="workbench-brand" title="DeeBee 连接工作台"><BrandMark /><strong>DeeBee</strong></div>
-      <a-button v-for="item in toolbarItems().filter(item=>!item.secondary)" :key="item.label" type="text" class="toolbar-primary" :aria-label="item.label" :title="item.label" @click="item.action"><Icon :icon="item.icon" /><span>{{ item.label }}</span></a-button>
-      <a-dropdown v-if="toolbarItems().some(item=>item.secondary)" trigger="click" :popup-max-height="false"><a-button type="text" class="toolbar-more" aria-label="更多功能" title="更多功能"><Icon icon="lucide:ellipsis" /><span>更多功能</span></a-button><template #content><a-doption v-for="item in toolbarItems().filter(item=>item.secondary)" :key="item.label" @click="item.action"><Icon :icon="item.icon" /> {{ item.label }}</a-doption></template></a-dropdown><div v-if="active?.type==='query'" class="toolbar-divider" />
+      <div ref="toolbarActionsRef" class="toolbar-actions">
+        <a-button v-for="item in visibleToolbarActions" :key="item.label" type="text" class="toolbar-action" :aria-label="item.label" :title="item.label" @click="item.action"><Icon :icon="item.icon" /><span>{{ item.label }}</span></a-button>
+        <a-dropdown v-if="overflowToolbarActions.length" trigger="click" :popup-max-height="false" content-class="toolbar-overflow-popup"><a-button type="text" class="toolbar-action toolbar-more" aria-label="更多功能" title="更多功能"><Icon icon="lucide:ellipsis" /><span>更多</span></a-button><template #content><a-doption v-for="item in overflowToolbarActions" :key="item.label" @click="item.action"><Icon :icon="item.icon" /> {{ item.label }}</a-doption></template></a-dropdown>
+        <div ref="toolbarMeasureRef" class="toolbar-measure" aria-hidden="true" inert><a-button v-for="item in toolbarActions" :key="item.label" type="text" class="toolbar-action" tabindex="-1"><Icon :icon="item.icon" /><span>{{ item.label }}</span></a-button><a-button type="text" class="toolbar-action toolbar-more" tabindex="-1"><Icon icon="lucide:ellipsis" /><span>更多</span></a-button></div>
+      </div>
+      <div v-if="active?.type==='query'" class="toolbar-divider" />
       <a-button v-if="active?.type==='query'" type="text" class="toolbar-query-action" aria-label="运行" title="运行" :disabled="active.loading||queryPreparing" @click="editorRef?.run(true)"><Icon icon="lucide:play" class="green" /><span>运行</span></a-button><a-button v-if="active?.type==='query'" type="text" class="toolbar-query-action" aria-label="停止" title="停止" :disabled="!active.loading&&!queryPreparing" @click="queryPreparing?editorRef?.cancelRun():cancelQuery(active)"><Icon icon="lucide:square" /><span>停止</span></a-button><a-button v-if="active?.type==='query'" type="text" class="toolbar-query-action" aria-label="提交" title="提交" :disabled="active.autocommit||active.loading" @click="transaction(active,'commit')"><Icon icon="lucide:git-commit-horizontal" /><span>提交</span></a-button><a-button v-if="active?.type==='query'" type="text" class="toolbar-query-action" aria-label="回滚" title="回滚" :disabled="active.autocommit||active.loading" @click="transaction(active,'rollback')"><Icon icon="lucide:undo-2" /><span>回滚</span></a-button>
-      <span class="toolbar-spacer" /><a-button type="text" class="jobs-button" :class="{active:jobsOpen}" aria-label="后台任务" @click="jobsOpen=!jobsOpen"><Icon icon="lucide:list-checks" /><span>后台任务</span><b v-if="runningJobCount">{{ runningJobCount }}</b></a-button><div v-if="profiles.length>1" class="form-field profile-switch"><Icon icon="lucide:server-cog" /><WorkbenchSelect :value="profile?.id" aria-label="当前连接" @change="switchProfile(($event.target as HTMLSelectElement).value)"><a-option v-for="item in profiles" :key="item.id" :value="item.id">{{ item.name }} · {{ driverLabel(item.driver) }}</a-option></WorkbenchSelect></div>
-      <a-button v-if="profile" type="text" class="connection-state" :class="connectionState" :title="connectionState==='online'?'连接正常；点击检测连接':'点击立即重新连接'" @click="testCurrentConnection"><i /><span>{{ profile.name }} · {{ driverLabel(profile.driver) }}<template v-if="profile.user"> · {{ profile.user }}</template></span><b>{{ connectionLabel }}</b></a-button><a-button type="text" class="avatar" title="退出登录" @click="logout()">{{ user.slice(0,2).toUpperCase() }}</a-button>
+      <a-button type="text" class="jobs-button" :class="{active:jobsOpen}" aria-label="后台任务" @click="jobsOpen=!jobsOpen"><Icon icon="lucide:list-checks" /><span>后台任务</span><b v-if="runningJobCount">{{ runningJobCount }}</b></a-button><div v-if="profiles.length>1" class="form-field profile-switch"><WorkbenchSelect :value="profile?.id" aria-label="当前连接" :trigger-props="{autoFitPopupWidth:false,contentClass:'connection-switch-popup'}" @change="switchProfile(($event.target as HTMLSelectElement).value)"><a-option v-for="item in profiles" :key="item.id" :value="item.id">{{ item.name }} · {{ driverLabel(item.driver) }}</a-option></WorkbenchSelect></div>
+      <a-button v-if="profile" type="text" class="connection-state" :class="connectionState" :aria-label="`${connectionLabel}，点击${connectionState==='online'?'检测连接':'重新连接'}`" :title="`${profile.name} · ${driverLabel(profile.driver)}${profile.user?' · '+profile.user:''} · ${connectionLabel}；点击${connectionState==='online'?'检测连接':'重新连接'}`" @click="testCurrentConnection"><i /><span v-if="profiles.length===1" class="connection-name">{{ profile.name }}</span><span v-if="connectionState!=='online'" class="connection-status-label">{{ connectionLabel }}</span></a-button><a-dropdown trigger="click" position="br" content-class="account-menu-popup"><a-button type="text" class="avatar" aria-label="账户菜单" title="账户菜单" aria-haspopup="menu">{{ user.slice(0,2).toUpperCase() }}</a-button><template #content><div class="account-menu-header"><small>当前账号</small><strong>{{ user }}</strong></div><a-divider :margin="4" /><a-doption role="menuitem" @click="logout()"><Icon icon="lucide:log-out" />退出登录</a-doption></template></a-dropdown>
     </section>
     <a-split class="workspace" component="section" :size="`${explorerWidth+3}px`" min="223px" :max="`${explorerMaxWidth+3}px`" @update:size="setExplorerSize">
       <template #first>
@@ -1227,7 +1261,7 @@ function toolbarItems(): ToolbarItem[] {
 .wizard-mapping { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 18px; margin:12px 0; }
 .wizard-column-options { display:flex; flex-wrap:wrap; gap:8px 16px; max-height:160px; overflow:auto; padding:12px; border:1px solid #dce3ec; }
 .wizard-preview-table { max-height:220px; overflow:auto; border:1px solid #dce3ec; }
-.wizard-preview-table table { border-collapse:collapse; font-size:12px; min-width:100%; }
+.wizard-preview-table table { border-collapse:collapse; font-size:var(--deebee-font-size); min-width:100%; }
 .wizard-preview-table th,.wizard-preview-table td { min-width:100px; max-width:250px; padding:6px 10px; border:1px solid #e3e8ef; white-space:pre-wrap; overflow-wrap:anywhere; }
 .wizard-preview-table th { position:sticky; top:0; background:#f3f6fa; }
 </style>

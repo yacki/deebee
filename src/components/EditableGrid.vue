@@ -363,7 +363,7 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
       <span class="grid-selection-summary">{{ selection.rows.length }} 行 × {{ selection.columns.length }} 列</span>
     </div>
     <div v-if="error && !recordEditor && !pastePreview" class="grid-error" role="alert">{{ error }}<a-button type="text" @click="error=''">关闭</a-button></div>
-    <div v-if="viewMode==='record'" class="grid-record"><div class="grid-record-nav"><a-button :disabled="recordIndex===0" @click="moveRecord(-1)">上一条</a-button><span>第 {{ rows.length ? recordIndex+1 : 0 }} / {{ rows.length }} 条</span><a-button :disabled="recordIndex>=rows.length-1" @click="moveRecord(1)">下一条</a-button></div><dl><div v-for="column in columns" :key="column.name"><dt>{{ column.name }}<small>{{ columnType(column) }}</small></dt><dd><button type="button" :aria-label="`查看或编辑记录 ${column.name}`" @click="openRecordEditor(recordIndex)">{{ display(rows[recordIndex]?.[column.name],column) }}</button></dd></div></dl></div>
+    <div v-if="viewMode==='record'" class="grid-record"><div class="grid-record-nav"><a-button :disabled="recordIndex===0" @click="moveRecord(-1)">上一条</a-button><span>第 {{ rows.length ? recordIndex+1 : 0 }} / {{ rows.length }} 条</span><a-button :disabled="recordIndex>=rows.length-1" @click="moveRecord(1)">下一条</a-button></div><dl><div v-for="column in columns" :key="column.name"><dt :title="columnType(column)">{{ column.name }} <small>{{ columnType(column) }}</small></dt><dd><button type="button" :aria-label="`查看或编辑记录 ${column.name}`" @click="openRecordEditor(recordIndex)">{{ display(rows[recordIndex]?.[column.name],column) }}</button></dd></div></dl></div>
     <textarea v-else-if="viewMode==='text'||viewMode==='json'" class="grid-text-view" :aria-label="viewMode==='json'?'JSON 数据浏览':'文本数据浏览'" :value="browseText" readonly />
     <div v-show="viewMode==='grid'" ref="shell" class="editable-grid-shell" @scroll.passive="scroll">
       <table :style="{ width: `${tableWidth}px` }">
@@ -396,7 +396,7 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
         <p v-if="error" role="alert" class="grid-error">{{ error }}</p>
         <div class="grid-record-fields">
           <div v-for="column in columns" :key="column.name" class="grid-record-field">
-            <div class="grid-record-label"><strong>{{ column.name }}</strong><small>{{ columnType(column) }}<template v-if="primaryKey.includes(column.name)"> · 主键只读</template><template v-else-if="!canEdit(column.name)"> · 只读</template></small></div>
+            <div class="grid-record-label" :title="`${column.name} · ${columnType(column)}${primaryKey.includes(column.name)?' · 主键只读':!canEdit(column.name)?' · 只读':''}`"><strong>{{ column.name }}</strong><small>{{ columnType(column) }}<template v-if="primaryKey.includes(column.name)"> · 主键只读</template><template v-else-if="!canEdit(column.name)"> · 只读</template></small></div>
             <div class="grid-record-input"><CellValueInput v-model="recordEditor.fields[column.name].value" :column="column" :label="`记录字段 ${column.name}`" resizable :disabled="recordEditor.fields[column.name].nullValue||!canEdit(column.name)||saving" /><WorkbenchCheckbox v-model="recordEditor.fields[column.name].nullValue" :disabled="!canEdit(column.name)||column.nullable===false||saving" :aria-label="`${column.name} 设为数据库 NULL`">NULL</WorkbenchCheckbox></div>
           </div>
         </div>
@@ -438,25 +438,25 @@ defineExpose({ setWidth, autoFit, autoFitAll, setRowHeight, freeze, unfreeze, se
 .editable-grid-shell td.editing :deep(input) { user-select:text; }
 .grid-tools { display:flex; flex:none; align-items:center; gap:2px; min-height:32px; padding:0 5px; border-bottom:1px solid #dce2eb; background:#f8fafc; overflow-x:auto; }
 .grid-tools [role="tablist"] { display:flex; flex:none; }
-.grid-tools :deep(.arco-btn) { flex:none; font-size:12px; padding:0 8px; height:28px; }
+.grid-tools :deep(.arco-btn) { flex:none; font-size:var(--deebee-font-size); padding:0 8px; height:28px; }
 .grid-tools [aria-selected="true"] { color:#165dff; background:#e8f1ff; }
-.grid-selection-summary { margin-left:auto; padding:0 8px; white-space:nowrap; color:#7c8b9b; font-size:12px; }
+.grid-selection-summary { margin-left:auto; padding:0 8px; white-space:nowrap; color:#7c8b9b; font-size:var(--deebee-font-size); }
 .grid-error { flex:none; padding:7px 12px; color:#c33c3c; background:#fff1f0; white-space:pre-wrap; }
 .editable-grid-shell td.range-selected:not(.active-cell) { background:#174a87!important; color:#fff!important; box-shadow:inset 0 0 0 1px #4172a9; }
 .grid-record,.grid-text-view { flex:1; min-height:0; overflow:auto; padding:12px; }
 .grid-record-nav { display:flex; gap:14px; align-items:center; }
 .grid-record dl>div { display:grid; grid-template-columns:220px minmax(0,1fr); border-bottom:1px solid #e3e8ef; }
-.grid-record dt { padding:10px; font-weight:600; }.grid-record dt small { display:block; color:#8b96a5; font-weight:400; }.grid-record dd { margin:0; min-width:0; }
+.grid-record dt { padding:10px; font-weight:600; }.grid-record dt small { margin-left:8px; color:#8b96a5; font-weight:400; }.grid-record dd { margin:0; min-width:0; }
 .grid-record dd button { width:100%; padding:10px; border:0; text-align:left; background:transparent; color:inherit; white-space:pre-wrap; overflow-wrap:anywhere; cursor:pointer; }
-.grid-text-view { width:100%; resize:none; border:0; outline:0; font:13px/1.6 ui-monospace,monospace; white-space:pre; }
-.grid-value-dialog { padding:20px; }.grid-value-dialog header { display:flex; gap:12px; align-items:center; margin-bottom:16px; }.grid-value-dialog header span,.grid-value-hint { color:#8793a3; font-size:12px; }.grid-value-dialog footer { display:flex; gap:8px; align-items:center; margin-top:18px; }.grid-value-dialog :deep(.arco-checkbox) { margin-bottom:12px; }
-.grid-paste-preview { max-height:360px; overflow:auto; }.grid-paste-preview table { width:100%; border-collapse:collapse; font-size:12px; }.grid-paste-preview th,.grid-paste-preview td { padding:6px; border:1px solid #e2e7ef; white-space:pre-wrap; overflow-wrap:anywhere; max-width:240px; }
-.grid-record-dialog { position:relative; display:flex; flex-direction:column; height:100%; min-height:0; box-sizing:border-box; font-size:12px; }
-.grid-record-dialog :deep(.arco-input-wrapper),.grid-record-dialog :deep(.arco-input-wrapper .arco-input),.grid-record-dialog :deep(.arco-textarea-wrapper),.grid-record-dialog :deep(.arco-textarea-wrapper .arco-textarea),.grid-record-dialog :deep(.arco-select),.grid-record-dialog :deep(.arco-select-view-value),.grid-record-dialog :deep(.arco-checkbox .arco-checkbox-label),.grid-record-dialog :deep(.arco-btn) { font-size:12px; }
-.grid-record-dialog header span,.grid-record-dialog .grid-value-hint { font-size:10px; }
+.grid-text-view { width:100%; resize:none; border:0; outline:0; font:var(--deebee-font-size)/1.6 ui-monospace,monospace; white-space:pre; }
+.grid-value-dialog { padding:20px; }.grid-value-dialog header { display:flex; gap:12px; align-items:center; margin-bottom:16px; }.grid-value-dialog header span,.grid-value-hint { color:#8793a3; font-size:var(--deebee-font-size); }.grid-value-dialog footer { display:flex; gap:8px; align-items:center; margin-top:18px; }.grid-value-dialog :deep(.arco-checkbox) { margin-bottom:12px; }
+.grid-paste-preview { max-height:360px; overflow:auto; }.grid-paste-preview table { width:100%; border-collapse:collapse; font-size:var(--deebee-font-size); }.grid-paste-preview th,.grid-paste-preview td { padding:6px; border:1px solid #e2e7ef; white-space:pre-wrap; overflow-wrap:anywhere; max-width:240px; }
+.grid-record-dialog { position:relative; display:flex; flex-direction:column; height:100%; min-height:0; box-sizing:border-box; font-size:var(--deebee-font-size); }
+.grid-record-dialog :deep(.arco-input-wrapper),.grid-record-dialog :deep(.arco-input-wrapper .arco-input),.grid-record-dialog :deep(.arco-textarea-wrapper),.grid-record-dialog :deep(.arco-textarea-wrapper .arco-textarea),.grid-record-dialog :deep(.arco-select),.grid-record-dialog :deep(.arco-select-view-value),.grid-record-dialog :deep(.arco-checkbox .arco-checkbox-label),.grid-record-dialog :deep(.arco-btn) { font-size:var(--deebee-font-size); }
+.grid-record-dialog header span,.grid-record-dialog .grid-value-hint { font-size:var(--deebee-font-size); }
 .grid-record-fields { flex:1; min-height:0; overflow:auto; border-top:1px solid var(--color-border-2); }
-.grid-record-field { display:grid; grid-template-columns:180px minmax(0,1fr); gap:16px; padding:12px 4px; border-bottom:1px solid var(--color-border-2); }
-.grid-record-label { min-width:0; overflow-wrap:anywhere; }.grid-record-label small { display:block; margin-top:5px; color:var(--color-text-3); }
+.grid-record-field { display:grid; grid-template-columns:minmax(180px,30%) minmax(0,1fr); align-items:start; gap:12px; padding:6px 4px; border-bottom:1px solid var(--color-border-2); }
+.grid-record-label { min-width:0; display:flex; align-items:center; gap:8px; min-height:32px; white-space:nowrap; }.grid-record-label strong { min-width:0; overflow:hidden; text-overflow:ellipsis; }.grid-record-label small { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--color-text-3); }
 .grid-record-input { min-width:0; display:flex; align-items:flex-start; gap:12px; }.grid-record-input>:first-child { flex:1; min-width:0; }
 .grid-record-input :deep(.arco-checkbox) { flex:none; margin:5px 0 0; }
 .grid-record-dialog header,.grid-record-dialog footer,.grid-record-dialog>.grid-value-hint,.grid-record-dialog>.grid-error { flex:none; }

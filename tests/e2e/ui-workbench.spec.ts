@@ -25,7 +25,79 @@ async function setup(page:Page,multiple=false,fixture?:{columns:typeof columns;r
   await page.goto('/');await expect(page.locator('.monaco-editor textarea')).toBeVisible();
   return {errors,writes,previews};
 }
+async function expectUniformText(page:Page){
+  const mismatches=await page.evaluate(()=>Array.from(document.body.querySelectorAll('*')).filter(element=>
+    !element.closest('svg')&&element.checkVisibility()&&Array.from(element.childNodes).some(node=>node.nodeType===Node.TEXT_NODE&&node.textContent?.trim())&&getComputedStyle(element).fontSize!=='12px'
+  ).map(element=>({text:element.textContent?.slice(0,60),size:getComputedStyle(element).fontSize})));
+  expect(mismatches).toEqual([]);
+}
 async function choose(page:Page,label:string,text:string){await page.getByRole('combobox',{name:label,exact:true}).click();await page.locator('.arco-select-dropdown:visible').getByText(text,{exact:true}).click();}
+
+for(const width of [1440,900,390])test(`login keeps concise content and 14–28px text at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});
+  await page.goto('/');await expect(page.getByRole('heading',{name:'登录',exact:true})).toBeVisible();
+  const login=page.locator('.branded-login');
+  if(width>600)await expect(login.getByText('Connect Everything',{exact:true})).toBeVisible();
+  await expect(login).not.toContainText(/连接每一处|掌控每一步|连接配置与凭据|从数据库到远程服务器|一个入口|继续你的工作/);
+  await expect(login.getByRole('heading',{name:'登录',exact:true})).toHaveCSS('font-size','28px');
+  await expect(page.getByLabel('用户名',{exact:true})).toHaveCSS('font-size','14px');
+  await expect(page.getByRole('button',{name:'登录工作台',exact:true})).toHaveCSS('font-size','16px');
+  expect(await login.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBeTruthy();
+  const textSizes=await login.evaluate(element=>Array.from(element.querySelectorAll('*')).filter(child=>!child.closest('svg')&&child.checkVisibility()&&Array.from(child.childNodes).some(node=>node.nodeType===Node.TEXT_NODE&&node.textContent?.trim())).map(child=>parseFloat(getComputedStyle(child).fontSize)));
+  expect(textSizes.every(size=>size>=14&&size<=28)).toBeTruthy();
+  await page.screenshot({path:`test-results/ui-login-${width}.png`,animations:'disabled'});
+  if(width===1440){
+    const password=page.getByLabel('密码',{exact:true});await password.fill('preview-password');
+    await page.getByRole('button',{name:'显示密码',exact:true}).click();await expect(password).toHaveAttribute('type','text');
+    await page.getByRole('button',{name:'隐藏密码',exact:true}).click();await expect(password).toHaveAttribute('type','password');
+    const client=await page.context().newCDPSession(page);await client.send('DOM.enable');await client.send('CSS.enable');
+    const {root}=await client.send('DOM.getDocument');
+    for(const selector of ['#login-username','#login-password']){
+      const {nodeId}=await client.send('DOM.querySelector',{nodeId:root.nodeId,selector});
+      await client.send('CSS.forcePseudoState',{nodeId,forcedPseudoClasses:['autofill']});
+      const field=page.locator(selector);
+      expect(await field.evaluate(element=>element.matches(':autofill'))).toBeTruthy();
+      await expect(field).toHaveCSS('-webkit-text-fill-color','rgb(236, 241, 255)');
+    }
+    for(const focused of [false,true]){
+      if(focused)await password.focus();else await page.locator('.login-form-brand').click();
+      await expect.poll(async()=>password.evaluate(element=>getComputedStyle(element).boxShadow.includes(getComputedStyle(element.closest('.login-input')!).backgroundColor))).toBeTruthy();
+      await page.screenshot({path:`test-results/ui-login-autofill-${focused?'focused':'idle'}.png`,animations:'disabled'});
+    }
+    await page.route('**/api/auth/login',route=>route.fulfill({status:401,json:{error:{message:'用户名或密码错误'}}}));
+    await password.press('Enter');const error=page.getByRole('alert');await expect(error).toContainText('用户名或密码错误');
+    await expect(error.locator('.arco-alert-content')).toHaveCSS('font-size','14px');
+    await expect(password).toHaveValue('preview-password');
+  }
+});
+
+test('account menu never logs out on avatar click and clean logout requires confirmation',async({page})=>{
+  const {errors}=await setup(page);const cleanups:string[]=[];
+  page.on('request',request=>{if(request.method()==='POST'&&request.url().endsWith('/sessions/cleanup'))cleanups.push(request.url())});
+  const account=page.getByRole('button',{name:'账户菜单',exact:true});
+  await account.click();const menu=page.locator('.account-menu-popup');await expect(menu.locator('.account-menu-header')).toContainText('admin');
+  await expect(page.locator('.monaco-editor textarea')).toBeVisible();expect(await page.evaluate(()=>sessionStorage.getItem('deebee_token'))).toBe('ui-test');expect(cleanups).toHaveLength(0);
+  await expectUniformText(page);await page.screenshot({path:'test-results/ui-account-menu.png',animations:'disabled'});
+  await page.locator('.workbench-brand').click();await expect(menu).not.toBeVisible();
+  await account.click();await page.getByRole('menuitem',{name:'退出登录',exact:true}).click();
+  const confirm=page.getByRole('dialog',{name:'操作确认',exact:true});await expect(confirm).toContainText('确定退出当前账号吗');
+  await confirm.getByRole('button',{name:'取消',exact:true}).click();await expect(confirm).not.toBeVisible();
+  await expect(account).toBeVisible();expect(await page.evaluate(()=>sessionStorage.getItem('deebee_token'))).toBe('ui-test');expect(cleanups).toHaveLength(0);
+  await account.click();await page.getByRole('menuitem',{name:'退出登录',exact:true}).click();await confirm.getByRole('button',{name:'确认',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'登录',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>sessionStorage.getItem('deebee_token'))).toBeNull();expect(cleanups).toHaveLength(1);expect(errors).toEqual([]);
+});
+
+test('logout confirmation keeps transaction and unsaved query warnings and cancellation preserves the workspace',async({page})=>{
+  const {errors}=await setup(page);const editor=page.locator('.monaco-editor textarea');
+  await editor.focus();await editor.press(process.platform==='darwin'?'Meta+A':'Control+A');await page.keyboard.insertText('SELECT 2 AS unsaved_preview;');
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('unsaved_preview');
+  const autocommit=page.getByRole('switch',{name:'自动提交',exact:true});await autocommit.click();await expect(autocommit).toHaveAttribute('aria-checked','false');
+  await page.getByRole('button',{name:'账户菜单',exact:true}).click();await page.getByRole('menuitem',{name:'退出登录',exact:true}).click();
+  const confirm=page.getByRole('dialog',{name:'操作确认',exact:true});await expect(confirm).toContainText('1 个手动事务');await expect(confirm).toContainText('1 个未保存查询草稿');
+  await confirm.getByRole('button',{name:'取消',exact:true}).click();await expect(confirm).not.toBeVisible();
+  await expect(autocommit).toHaveAttribute('aria-checked','false');await expect(page.locator('.monaco-editor .view-lines')).toContainText('unsaved_preview');expect(await page.evaluate(()=>sessionStorage.getItem('deebee_token'))).toBe('ui-test');expect(errors).toEqual([]);
+});
 
 test('record popup edits all typed fields together and keeps drafts on validation or server failure',async({page})=>{
   const names=[['id','BIGINT',false,''],['name','VARCHAR(80)',false,''],['amount','DECIMAL(30,8)',false,''],['counter','BIGINT',false,''],['enabled','BOOLEAN',false,''],['payload','JSON',true,''],['note','TEXT',true,''],['computed','INT',false,'STORED GENERATED'] ] as const;
@@ -37,6 +109,13 @@ test('record popup edits all typed fields together and keeps drafts on validatio
   const dialogBounds=await dialog.boundingBox();
   expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
   expect(dialogBounds!.y+dialogBounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  const label=dialog.locator('.grid-record-label').filter({has:page.getByText('name',{exact:true})});
+  await expect.poll(async()=>{const nameBounds=await label.locator('strong').boundingBox(),typeBounds=await label.locator('small').boundingBox();return Math.abs(nameBounds!.y-typeBounds!.y)}).toBeLessThan(2);
+  expect((await label.locator('..').boundingBox())!.height).toBeLessThanOrEqual(48);
+  await expect(label.locator('strong')).toHaveCSS('font-size','12px');await expect(label.locator('small')).toHaveCSS('font-size','12px');
+  await expect(dialog.getByRole('button',{name:'保存记录',exact:true})).toHaveCSS('font-size','12px');
+  await expectUniformText(page);
+  await page.screenshot({path:'test-results/ui-compact-record.png',animations:'disabled'});
   await expect(dialog.getByLabel('记录字段 id',{exact:true})).toBeDisabled();
   await expect(dialog.getByLabel('记录字段 computed',{exact:true})).toBeDisabled();
   await dialog.getByLabel('记录字段 name',{exact:true}).fill('Whole row');
@@ -67,19 +146,50 @@ test('record popup edits all typed fields together and keeps drafts on validatio
   expect(errors).toEqual([]);
 });
 
-for(const width of [1920,1536,1366,1280,1024])test(`top toolbar fits ${width}px with all actions reachable`,async({page})=>{
+const toolbarLabels=['新建连接','新建数据库','新建查询','新建表','视图','函数','触发器','事件','用户权限','备份'];
+for(const width of [1920,1536,1366,1280,1024,900])test(`top toolbar fits ${width}px with all actions reachable`,async({page})=>{
   await page.setViewportSize({width,height:1080});const {errors}=await setup(page,true);
   const toolbar=page.getByRole('region',{name:'上下文工具栏'});
+  const more=toolbar.getByRole('button',{name:'更多功能',exact:true});
+  if(width===1920)await expect(more).toHaveCount(0);
+  if(width===900)await expect(more).toBeVisible();
   expect(await toolbar.evaluate(e=>e.scrollWidth<=e.clientWidth)).toBeTruthy();
   const bounds=await toolbar.boundingBox();
   for(const button of await toolbar.getByRole('button').all()) {
     const box=await button.boundingBox();if(box)expect(box.x+box.width).toBeLessThanOrEqual(bounds!.x+bounds!.width+1);
   }
-  await toolbar.getByRole('button',{name:'更多功能',exact:true}).click();
-  for(const name of ['视图','函数','触发器','事件','用户权限','备份'])await expect(page.locator('.arco-dropdown').getByText(name,{exact:true})).toBeVisible();
-  expect(await page.locator('.arco-dropdown:visible').evaluate(e=>[e,...e.querySelectorAll('*')].every(el=>el.scrollHeight<=el.clientHeight+1 && el.scrollWidth<=el.clientWidth+1))).toBeTruthy();
-  await page.locator('.arco-dropdown').getByText('视图',{exact:true}).click();
+  const visible=await toolbar.locator('.toolbar-actions>.toolbar-action').allTextContents();
+  const hidden=toolbarLabels.filter(name=>!visible.includes(name));
+  if(hidden.length){
+    await expect(more).toBeVisible();await more.click();
+    const popup=page.locator('.toolbar-overflow-popup .arco-dropdown:visible');
+    expect((await popup.boundingBox())!.width).toBeGreaterThanOrEqual(260);
+    for(const name of hidden)await expect(popup.getByText(name,{exact:true})).toBeVisible();
+    await expectUniformText(page);
+    if(width===900)await page.screenshot({path:'test-results/ui-toolbar-overflow-900.png',animations:'disabled'});
+    expect(await popup.evaluate(e=>[e,...e.querySelectorAll('*')].every(el=>el.scrollHeight<=el.clientHeight+1 && el.scrollWidth<=el.clientWidth+1))).toBeTruthy();
+    if(hidden.includes('视图'))await popup.getByText('视图',{exact:true}).click();
+    else {await more.click();await toolbar.getByRole('button',{name:'视图',exact:true}).click();}
+  }else{
+    await expect(more).toHaveCount(0);await toolbar.getByRole('button',{name:'视图',exact:true}).click();
+  }
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('CREATE OR REPLACE VIEW');
+  expect(errors).toEqual([]);
+});
+
+test('toolbar responds to resizing and connection menu is wider than its compact trigger',async({page})=>{
+  await page.setViewportSize({width:900,height:800});const {errors}=await setup(page,true);
+  const more=page.getByRole('button',{name:'更多功能',exact:true});await expect(more).toBeVisible();
+  await page.setViewportSize({width:1920,height:1080});await expect(more).toHaveCount(0);
+  await page.setViewportSize({width:900,height:800});await expect(more).toBeVisible();
+  const current=page.getByRole('combobox',{name:'当前连接',exact:true});await current.click();
+  const popup=page.locator('.arco-select-dropdown:visible');
+  await expect.poll(async()=>(await popup.boundingBox())!.width).toBeGreaterThanOrEqual(320);
+  await expectUniformText(page);
+  await page.screenshot({path:'test-results/ui-connection-menu-900.png',animations:'disabled'});
+  await popup.getByText('Second QA · MySQL',{exact:true}).click();await expect(current).toContainText('Second QA');
+  await expect(page.locator('.connection-state')).not.toContainText('Second QA');
+  await page.locator('.connection-state').click();await expect(page.locator('.connection-state.online')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -120,7 +230,8 @@ test('Arco tabs switch with the keyboard, context actions save a query, and draw
   await prompt.getByLabel('查询名称',{exact:true}).fill('Daily check');await prompt.getByRole('button',{name:'确认',exact:true}).click();
   await expect(tabs.getByRole('tab',{name:/Daily check/})).toBeVisible();
   await tabs.getByRole('tab').last().getByRole('button',{name:/关闭/}).click();await expect(tabs.getByRole('tab')).toHaveCount(1);
-  await page.screenshot({path:'test-results/ui-workbench-desktop.png'});
+  await expectUniformText(page);
+  await page.screenshot({path:'test-results/ui-workbench-desktop.png',animations:'disabled'});
   await page.getByRole('button',{name:'后台任务',exact:true}).click();await expect(page.getByText('暂无后台任务',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'关闭后台任务',exact:true}).click();await expect(page.getByText('暂无后台任务',{exact:true})).not.toBeVisible();
   expect(errors).toEqual([]);
